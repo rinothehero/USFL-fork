@@ -3,7 +3,7 @@ G (Gradient Distance to Oracle) Measurement for MultiSFL
 
 Measures gradient distance between current training state and Oracle (ideal) state.
 Uses the same measurement protocol as GAS-fork and sfl_framework-fork:
-- Oracle calculation: reduction='mean' + divide by batch_count
+- Oracle calculation: reduction='sum' + divide by total_samples
 - Unified for fair comparison across frameworks
 
 Metrics:
@@ -153,7 +153,7 @@ class OracleCalculator:
     ) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
         """
         Compute Oracle gradient using full training data.
-        Uses reduction='mean' + divide by batch_count (unified with GAS/sfl_framework).
+        Uses reduction='sum' + divide by total_samples for mathematically correct oracle.
         """
         client_model = client_model.to(self.device)
         server_model = server_model.to(self.device)
@@ -166,7 +166,7 @@ class OracleCalculator:
 
         client_grad_accum: Dict[str, torch.Tensor] = {}
         server_grad_accum: Dict[str, torch.Tensor] = {}
-        batch_count = 0
+        total_samples = 0
 
         for batch in self.full_dataloader:
             if len(batch) >= 2:
@@ -179,6 +179,7 @@ class OracleCalculator:
 
             data = data.to(self.device)
             labels = labels.to(self.device)
+            batch_size = labels.size(0)
 
             activation = client_model(data)
             if isinstance(activation, tuple):
@@ -187,7 +188,7 @@ class OracleCalculator:
             activation_detached = activation.detach().requires_grad_(True)
             logits = server_model(activation_detached)
 
-            loss = F.cross_entropy(logits, labels, reduction="mean")
+            loss = F.cross_entropy(logits, labels, reduction="sum")
             loss.backward()
 
             activation.backward(activation_detached.grad)
@@ -208,15 +209,15 @@ class OracleCalculator:
                     else:
                         server_grad_accum[name] += grad_cpu
 
-            batch_count += 1
+            total_samples += batch_size
 
             del data, labels, activation, activation_detached, logits, loss
 
-        if batch_count > 0:
+        if total_samples > 0:
             for name in client_grad_accum:
-                client_grad_accum[name] /= batch_count
+                client_grad_accum[name] /= total_samples
             for name in server_grad_accum:
-                server_grad_accum[name] /= batch_count
+                server_grad_accum[name] /= total_samples
 
         client_model.zero_grad(set_to_none=True)
         server_model.zero_grad(set_to_none=True)
