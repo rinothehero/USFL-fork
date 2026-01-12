@@ -1,0 +1,1 @@
+python3 main.py -p 1000 -d cifar10 -m vgg11 -M fl -c ce -o sgd -lr 0.0001 -mt 0.9 -de cpu -glue-tz bert-base-uncased -le 1 -gr 10 -gl-msl 10 -bs 64 -nc 2 -ncpr 2 -distr uniform -rd 600 -s uniform -aggr fedavg
