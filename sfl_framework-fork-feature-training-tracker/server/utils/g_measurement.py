@@ -288,7 +288,7 @@ class OracleGradientCalculator:
     특징:
     - train 모드로 계산 (학습과 동일한 조건)
     - BN running stats 백업/복구
-    - reduction='sum' + 샘플 수로 나눔
+    - reduction='mean' + 배치 수로 나눔 (per-batch 평균)
     """
     
     def __init__(
@@ -310,7 +310,7 @@ class OracleGradientCalculator:
         특징:
         1. train 모드 유지 (학습과 동일한 gradient 계산)
         2. BN stats 백업/복구 (θ_ref 보존)
-        3. reduction='sum' + 샘플 수로 나눔 (정확한 평균)
+        3. reduction='mean' + 배치 수로 나눔 (per-batch 평균)
         
         Returns:
             {param_name: gradient_tensor}
@@ -325,6 +325,7 @@ class OracleGradientCalculator:
         
         total_loss = 0.0
         num_batches = 0
+        total_samples = 0
         
         # Initialize gradient accumulators
         grad_accum = {}
@@ -340,6 +341,7 @@ class OracleGradientCalculator:
             
             data = data.to(self.device)
             labels = labels.to(self.device)
+            total_samples += labels.size(0)
             
             outputs = model(data)
             

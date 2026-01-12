@@ -102,8 +102,9 @@ def compute_oracle_gradients(
             'split': gradient tensor at split layer (on CPU)
         }
     """
-    user_model.eval()
-    server_model.eval()
+    # Use train() to match actual training behavior (BN/Dropout), then restore stats.
+    user_model.train()
+    server_model.train()
 
     # Backup BN stats
     user_bn_stats = backup_bn_stats(user_model)
@@ -278,9 +279,8 @@ def compute_g_score(oracle_grads, current_grads, return_details=False):
     current_norm = torch.norm(current_flat).item()
     diff = current_flat - oracle_flat
     G = torch.norm(diff).item()
-    G_rel = (
-        (G / oracle_norm * 100) if oracle_norm > 1e-10 else float("nan")
-    )  # Percentage
+    # Relative error ratio (unitless) for cross-framework comparability.
+    G_rel = (G / oracle_norm) if oracle_norm > 1e-10 else float("nan")
 
     # Compute Cosine Distance (D_cosine)
     if current_norm > 1e-10 and oracle_norm > 1e-10:

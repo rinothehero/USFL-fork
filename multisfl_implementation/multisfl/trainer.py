@@ -61,9 +61,13 @@ class MultiSFLTrainer:
             # Combine all client datasets for Oracle calculation
             all_datasets = [c.dataset for c in clients]
             full_dataset = ConcatDataset(all_datasets)
-            # Use a large batch size for Oracle calculation efficiency
+            # Use the same batch size as training for fair Oracle averaging.
             full_loader = DataLoader(
-                full_dataset, batch_size=256, shuffle=False, num_workers=2
+                full_dataset,
+                batch_size=cfg.batch_size,
+                shuffle=False,
+                drop_last=False,
+                num_workers=2,
             )
             self.g_system = GMeasurementSystem(
                 full_loader,

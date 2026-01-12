@@ -6,6 +6,7 @@ from itertools import combinations
 from typing import TYPE_CHECKING, Tuple, Union
 
 import torch
+from torch.utils.data import DataLoader
 
 from ..scheduler.batch_scheduler import create_schedule
 from ..utils.usfl_logger import USFLLogger
@@ -793,7 +794,13 @@ class USFLStageOrganizer(BaseStageOrganizer):
             
             # Lazy initialize oracle_calculator if needed
             if self.g_measurement_system.oracle_calculator is None:
-                full_trainloader = self._dataset.get_trainloader()
+                full_trainset = self._dataset.get_trainset()
+                full_trainloader = DataLoader(
+                    dataset=full_trainset,
+                    batch_size=self.config.batch_size,
+                    shuffle=False,
+                    drop_last=False,
+                )
                 self.g_measurement_system.initialize(full_trainloader)
                 print(f"[G Measurement] Oracle calculator initialized with {len(full_trainloader.dataset)} samples")
             
