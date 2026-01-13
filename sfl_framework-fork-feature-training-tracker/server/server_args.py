@@ -17,9 +17,9 @@ def str_to_bool(value):
     """Convert string to boolean for argparse."""
     if isinstance(value, bool):
         return value
-    if value.lower() in ('true', '1', 'yes'):
+    if value.lower() in ("true", "1", "yes"):
         return True
-    elif value.lower() in ('false', '0', 'no'):
+    elif value.lower() in ("false", "0", "no"):
         return False
     else:
         raise argparse.ArgumentTypeError(f"Boolean value expected, got '{value}'")
@@ -49,7 +49,7 @@ class Config:
     seed: int
     use_dynamic_batch_scheduler: bool
     use_fresh_scoring: bool
-    freshness_decay_rate: float 
+    freshness_decay_rate: float
     method: str
     """
     Training method:
@@ -128,7 +128,9 @@ class Config:
     use_additional_epoch: bool
     use_cumulative_usage: bool
     usage_decay_factor: float
-    use_data_replication: bool  # Use data replication (max-based) instead of trimming (min-based)
+    use_data_replication: (
+        bool  # Use data replication (max-based) instead of trimming (min-based)
+    )
     balancing_strategy: str  # "trimming" | "replication" | "target" (hybrid)
     balancing_target: str  # For target strategy: "mean" | "median" | fixed number
 
@@ -153,13 +155,18 @@ class Config:
     # ==================
     #  SHARD DIRICHLET DISTRIBUTER OPTIONS
     # ==================
-    min_require_size: int  # Minimum required samples per client for shard_dirichlet distributer
+    min_require_size: (
+        int  # Minimum required samples per client for shard_dirichlet distributer
+    )
 
     # ==================
     #  G MEASUREMENT OPTIONS
     # ==================
     enable_g_measurement: bool  # Enable gradient dissimilarity (G) measurement
-    diagnostic_rounds: str  # Comma-separated list of rounds to run G measurement (e.g., "1,3,5")
+    diagnostic_rounds: (
+        str  # Comma-separated list of rounds to run G measurement (e.g., "1,3,5")
+    )
+    use_variance_g: bool
 
     # ==================
     #  MISSING CLASS SELECTOR OPTIONS
@@ -844,7 +851,7 @@ def parse_args(custom_args=None):
         action="store",
         type=float,
         dest="usage_decay_factor",
-    ) 
+    )
 
     parser.add_argument(
         "-udbs",
@@ -910,6 +917,12 @@ def parse_args(custom_args=None):
         type=str,
         default="1,3,5",
         dest="diagnostic_rounds",
+    )
+    parser.add_argument(
+        "--use-variance-g",
+        help="Use variance-based G measurement",
+        action="store_true",
+        dest="use_variance_g",
     )
 
     parser.set_defaults(networking_fairness=True)

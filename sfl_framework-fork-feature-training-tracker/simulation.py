@@ -150,6 +150,7 @@ if __name__ == "__main__":
             "gradient_shuffle": "true",
             "gradient_shuffle_strategy": "random",
             "use_dynamic_batch_scheduler": "true",
+            "use_variance_g": "true",
             "balancing_strategy": "target",
             "balancing_target": "mean",
             "split_layer": "layer1.1.bn2",
@@ -161,6 +162,7 @@ if __name__ == "__main__":
             "gradient_shuffle": "true",
             "gradient_shuffle_strategy": "random",
             "use_dynamic_batch_scheduler": "true",
+            "use_variance_g": "true",
             "balancing_strategy": "target",
             "balancing_target": "mean",
             "split_layer": "conv.2",
@@ -174,6 +176,7 @@ if __name__ == "__main__":
             "gradient_shuffle": "true",
             "gradient_shuffle_strategy": "random",
             "use_dynamic_batch_scheduler": "true",
+            "use_variance_g": "true",
             "balancing_strategy": "target",
             "balancing_target": "mean",
             "split_layer": "conv.2",
@@ -187,6 +190,7 @@ if __name__ == "__main__":
             "gradient_shuffle": "true",
             "gradient_shuffle_strategy": "random",
             "use_dynamic_batch_scheduler": "true",
+            "use_variance_g": "true",
             "balancing_strategy": "target",
             "balancing_target": "mean",
             "split_layer": "conv.5",
@@ -200,6 +204,7 @@ if __name__ == "__main__":
             "gradient_shuffle": "true",
             "gradient_shuffle_strategy": "random",
             "use_dynamic_batch_scheduler": "true",
+            "use_variance_g": "true",
             "balancing_strategy": "target",
             "balancing_target": "mean",
             "split_layer": "conv.5",
@@ -213,12 +218,12 @@ if __name__ == "__main__":
 
     total_workloads = len(combinations)
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"USFL Experiment Runner")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
     print(f"Total workloads: {total_workloads}")
     print(f"  - USFL options: {len(USFL_OPTIONS)}")
-    print(f"{'='*70}\n")
+    print(f"{'=' * 70}\n")
 
     # ===== WORKLOAD RANGE SELECTION =====
     # Uncomment to run specific range:
@@ -234,9 +239,9 @@ if __name__ == "__main__":
     if START_INDEX > 0 or END_INDEX is not None:
         combinations = combinations[START_INDEX:END_INDEX]
         end_display = END_INDEX if END_INDEX else original_total
-        print(f"\n📍 Running workloads {START_INDEX+1} to {end_display} (of {original_total} total)\n")
-
-
+        print(
+            f"\n📍 Running workloads {START_INDEX + 1} to {end_display} (of {original_total} total)\n"
+        )
 
     # ===== TIMEOUT SETTINGS =====
     # Set timeout per workload (in seconds)
@@ -254,20 +259,24 @@ if __name__ == "__main__":
         # Build workload configuration
         # Merge BASE_CONFIG with USFL option
         workload = {**BASE_CONFIG, **USFL_OPTIONS[usfl_option]}
-        
+
         # Extract dataset/model from USFL option (if present) or use BASE_CONFIG
         dataset_name = workload.get("dataset", "unknown")
         model_name = workload.get("model", "unknown")
         split_layer = workload.get("split_layer", "unknown")
-        
+
         # Create descriptive name
         workload_name = f"{model_name}-{dataset_name}-{split_layer}-usfl{usfl_option}"
 
-        print(f"\n{'='*70}")
-        print(f"Workload {idx}/{original_total} (local: {local_idx}/{len(combinations)})")
+        print(f"\n{'=' * 70}")
+        print(
+            f"Workload {idx}/{original_total} (local: {local_idx}/{len(combinations)})"
+        )
         print(f"Name: {workload_name}")
-        print(f"Config: model={model_name}, dataset={dataset_name}, split={split_layer}, usfl={usfl_option}")
-        print(f"{'='*70}\n")
+        print(
+            f"Config: model={model_name}, dataset={dataset_name}, split={split_layer}, usfl={usfl_option}"
+        )
+        print(f"{'=' * 70}\n")
         DATASET = workload.get("dataset", None)
         MODEL = workload.get("model", None)
         METHOD = workload.get("method", None)
@@ -300,6 +309,7 @@ if __name__ == "__main__":
         USAGE_DECAY_FACTOR = workload.get("usage_decay_factor", None)
         NETWORKING_FAIRNESS = workload.get("networking_fairness", None)
         USE_DYNAMIC_BATCH_SCHEDULER = workload.get("use_dynamic_batch_scheduler", None)
+        USE_VARIANCE_G = workload.get("use_variance_g", None)
         USE_FRESH_SCORING = workload.get("use_fresh_scoring", None)
         FRESHNESS_DECAY_RATE = workload.get("freshness_decay_rate", None)
         USE_DATA_REPLICATION = workload.get("use_data_replication", None)
@@ -375,8 +385,13 @@ if __name__ == "__main__":
             server_command.extend(["-ucu"])
         if USAGE_DECAY_FACTOR:
             server_command.extend(["-udf", USAGE_DECAY_FACTOR])
-        if USE_DYNAMIC_BATCH_SCHEDULER and USE_DYNAMIC_BATCH_SCHEDULER.lower() == "true":
+        if (
+            USE_DYNAMIC_BATCH_SCHEDULER
+            and USE_DYNAMIC_BATCH_SCHEDULER.lower() == "true"
+        ):
             server_command.extend(["-udbs"])
+        if USE_VARIANCE_G and USE_VARIANCE_G.lower() == "true":
+            server_command.extend(["--use-variance-g"])
         if USE_FRESH_SCORING and USE_FRESH_SCORING.lower() == "true":
             server_command.extend(["-ufs"])
         if FRESHNESS_DECAY_RATE:
@@ -425,8 +440,9 @@ if __name__ == "__main__":
                 async def run_with_timeout():
                     return await asyncio.wait_for(
                         run_simulation(server_command, client_commands),
-                        timeout=WORKLOAD_TIMEOUT
+                        timeout=WORKLOAD_TIMEOUT,
                     )
+
                 asyncio.run(run_with_timeout())
             else:
                 # Run without timeout
@@ -437,7 +453,9 @@ if __name__ == "__main__":
         except asyncio.TimeoutError:
             print(f"\n⏱️  TIMEOUT in workload {idx} after {WORKLOAD_TIMEOUT} seconds")
             print(f"   Skipping to next workload...")
-            timeout_workloads.append((idx, workload_name, f"Timeout after {WORKLOAD_TIMEOUT}s"))
+            timeout_workloads.append(
+                (idx, workload_name, f"Timeout after {WORKLOAD_TIMEOUT}s")
+            )
             continue
 
         except KeyboardInterrupt:
@@ -448,16 +466,19 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"\n❌ ERROR in workload {idx}: {e}")
             import traceback
+
             traceback.print_exc()
             failed_workloads.append((idx, workload_name, str(e)))
             continue
 
     # Summary
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"EXPERIMENT SUMMARY")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
     print(f"Total workloads attempted: {len(combinations)}")
-    print(f"Completed: {len(combinations) - len(failed_workloads) - len(timeout_workloads)}")
+    print(
+        f"Completed: {len(combinations) - len(failed_workloads) - len(timeout_workloads)}"
+    )
     print(f"Failed: {len(failed_workloads)}")
     print(f"Timeout: {len(timeout_workloads)}")
 
@@ -473,4 +494,4 @@ if __name__ == "__main__":
             print(f"  {idx}. {name}")
             print(f"     Error: {error[:100]}...")
 
-    print(f"{'='*70}\n")
+    print(f"{'=' * 70}\n")
