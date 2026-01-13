@@ -198,32 +198,23 @@ def get_param_names(model: nn.Module) -> Set[str]:
 # ============================================================
 
 
+def normalize_grad_keys(grad_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    return {k.replace("-", "."): v for k, v in grad_dict.items()}
+
+
 def gradient_to_vector(
-    gradient: Dict[str, torch.Tensor], reference_names: Optional[List[str]] = None
+    grad_dict: Dict[str, torch.Tensor], reference_names: Optional[List[str]] = None
 ) -> torch.Tensor:
-    """
-    Gradient dict를 1D vector로 flatten
-
-    Args:
-        gradient: {name: tensor} dict
-        reference_names: 순서 기준 (None이면 sorted keys 사용)
-
-    Returns:
-        Flattened 1D tensor
-
-    CRITICAL: reference_names가 주어지면 그 순서대로,
-              아니면 sorted(keys)로 일관된 순서 보장
-    """
-    if not gradient:
+    if not grad_dict:
         return torch.zeros(1)
 
     if reference_names is None:
-        reference_names = sorted(gradient.keys())
+        reference_names = sorted(grad_dict.keys())
 
     vectors = []
     for name in reference_names:
-        if name in gradient:
-            vectors.append(gradient[name].flatten().float())
+        if name in grad_dict:
+            vectors.append(grad_dict[name].flatten().float())
 
     if not vectors:
         return torch.zeros(1)
@@ -248,11 +239,8 @@ def compute_g_metrics(
         return GMetrics()
 
     # Key normalization helper
-    def normalize_keys(d):
-        return {k.replace("-", "."): v for k, v in d.items()}
-
-    g_tilde_norm = normalize_keys(g_tilde)
-    g_star_norm = normalize_keys(g_star)
+    g_tilde_norm = normalize_grad_keys(g_tilde)
+    g_star_norm = normalize_grad_keys(g_star)
 
     tilde_keys = set(g_tilde_norm.keys())
     star_keys = set(g_star_norm.keys())
@@ -1075,8 +1063,9 @@ class GMeasurementSystem:
                 }
 
             if self.oracle_client_grad and self.client_g_tildes:
-                oracle_keys = sorted(self.oracle_client_grad.keys())
-                oracle_vec = gradient_to_vector(self.oracle_client_grad, oracle_keys)
+                oracle_grad_norm = normalize_grad_keys(self.oracle_client_grad)
+                oracle_keys = sorted(oracle_grad_norm.keys())
+                oracle_vec = gradient_to_vector(oracle_grad_norm, oracle_keys)
                 total_weight = sum(
                     client_weights.get(client_id, 1.0)
                     for client_id in self.client_g_tildes.keys()
@@ -1085,7 +1074,8 @@ class GMeasurementSystem:
                     Vc = 0.0
                     denom_c = 0.0
                     for client_id, g_tilde in self.client_g_tildes.items():
-                        vec = gradient_to_vector(g_tilde, oracle_keys)
+                        g_tilde_norm = normalize_grad_keys(g_tilde)
+                        vec = gradient_to_vector(g_tilde_norm, oracle_keys)
                         weight = client_weights.get(client_id, 1.0) / total_weight
                         diff = vec - oracle_vec
                         Vc += weight * torch.dot(diff, diff).item()
@@ -1096,8 +1086,9 @@ class GMeasurementSystem:
                     )
 
             if self.oracle_server_grad and self.server_g_tildes:
-                server_keys = sorted(self.oracle_server_grad.keys())
-                oracle_vec = gradient_to_vector(self.oracle_server_grad, server_keys)
+                oracle_grad_norm = normalize_grad_keys(self.oracle_server_grad)
+                server_keys = sorted(oracle_grad_norm.keys())
+                oracle_vec = gradient_to_vector(oracle_grad_norm, server_keys)
                 weights = self.server_weights
                 if len(weights) != len(self.server_g_tildes):
                     weights = [1.0] * len(self.server_g_tildes)
@@ -1106,7 +1097,8 @@ class GMeasurementSystem:
                     Vs = 0.0
                     denom_s = 0.0
                     for server_grad, weight in zip(self.server_g_tildes, weights):
-                        server_vec = gradient_to_vector(server_grad, server_keys)
+                        server_grad_norm = normalize_grad_keys(server_grad)
+                        server_vec = gradient_to_vector(server_grad_norm, server_keys)
                         scaled_weight = weight / total_weight
                         diff = server_vec - oracle_vec
                         Vs += scaled_weight * torch.dot(diff, diff).item()
