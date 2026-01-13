@@ -144,7 +144,7 @@ if __name__ == "__main__":
         "A": {
             "dataset": "cifar10",
             "model": "resnet18",
-            "batch_size": "256",
+            "batch_size": "500",
             "labels_per_client": "2",
             "dirichlet_alpha": "0.3",
             "gradient_shuffle": "true",

@@ -79,6 +79,7 @@ class ServerConfig:
     # G Measurement
     enable_g_measurement: bool  # Enable gradient dissimilarity (G) measurement
     diagnostic_rounds: str  # Comma-separated list of rounds to run G measurement
+    use_variance_g: bool
     # FitFL
     max_pruning_ratio: int  # Maximum pruning ratio.
     # FitFL
@@ -133,7 +134,9 @@ class ServerConfig:
     # ==================
     #  SHARD DIRICHLET DISTRIBUTER OPTIONS
     # ==================
-    min_require_size: int  # Minimum required samples per client for shard_dirichlet distributer
+    min_require_size: (
+        int  # Minimum required samples per client for shard_dirichlet distributer
+    )
 
     # ==================
     #  MISSING CLASS SELECTOR OPTIONS
@@ -149,7 +152,6 @@ class ServerConfig:
         - For 'sfl' method: Must have 1 value (model split into 2 parts).
         - For 'sfl-u' method: Must have 2 values (model split into 3 parts).
     """
-
 
     # ==================
     #  DO NOT REMOVE THIS ARGUMENT!!!!!
