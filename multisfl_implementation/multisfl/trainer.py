@@ -73,6 +73,7 @@ class MultiSFLTrainer:
                 full_loader,
                 device=cfg.device,
                 diagnostic_frequency=cfg.g_measure_frequency,
+                use_variance_g=cfg.use_variance_g,
             )
 
         self.B = cfg.num_branches or cfg.n_main_clients_per_round
@@ -198,8 +199,11 @@ class MultiSFLTrainer:
 
             g_f_all_list: List[torch.Tensor] = []
             g_y_server_list: List[torch.Tensor] = []
+            g_server_weights: List[int] = []
             g_x_client_list: List[torch.Tensor] = []
             g_y_client_list: List[torch.Tensor] = []
+            g_client_ids: List[int] = []
+            g_client_weights: List[int] = []
 
             for b in range(self.B):
                 client_id = mapping[b]
@@ -291,10 +295,14 @@ class MultiSFLTrainer:
                             g_f_all_list.append(f_main_cpu)
                             g_y_server_list.append(y_main_cpu)
 
+                        g_server_weights.append(int(g_y_server_list[-1].size(0)))
+
                         # Client G data (per client)
                         if main_client.last_batch_x is not None:
                             g_x_client_list.append(main_client.last_batch_x)
                             g_y_client_list.append(y_main_cpu)
+                            g_client_ids.append(client_id)
+                            g_client_weights.append(int(y_main_cpu.size(0)))
 
                     train_result: ServerTrainResult = (
                         self.main.train_branch_with_replay(
@@ -382,11 +390,13 @@ class MultiSFLTrainer:
                         round_idx=r,
                         client_model=wc_measure,
                         server_model=ws_measure,
-                        client_ids=main_ids,
+                        client_ids=g_client_ids,
                         x_all=g_x_client_list,
                         y_all_client=g_y_client_list,
                         f_all=g_f_all_list,
                         y_all_server=g_y_server_list,
+                        client_weights=g_client_weights,
+                        server_weights=g_server_weights,
                     )
 
             acc = self.evaluate_master()

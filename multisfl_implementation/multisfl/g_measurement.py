@@ -3,7 +3,7 @@ G (Gradient Distance to Oracle) Measurement for MultiSFL
 
 Measures gradient distance between current training state and Oracle (ideal) state.
 Uses the same measurement protocol as GAS-fork and sfl_framework-fork:
-- Oracle calculation: reduction='sum' + divide by total_samples
+- Oracle calculation: reduction='mean' + divide by num_batches
 - Unified for fair comparison across frameworks
 
 Metrics:
@@ -35,6 +35,11 @@ class RoundGResult:
     client_g: GMetrics = field(default_factory=GMetrics)
     server_g: GMetrics = field(default_factory=GMetrics)
     per_client_g: Dict[int, GMetrics] = field(default_factory=dict)
+    per_branch_server_g: Dict[int, GMetrics] = field(default_factory=dict)
+    variance_client_g: float = float("nan")
+    variance_client_g_rel: float = float("nan")
+    variance_server_g: float = float("nan")
+    variance_server_g_rel: float = float("nan")
 
     def to_dict(self) -> dict:
         return {
@@ -42,6 +47,13 @@ class RoundGResult:
             "client_g": self.client_g.to_dict(),
             "server_g": self.server_g.to_dict(),
             "per_client_g": {str(k): v.to_dict() for k, v in self.per_client_g.items()},
+            "per_branch_server_g": {
+                str(k): v.to_dict() for k, v in self.per_branch_server_g.items()
+            },
+            "variance_client_g": self.variance_client_g,
+            "variance_client_g_rel": self.variance_client_g_rel,
+            "variance_server_g": self.variance_server_g,
+            "variance_server_g_rel": self.variance_server_g_rel,
         }
 
 
@@ -164,7 +176,7 @@ class OracleCalculator:
     ) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
         """
         Compute Oracle gradient using full training data.
-        Uses reduction='sum' + divide by total_samples for mathematically correct oracle.
+        Uses reduction='mean' + divide by num_batches.
         """
         client_model = client_model.to(self.device)
         server_model = server_model.to(self.device)
@@ -178,6 +190,7 @@ class OracleCalculator:
         client_grad_accum: Dict[str, torch.Tensor] = {}
         server_grad_accum: Dict[str, torch.Tensor] = {}
         total_samples = 0
+        num_batches = 0
 
         for batch in self.full_dataloader:
             if len(batch) >= 2:
@@ -191,6 +204,7 @@ class OracleCalculator:
             data = data.to(self.device)
             labels = labels.to(self.device)
             batch_size = labels.size(0)
+            num_batches += 1
 
             activation = client_model(data)
             if isinstance(activation, tuple):
@@ -199,7 +213,7 @@ class OracleCalculator:
             activation_detached = activation.detach().requires_grad_(True)
             logits = server_model(activation_detached)
 
-            loss = F.cross_entropy(logits, labels, reduction="sum")
+            loss = F.cross_entropy(logits, labels, reduction="mean")
             loss.backward()
 
             activation.backward(activation_detached.grad)
@@ -224,11 +238,12 @@ class OracleCalculator:
 
             del data, labels, activation, activation_detached, logits, loss
 
-        if total_samples > 0:
+        divisor = num_batches if num_batches > 0 else 1
+        if num_batches > 0:
             for name in client_grad_accum:
-                client_grad_accum[name] /= total_samples
+                client_grad_accum[name] /= divisor
             for name in server_grad_accum:
-                server_grad_accum[name] /= total_samples
+                server_grad_accum[name] /= divisor
 
         client_model.zero_grad(set_to_none=True)
         server_model.zero_grad(set_to_none=True)
@@ -248,10 +263,12 @@ class GMeasurementSystem:
         full_dataloader: DataLoader,
         device: str = "cpu",
         diagnostic_frequency: int = 10,
+        use_variance_g: bool = False,
     ):
         self.full_dataloader = full_dataloader
         self.device = device
         self.diagnostic_frequency = diagnostic_frequency
+        self.use_variance_g = use_variance_g
 
         self.oracle_calculator = OracleCalculator(full_dataloader, device)
         self.oracle_client_grad: Optional[Dict[str, torch.Tensor]] = None
@@ -280,13 +297,14 @@ class GMeasurementSystem:
         x_list: List[torch.Tensor],
         y_list: List[torch.Tensor],
         client_ids: List[int],
-    ) -> Tuple[GMetrics, Dict[int, GMetrics]]:
+        client_weights: Optional[List[int]] = None,
+    ) -> Tuple[GMetrics, Dict[int, GMetrics], float, float]:
         """
         Measure Client G using ONLY THE FIRST BATCH for each client.
         This aligns with sfl_framework-fork's behavior (1-step measurement).
         """
         if self.oracle_client_grad is None:
-            return GMetrics(), {}
+            return GMetrics(), {}, float("nan"), float("nan")
 
         client_model = client_model.to(self.device)
         server_model = server_model.to(self.device)
@@ -298,19 +316,30 @@ class GMeasurementSystem:
         server_model.train()
 
         per_client_g: Dict[int, GMetrics] = {}
+        per_client_vecs: Dict[int, torch.Tensor] = {}
         all_g_values: List[float] = []
         all_g_rel_values: List[float] = []
         all_d_cosine_values: List[float] = []
 
+        if client_weights is None:
+            client_weights = [1 for _ in client_ids]
+        client_weight_map: Dict[int, float] = {}
+
+        oracle_keys = sorted(self.oracle_client_grad.keys())
+
         # Track which clients have been measured
         measured_clients = set()
 
-        for x, y, client_id in zip(x_list, y_list, client_ids):
+        for idx, (x, y, client_id) in enumerate(zip(x_list, y_list, client_ids)):
             # Skip if this client has already been measured (1-step only)
             if client_id in measured_clients:
                 continue
 
             measured_clients.add(client_id)
+            if idx < len(client_weights):
+                client_weight_map[client_id] = float(client_weights[idx])
+            else:
+                client_weight_map[client_id] = 1.0
 
             client_model.zero_grad(set_to_none=True)
             server_model.zero_grad(set_to_none=True)
@@ -341,7 +370,9 @@ class GMeasurementSystem:
             all_g_values.append(metrics.G)
             all_g_rel_values.append(metrics.G_rel)
             all_d_cosine_values.append(metrics.D_cosine)
-
+            per_client_vecs[client_id] = gradient_to_vector(
+                current_client_grad, oracle_keys
+            )
             del x, y, activation, activation_detached, logits, loss, current_client_grad
 
         restore_bn_stats(client_model, client_bn_backup)
@@ -355,34 +386,57 @@ class GMeasurementSystem:
         else:
             avg_metrics = GMetrics()
 
+        variance_client_g = float("nan")
+        variance_client_g_rel = float("nan")
+        if self.use_variance_g and per_client_vecs:
+            total_weight = sum(client_weight_map.values())
+            if total_weight > 0:
+                oracle_vec = gradient_to_vector(self.oracle_client_grad, oracle_keys)
+                Vc = 0.0
+                denom_c = 0.0
+                for client_id, vec in per_client_vecs.items():
+                    weight = client_weight_map.get(client_id, 1.0) / total_weight
+                    diff = vec - oracle_vec
+                    Vc += weight * torch.dot(diff, diff).item()
+                    denom_c += weight * torch.dot(vec, vec).item()
+                variance_client_g = Vc**0.5
+                variance_client_g_rel = (
+                    (Vc / denom_c) ** 0.5 if denom_c > 0 else float("nan")
+                )
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        return avg_metrics, per_client_g
+        return avg_metrics, per_client_g, variance_client_g, variance_client_g_rel
 
     def measure_server_g(
         self,
         server_model: nn.Module,
         f_list: List[torch.Tensor],
         y_list: List[torch.Tensor],
-    ) -> GMetrics:
+        server_weights: Optional[List[int]] = None,
+    ) -> Tuple[GMetrics, Dict[int, GMetrics], float, float]:
         """
-        Measure Server G using ONLY THE FIRST BATCH.
+        Measure Server G using each collected batch.
         This aligns with sfl_framework-fork's behavior (1-step measurement).
         """
         if self.oracle_server_grad is None or not f_list:
-            return GMetrics()
+            return GMetrics(), {}, float("nan"), float("nan")
 
         server_model = server_model.to(self.device)
         server_bn_backup = backup_bn_stats(server_model)
 
         server_model.train()
 
-        # Only measure the first batch
-        if len(f_list) > 0:
-            f_batch = f_list[0]
-            y_batch = y_list[0]
+        if server_weights is None:
+            server_weights = [1 for _ in f_list]
 
+        oracle_keys = sorted(self.oracle_server_grad.keys())
+        per_batch_metrics: List[GMetrics] = []
+        per_batch_vecs: List[torch.Tensor] = []
+        per_batch_weights: List[float] = []
+
+        for idx, (f_batch, y_batch) in enumerate(zip(f_list, y_list)):
             server_model.zero_grad(set_to_none=True)
 
             f_batch = f_batch.to(self.device).detach().requires_grad_(True)
@@ -399,12 +453,45 @@ class GMeasurementSystem:
             }
 
             metrics = compute_g_metrics(current_server_grad, self.oracle_server_grad)
+            per_batch_metrics.append(metrics)
+            per_batch_vecs.append(gradient_to_vector(current_server_grad, oracle_keys))
+            per_batch_weights.append(
+                float(server_weights[idx]) if idx < len(server_weights) else 1.0
+            )
 
             del f_batch, y_batch, logits, loss, current_server_grad
 
-            result_metrics = metrics
+        per_branch_metrics = {
+            idx: metrics for idx, metrics in enumerate(per_batch_metrics)
+        }
+
+        if per_batch_metrics:
+            avg_g = sum(m.G for m in per_batch_metrics) / len(per_batch_metrics)
+            avg_g_rel = sum(m.G_rel for m in per_batch_metrics) / len(per_batch_metrics)
+            avg_d_cosine = sum(m.D_cosine for m in per_batch_metrics) / len(
+                per_batch_metrics
+            )
+            result_metrics = GMetrics(G=avg_g, G_rel=avg_g_rel, D_cosine=avg_d_cosine)
         else:
             result_metrics = GMetrics()
+
+        variance_server_g = float("nan")
+        variance_server_g_rel = float("nan")
+        if self.use_variance_g and per_batch_vecs:
+            total_weight = sum(per_batch_weights)
+            if total_weight > 0:
+                oracle_vec = gradient_to_vector(self.oracle_server_grad, oracle_keys)
+                Vs = 0.0
+                denom_s = 0.0
+                for vec, weight in zip(per_batch_vecs, per_batch_weights):
+                    w = weight / total_weight
+                    diff = vec - oracle_vec
+                    Vs += w * torch.dot(diff, diff).item()
+                    denom_s += w * torch.dot(vec, vec).item()
+                variance_server_g = Vs**0.5
+                variance_server_g_rel = (
+                    (Vs / denom_s) ** 0.5 if denom_s > 0 else float("nan")
+                )
 
         server_model.zero_grad(set_to_none=True)
         restore_bn_stats(server_model, server_bn_backup)
@@ -412,7 +499,12 @@ class GMeasurementSystem:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        return result_metrics
+        return (
+            result_metrics,
+            per_branch_metrics,
+            variance_server_g,
+            variance_server_g_rel,
+        )
 
     def measure_round(
         self,
@@ -424,6 +516,8 @@ class GMeasurementSystem:
         y_all_client: List[torch.Tensor],
         f_all: List[torch.Tensor],
         y_all_server: List[torch.Tensor],
+        client_weights: Optional[List[int]] = None,
+        server_weights: Optional[List[int]] = None,
     ) -> RoundGResult:
         """
         Full G measurement for a diagnostic round.
@@ -433,17 +527,36 @@ class GMeasurementSystem:
         # Oracle is already computed (called separately before training loop)
         # self.compute_oracle(client_model, server_model)
 
-        client_g, per_client_g = self.measure_client_g(
-            client_model, server_model, x_all, y_all_client, client_ids
+        client_g, per_client_g, variance_client_g, variance_client_g_rel = (
+            self.measure_client_g(
+                client_model,
+                server_model,
+                x_all,
+                y_all_client,
+                client_ids,
+                client_weights=client_weights,
+            )
         )
 
-        server_g = self.measure_server_g(server_model, f_all, y_all_server)
+        (
+            server_g,
+            per_branch_server_g,
+            variance_server_g,
+            variance_server_g_rel,
+        ) = self.measure_server_g(
+            server_model, f_all, y_all_server, server_weights=server_weights
+        )
 
         result = RoundGResult(
             round_idx=round_idx,
             client_g=client_g,
             server_g=server_g,
             per_client_g=per_client_g,
+            per_branch_server_g=per_branch_server_g,
+            variance_client_g=variance_client_g,
+            variance_client_g_rel=variance_client_g_rel,
+            variance_server_g=variance_server_g,
+            variance_server_g_rel=variance_server_g_rel,
         )
 
         self.measurements.append(result)
@@ -456,6 +569,20 @@ class GMeasurementSystem:
             f"Client G={client_g.G:.6f} (G_rel={client_g.G_rel:.4f}), "
             f"Server G={server_g.G:.6f} (G_rel={server_g.G_rel:.4f})"
         )
+        if per_branch_server_g:
+            for branch_idx in sorted(per_branch_server_g.keys()):
+                branch_metrics = per_branch_server_g[branch_idx]
+                print(
+                    f"[G Measurement] Round {round_idx + 1} Branch {branch_idx}: "
+                    f"G={branch_metrics.G:.6f} (G_rel={branch_metrics.G_rel:.4f})"
+                )
+        if self.use_variance_g:
+            print(
+                f"[G Measurement] Variance Client G={variance_client_g:.6f} "
+                f"(G_rel={variance_client_g_rel:.6f}), "
+                f"Variance Server G={variance_server_g:.6f} "
+                f"(G_rel={variance_server_g_rel:.6f})"
+            )
 
         return result
 
@@ -475,4 +602,12 @@ class GMeasurementSystem:
             "client_g_rel": [m.client_g.G_rel for m in self.measurements],
             "server_g": [m.server_g.G for m in self.measurements],
             "server_g_rel": [m.server_g.G_rel for m in self.measurements],
+            "variance_client_g": [m.variance_client_g for m in self.measurements],
+            "variance_client_g_rel": [
+                m.variance_client_g_rel for m in self.measurements
+            ],
+            "variance_server_g": [m.variance_server_g for m in self.measurements],
+            "variance_server_g_rel": [
+                m.variance_server_g_rel for m in self.measurements
+            ],
         }

@@ -127,6 +127,13 @@ def parse_args() -> argparse.Namespace:
         default=10,
         help="Frequency of G measurement (every N rounds)",
     )
+    parser.add_argument(
+        "--use_variance_g",
+        type=str,
+        default="false",
+        choices=["true", "false"],
+        help="Use variance-based G metrics (SFL-style)",
+    )
 
     return parser.parse_args()
 
@@ -170,6 +177,7 @@ def main():
         split_layer=args.split_layer,
         enable_g_measurement=(args.enable_g_measurement.lower() == "true"),
         g_measure_frequency=args.g_measure_frequency,
+        use_variance_g=(args.use_variance_g.lower() == "true"),
     )
 
     print(f"\nLoading dataset: {args.dataset}")

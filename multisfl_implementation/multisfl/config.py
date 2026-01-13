@@ -49,6 +49,7 @@ class MultiSFLConfig:
     # G Measurement
     enable_g_measurement: bool = True
     g_measure_frequency: int = 10
+    use_variance_g: bool = False
 
     def __post_init__(self):
         if self.p_min <= 0:
