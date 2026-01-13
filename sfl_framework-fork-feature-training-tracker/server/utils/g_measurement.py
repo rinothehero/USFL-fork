@@ -48,6 +48,10 @@ class RoundGMeasurement:
     client_G_mean: float = 0.0
     client_G_max: float = 0.0
     client_D_mean: float = 0.0
+    variance_client_g: float = float("nan")
+    variance_client_g_rel: float = float("nan")
+    variance_server_g: float = float("nan")
+    variance_server_g_rel: float = float("nan")
 
     def to_dict(self) -> dict:
         return {
@@ -61,6 +65,10 @@ class RoundGMeasurement:
                 "G_max": self.client_G_max,
                 "D_mean": self.client_D_mean,
             },
+            "variance_client_g": self.variance_client_g,
+            "variance_client_g_rel": self.variance_client_g_rel,
+            "variance_server_g": self.variance_server_g,
+            "variance_server_g_rel": self.variance_server_g_rel,
         }
 
 
@@ -314,7 +322,7 @@ class OracleGradientCalculator:
     특징:
     - train 모드로 계산 (학습과 동일한 조건)
     - BN running stats 백업/복구
-    - reduction='sum' + 전체 샘플 수로 나눔 (정확한 oracle)
+    - reduction='mean' + 배치 수로 나눔 (GAS 정합)
     """
 
     def __init__(self, full_dataloader: DataLoader, device: str = "cuda"):
@@ -330,7 +338,7 @@ class OracleGradientCalculator:
         특징:
         1. train 모드 유지 (학습과 동일한 gradient 계산)
         2. BN stats 백업/복구 (θ_ref 보존)
-        3. reduction='sum' + 전체 샘플 수로 나눔 (정확한 oracle)
+        3. reduction='mean' + 배치 수로 나눔 (GAS 정합)
 
         Returns:
             {param_name: gradient_tensor}
@@ -345,6 +353,7 @@ class OracleGradientCalculator:
 
         total_loss = 0.0
         total_samples = 0
+        num_batches = 0
 
         grad_accum = {}
 
@@ -358,12 +367,13 @@ class OracleGradientCalculator:
 
             data = data.to(self.device)
             labels = labels.to(self.device)
-            total_samples += labels.size(0)
+            batch_size = labels.size(0)
+            total_samples += batch_size
+            num_batches += 1
 
             outputs = model(data)
 
-            # reduction='sum' for mathematically correct oracle (each sample weighted equally)
-            loss = F.cross_entropy(outputs, labels, reduction="sum")
+            loss = F.cross_entropy(outputs, labels, reduction="mean")
             loss.backward()
 
             for name, param in model.named_parameters():
@@ -382,18 +392,20 @@ class OracleGradientCalculator:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+        divisor = num_batches if num_batches > 0 else 1
+
         oracle_grad = {}
         for name, grad in grad_accum.items():
-            oracle_grad[name] = grad / total_samples
+            oracle_grad[name] = grad / divisor
 
         model.zero_grad(set_to_none=True)
 
         # 5. BN stats 복구
         restore_bn_stats(model, bn_backup)
 
-        avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
+        avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
         print(
-            f"[Oracle] Computed from {total_samples} samples, avg_loss={avg_loss:.4f}"
+            f"[Oracle] Computed from {total_samples} samples over {num_batches} batches, avg_loss={avg_loss:.4f}"
         )
 
         if return_loss:
@@ -490,6 +502,7 @@ class OracleGradientCalculator:
         full_model.train()
 
         total_samples = 0
+        num_batches = 0
         grad_accum = {}
 
         for batch in self.full_dataloader:
@@ -503,6 +516,7 @@ class OracleGradientCalculator:
             data = data.to(self.device)
             labels = labels.to(self.device)
             batch_size = labels.size(0)
+            num_batches += 1
 
             outputs = full_model(data)
 
@@ -511,7 +525,7 @@ class OracleGradientCalculator:
                 print(f"[DEBUG] Oracle Output shape: {outputs.shape}")
                 print(f"[DEBUG] Oracle Labels shape: {labels.shape}")
 
-            loss = F.cross_entropy(outputs, labels, reduction="sum")
+            loss = F.cross_entropy(outputs, labels, reduction="mean")
             loss.backward()
 
             for name, param in full_model.named_parameters():
@@ -529,9 +543,11 @@ class OracleGradientCalculator:
         if hook_handle is not None:
             hook_handle.remove()
 
+        divisor = num_batches if num_batches > 0 else 1
+
         oracle_grad = {}
         for name, grad in grad_accum.items():
-            oracle_grad[name] = grad / total_samples
+            oracle_grad[name] = grad / divisor
 
         full_model.zero_grad(set_to_none=True)
 
@@ -568,12 +584,12 @@ class OracleGradientCalculator:
             for activation in split_activation_storage["activations"]:
                 if activation.grad is not None:
                     batch_grad = activation.grad.detach()
-                    batch_grad_sum = batch_grad.sum(dim=0)
+                    batch_grad_mean = batch_grad.mean(dim=0)
                     if split_grad_sum is None:
-                        split_grad_sum = batch_grad_sum.cpu()
+                        split_grad_sum = batch_grad_mean.cpu()
                     else:
-                        split_grad_sum = split_grad_sum + batch_grad_sum.cpu()
-                    split_count += batch_grad.size(0)
+                        split_grad_sum = split_grad_sum + batch_grad_mean.cpu()
+                    split_count += 1
 
             if split_count > 0:
                 oracle_split_grad = split_grad_sum / split_count
@@ -614,6 +630,7 @@ class OracleGradientCalculator:
         server_model.train()
 
         total_samples = 0
+        num_batches = 0
         split_grad_sum = None
         client_grad_accum = {}
         server_grad_accum = {}
@@ -630,6 +647,7 @@ class OracleGradientCalculator:
             data = data.to(self.device)
             labels = labels.to(self.device)
             batch_size = data.size(0)
+            num_batches += 1
 
             # Client forward
             activation = client_model(data)
@@ -637,7 +655,7 @@ class OracleGradientCalculator:
             activation.retain_grad()  # Activation gradient 유지
 
             logits = server_model(activation)
-            loss = F.cross_entropy(logits, labels, reduction="sum")
+            loss = F.cross_entropy(logits, labels, reduction="mean")
             loss.backward()
 
             # Accumulate client gradients
@@ -657,7 +675,7 @@ class OracleGradientCalculator:
                         server_grad_accum[name] += param.grad.clone().detach().cpu()
 
             if activation.grad is not None:
-                batch_split_grad = activation.grad.detach().sum(dim=0)
+                batch_split_grad = activation.grad.detach().mean(dim=0)
                 if split_grad_sum is None:
                     split_grad_sum = batch_split_grad.cpu()
                 else:
@@ -672,16 +690,18 @@ class OracleGradientCalculator:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+        divisor = num_batches if num_batches > 0 else 1
+
         oracle_client_grad = {}
         for name, grad in client_grad_accum.items():
-            oracle_client_grad[name] = grad / total_samples
+            oracle_client_grad[name] = grad / divisor
 
         oracle_server_grad = {}
         for name, grad in server_grad_accum.items():
-            oracle_server_grad[name] = grad / total_samples
+            oracle_server_grad[name] = grad / divisor
 
         oracle_split_grad = (
-            split_grad_sum / total_samples if split_grad_sum is not None else None
+            split_grad_sum / divisor if split_grad_sum is not None else None
         )
 
         client_model.zero_grad(set_to_none=True)
@@ -755,9 +775,15 @@ class GMeasurementSystem:
     4. compute_g() - G 계산
     """
 
-    def __init__(self, diagnostic_rounds: List[int] = [1, 3, 5], device: str = "cuda"):
+    def __init__(
+        self,
+        diagnostic_rounds: List[int] = [1, 3, 5],
+        device: str = "cuda",
+        use_variance_g: bool = False,
+    ):
         self.diagnostic_rounds = set(diagnostic_rounds)
         self.device = device
+        self.use_variance_g = use_variance_g
 
         self.oracle_calculator: Optional[OracleGradientCalculator] = None
 
@@ -770,7 +796,8 @@ class GMeasurementSystem:
         self.server_param_names: Set[str] = set()
 
         # 1-step measurement results
-        self.server_g_tilde: Optional[Dict[str, torch.Tensor]] = None
+        self.server_g_tildes: List[Dict[str, torch.Tensor]] = []
+        self.server_weights: List[float] = []
         self.client_g_tildes: Dict[int, Dict[str, torch.Tensor]] = {}
 
         # Split layer gradient (activation gradient at split point)
@@ -897,10 +924,15 @@ class GMeasurementSystem:
             server_grad: 서버 모델의 gradient (1-step)
             client_grads: {client_id: gradient} - 각 클라이언트의 gradient (1-step)
         """
-        self.server_g_tilde = {
-            name: grad.clone().detach().cpu() if grad.is_cuda else grad.clone().detach()
-            for name, grad in server_grad.items()
-        }
+        self.server_g_tildes = [
+            {
+                name: grad.clone().detach().cpu()
+                if grad.is_cuda
+                else grad.clone().detach()
+                for name, grad in server_grad.items()
+            }
+        ]
+        self.server_weights = [1.0]
 
         self.client_g_tildes = {}
         for client_id, grad in client_grads.items():
@@ -912,6 +944,16 @@ class GMeasurementSystem:
         print(
             f"[G Measurement] Stored 1-step gradients: server + {len(self.client_g_tildes)} clients"
         )
+
+    def store_server_gradient(
+        self, server_grad: Dict[str, torch.Tensor], weight: float
+    ):
+        grad_cpu = {
+            name: grad.clone().detach().cpu() if grad.is_cuda else grad.clone().detach()
+            for name, grad in server_grad.items()
+        }
+        self.server_g_tildes.append(grad_cpu)
+        self.server_weights.append(weight)
 
     def _compute_split_g_metrics(
         self, g_tilde: torch.Tensor, g_oracle: torch.Tensor, epsilon: float = 1e-8
@@ -947,7 +989,9 @@ class GMeasurementSystem:
 
         return GMetrics(G=G, G_rel=G_rel, D_cosine=D_cosine)
 
-    def compute_g(self, round_number: int) -> RoundGMeasurement:
+    def compute_g(
+        self, round_number: int, client_weights: Optional[Dict[int, float]] = None
+    ) -> RoundGMeasurement:
         """
         G 계산 (요구사항 4: sorted keys로 일관된 순서)
         """
@@ -960,13 +1004,25 @@ class GMeasurementSystem:
             return result
 
         # Server G
-        if self.server_g_tilde and self.oracle_server_grad:
-            result.server = compute_g_metrics(
-                self.server_g_tilde, self.oracle_server_grad
-            )
-            print(
-                f"[G] Server: G={result.server.G:.6f}, G_rel={result.server.G_rel:.4f}, D={result.server.D_cosine:.4f}"
-            )
+        if self.server_g_tildes and self.oracle_server_grad:
+            server_metrics = []
+            for idx, server_grad in enumerate(self.server_g_tildes):
+                metrics = compute_g_metrics(server_grad, self.oracle_server_grad)
+                server_metrics.append(metrics)
+                print(
+                    f"[G] Server {idx}: G={metrics.G:.6f}, G_rel={metrics.G_rel:.4f}, D={metrics.D_cosine:.4f}"
+                )
+
+            if server_metrics:
+                result.server = GMetrics(
+                    G=sum(m.G for m in server_metrics) / len(server_metrics),
+                    G_rel=sum(m.G_rel for m in server_metrics) / len(server_metrics),
+                    D_cosine=sum(m.D_cosine for m in server_metrics)
+                    / len(server_metrics),
+                )
+                print(
+                    f"[G] Server Average: G={result.server.G:.6f}, G_rel={result.server.G_rel:.4f}, D={result.server.D_cosine:.4f}"
+                )
 
         # Split Layer G (aggregated)
         if self.split_g_tilde is not None and self.oracle_split_grad is not None:
@@ -1007,12 +1063,78 @@ class GMeasurementSystem:
                 f"[G] Summary: G_mean={result.client_G_mean:.6f}, G_max={result.client_G_max:.6f}"
             )
 
+        if self.use_variance_g:
+            variance_client_g = float("nan")
+            variance_client_g_rel = float("nan")
+            variance_server_g = float("nan")
+            variance_server_g_rel = float("nan")
+
+            if client_weights is None:
+                client_weights = {
+                    client_id: 1.0 for client_id in self.client_g_tildes.keys()
+                }
+
+            if self.oracle_client_grad and self.client_g_tildes:
+                oracle_keys = sorted(self.oracle_client_grad.keys())
+                oracle_vec = gradient_to_vector(self.oracle_client_grad, oracle_keys)
+                total_weight = sum(
+                    client_weights.get(client_id, 1.0)
+                    for client_id in self.client_g_tildes.keys()
+                )
+                if total_weight > 0:
+                    Vc = 0.0
+                    denom_c = 0.0
+                    for client_id, g_tilde in self.client_g_tildes.items():
+                        vec = gradient_to_vector(g_tilde, oracle_keys)
+                        weight = client_weights.get(client_id, 1.0) / total_weight
+                        diff = vec - oracle_vec
+                        Vc += weight * torch.dot(diff, diff).item()
+                        denom_c += weight * torch.dot(vec, vec).item()
+                    variance_client_g = Vc**0.5
+                    variance_client_g_rel = (
+                        (Vc / denom_c) ** 0.5 if denom_c > 0 else float("nan")
+                    )
+
+            if self.oracle_server_grad and self.server_g_tildes:
+                server_keys = sorted(self.oracle_server_grad.keys())
+                oracle_vec = gradient_to_vector(self.oracle_server_grad, server_keys)
+                weights = self.server_weights
+                if len(weights) != len(self.server_g_tildes):
+                    weights = [1.0] * len(self.server_g_tildes)
+                total_weight = sum(weights)
+                if total_weight > 0:
+                    Vs = 0.0
+                    denom_s = 0.0
+                    for server_grad, weight in zip(self.server_g_tildes, weights):
+                        server_vec = gradient_to_vector(server_grad, server_keys)
+                        scaled_weight = weight / total_weight
+                        diff = server_vec - oracle_vec
+                        Vs += scaled_weight * torch.dot(diff, diff).item()
+                        denom_s += (
+                            scaled_weight * torch.dot(server_vec, server_vec).item()
+                        )
+                    variance_server_g = Vs**0.5
+                    variance_server_g_rel = (
+                        (Vs / denom_s) ** 0.5 if denom_s > 0 else float("nan")
+                    )
+
+            result.variance_client_g = variance_client_g
+            result.variance_client_g_rel = variance_client_g_rel
+            result.variance_server_g = variance_server_g
+            result.variance_server_g_rel = variance_server_g_rel
+
+            print(
+                f"[G] Variance: client={variance_client_g:.6f} (rel={variance_client_g_rel:.6f}), "
+                f"server={variance_server_g:.6f} (rel={variance_server_g_rel:.6f})"
+            )
+
         self.measurements.append(result)
         return result
 
     def clear_round_data(self):
         """라운드 데이터 초기화 (메모리 해제)"""
-        self.server_g_tilde = None
+        self.server_g_tildes = []
+        self.server_weights = []
         self.client_g_tildes = {}
 
         # Clear split layer gradients

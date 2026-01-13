@@ -38,10 +38,13 @@ class USFLModelTrainer(BaseModelTrainer):
         self.propagator = get_propagator(server_config, config, model)
 
         # G Measurement: Accumulated client gradients for this round
-        self.enable_g_measurement = getattr(server_config, 'enable_g_measurement', False)
+        self.enable_g_measurement = getattr(
+            server_config, "enable_g_measurement", False
+        )
         self.accumulated_gradients: list = []  # List of gradient dicts
         self.gradient_weights: list = []  # Weights for each gradient (batch size)
         self.measurement_gradient = None  # For 1-step measurement protocol
+        self.measurement_gradient_weight = None
 
     async def _train_default_dataset(self, params: dict):
         self.model.train()
@@ -121,10 +124,10 @@ class USFLModelTrainer(BaseModelTrainer):
                     gradients, model_index = await self.api.wait_for_gradients()
 
                     self.propagator.backward(gradients)
-                    
+
                     # === MEASUREMENT MODE: 1-step only, no optimizer ===
                     is_measurement = self.training_params.get("measurement_only", False)
-                    
+
                     if is_measurement:
                         # Capture gradient for G measurement (optimizer 없음)
                         self.measurement_gradient = {
@@ -132,12 +135,18 @@ class USFLModelTrainer(BaseModelTrainer):
                             for name, param in self.model.named_parameters()
                             if param.grad is not None
                         }
-                        print(f"[Client {self.config.client_id}] Captured measurement gradient: {len(self.measurement_gradient)} params")
+                        self.measurement_gradient_weight = len(labels)
+                        print(
+                            f"[Client {self.config.client_id}] Captured measurement gradient: {len(self.measurement_gradient)} params"
+                        )
                         return  # 1-step만 하고 종료
-                    
+
                     # === NORMAL MODE ===
                     # G Measurement: Collect client model gradients ONLY on first batch (memory efficient)
-                    if self.enable_g_measurement and len(self.accumulated_gradients) == 0:
+                    if (
+                        self.enable_g_measurement
+                        and len(self.accumulated_gradients) == 0
+                    ):
                         client_grad = {
                             name: param.grad.clone().detach().cpu()
                             for name, param in self.model.named_parameters()
@@ -145,7 +154,7 @@ class USFLModelTrainer(BaseModelTrainer):
                         }
                         self.accumulated_gradients.append(client_grad)
                         self.gradient_weights.append(len(labels))
-                    
+
                     optimizer.step()
 
                     completed_iterations += 1
@@ -166,8 +175,9 @@ class USFLModelTrainer(BaseModelTrainer):
 
                     inputs, labels = batch
                     total_labels += len(labels)
-                    inputs, labels = inputs.to(self.config.device), labels.to(
-                        self.config.device
+                    inputs, labels = (
+                        inputs.to(self.config.device),
+                        labels.to(self.config.device),
                     )
 
                     optimizer.zero_grad()
@@ -186,10 +196,10 @@ class USFLModelTrainer(BaseModelTrainer):
                     gradients, model_index = await self.api.wait_for_gradients()
 
                     self.propagator.backward(gradients)
-                    
+
                     # === MEASUREMENT MODE: 1-step only, no optimizer ===
                     is_measurement = self.training_params.get("measurement_only", False)
-                    
+
                     if is_measurement:
                         # Capture gradient for G measurement (optimizer 없음)
                         self.measurement_gradient = {
@@ -197,12 +207,18 @@ class USFLModelTrainer(BaseModelTrainer):
                             for name, param in self.model.named_parameters()
                             if param.grad is not None
                         }
-                        print(f"[Client {self.config.client_id}] Captured measurement gradient: {len(self.measurement_gradient)} params")
+                        self.measurement_gradient_weight = len(labels)
+                        print(
+                            f"[Client {self.config.client_id}] Captured measurement gradient: {len(self.measurement_gradient)} params"
+                        )
                         return  # 1-step만 하고 종료
-                    
+
                     # === NORMAL MODE ===
                     # G Measurement: Collect client model gradients ONLY on first batch
-                    if self.enable_g_measurement and len(self.accumulated_gradients) == 0:
+                    if (
+                        self.enable_g_measurement
+                        and len(self.accumulated_gradients) == 0
+                    ):
                         client_grad = {
                             name: param.grad.clone().detach().cpu()
                             for name, param in self.model.named_parameters()
@@ -210,7 +226,7 @@ class USFLModelTrainer(BaseModelTrainer):
                         }
                         self.accumulated_gradients.append(client_grad)
                         self.gradient_weights.append(len(labels))
-                    
+
                     optimizer.step()
 
                     completed_iterations += 1
@@ -276,7 +292,9 @@ class USFLModelTrainer(BaseModelTrainer):
                         break
 
                     inputs = torch.cat(batch_inputs).to(self.config.device)
-                    attention_mask = torch.cat(batch_attention_mask).to(self.config.device)
+                    attention_mask = torch.cat(batch_attention_mask).to(
+                        self.config.device
+                    )
                     labels = torch.cat(batch_labels).to(self.config.device)
 
                     optimizer.zero_grad()

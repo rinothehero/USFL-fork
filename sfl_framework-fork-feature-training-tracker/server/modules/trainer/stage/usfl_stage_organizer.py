@@ -76,7 +76,9 @@ class USFLStageOrganizer(BaseStageOrganizer):
 
         # τ : temperature for g-LA (default -1.0)
         self.tau: float = getattr(self.config, "logit_tau", -0.5)
-        self.usage_decay_factor: float = getattr(self.config, "usage_decay_factor", 0.99)
+        self.usage_decay_factor: float = getattr(
+            self.config, "usage_decay_factor", 0.99
+        )
 
         # per-client prior cache set during _pre_round
         self.client_priors: dict[str, dict[str, float]] = {}
@@ -90,15 +92,15 @@ class USFLStageOrganizer(BaseStageOrganizer):
         # G Measurement V2 (Oracle-based) - lazy initialization
         self._dataset = dataset  # Store reference for lazy loading (G measurement)
         self.g_measurement_system = None
-        if getattr(config, 'enable_g_measurement', False):
-            diagnostic_rounds = getattr(config, 'diagnostic_rounds', '1,3,5')
+        if getattr(config, "enable_g_measurement", False):
+            diagnostic_rounds = getattr(config, "diagnostic_rounds", "1,3,5")
             if isinstance(diagnostic_rounds, str):
-                diagnostic_rounds = [int(x) for x in diagnostic_rounds.split(',')]
+                diagnostic_rounds = [int(x) for x in diagnostic_rounds.split(",")]
             self.g_measurement_system = GMeasurementSystem(
                 diagnostic_rounds=diagnostic_rounds,
-                device=config.device
+                device=config.device,
+                use_variance_g=getattr(config, "use_variance_g", False),
             )
-
 
     @staticmethod
     def _get_exponential_bin(usage_count: int) -> int:
@@ -142,7 +144,11 @@ class USFLStageOrganizer(BaseStageOrganizer):
         total_dataset_size = sum(dataset_sizes.values())
         if total_dataset_size == 0:
             # 데이터가 없는 경우 0으로 나누기 오류 방지
-            return 0, {str(cid): 0 for cid in selected_clients}, {str(cid): 0 for cid in selected_clients}
+            return (
+                0,
+                {str(cid): 0 for cid in selected_clients},
+                {str(cid): 0 for cid in selected_clients},
+            )
 
         global_batch_size = int(
             self.config.batch_size
@@ -163,19 +169,21 @@ class USFLStageOrganizer(BaseStageOrganizer):
         batch_sizes = {cid: int(val[0]) for cid, val in ideal_sizes.items()}
 
         zero_batch_clients = []
-         # 5. 최종 배치 사이즈 보정 (0이하 방지)
+        # 5. 최종 배치 사이즈 보정 (0이하 방지)
         for client_id in batch_sizes:
             if batch_sizes[client_id] <= 0:
                 batch_sizes[client_id] = 1
                 zero_batch_clients.append(client_id)
                 print(f"Warning: Client {client_id} had zero batch size, set to 1")
-                
+
         # 3. 버려진 소수점들의 합 (나머지) 계산
         remainder = global_batch_size - sum(batch_sizes.values())
 
         # 4. 소수부가 가장 컸던 클라이언트 순으로 나머지 분배
-        sorted_clients = sorted(ideal_sizes.keys(), key=lambda cid: ideal_sizes[cid][1], reverse=True)
-        
+        sorted_clients = sorted(
+            ideal_sizes.keys(), key=lambda cid: ideal_sizes[cid][1], reverse=True
+        )
+
         for i in range(remainder):
             client_to_increment = sorted_clients[i % len(sorted_clients)]
             if client_to_increment not in zero_batch_clients:
@@ -184,7 +192,8 @@ class USFLStageOrganizer(BaseStageOrganizer):
         iterations_per_client = {
             str(client_id): (
                 dataset_sizes[str(client_id)] // batch_sizes[str(client_id)]
-                if batch_sizes.get(str(client_id), 0) > 0 else 0
+                if batch_sizes.get(str(client_id), 0) > 0
+                else 0
             )
             for client_id in dataset_sizes.keys()
         }
@@ -425,7 +434,7 @@ class USFLStageOrganizer(BaseStageOrganizer):
         if getattr(self.config, "use_cumulative_usage", False):
             # --- Initialize or decay cumulative usage ---
             cumulative_usage = self.global_dict.get("cumulative_usage")
-            if not cumulative_usage: # First time initialization
+            if not cumulative_usage:  # First time initialization
                 USFLLogger.log_cumulative_usage_init()
                 for cid, info in client_informations.items():
                     client_id_str = str(cid)
@@ -451,11 +460,15 @@ class USFLStageOrganizer(BaseStageOrganizer):
             "round_number": round_number,  # For logging purposes
         }
         # "시간 감쇠" 기능이 켜져 있으면, 선택에 필요한 추가 정보로 감쇠된 기억을 전달
-        if getattr(self.config, 'use_cumulative_usage', False):
-            selection_data['cumulative_usage'] = self.global_dict.get("cumulative_usage")
+        if getattr(self.config, "use_cumulative_usage", False):
+            selection_data["cumulative_usage"] = self.global_dict.get(
+                "cumulative_usage"
+            )
 
         # Select clients (selector has internal retry logic with up to 1000 attempts)
-        print(f"[Round {round_number}] Selecting clients...")  # Terminal progress update
+        print(
+            f"[Round {round_number}] Selecting clients..."
+        )  # Terminal progress update
         self.selected_clients = self.pre_round.select_clients(
             self.selector,
             self.connection,
@@ -523,7 +536,7 @@ class USFLStageOrganizer(BaseStageOrganizer):
             # 모든 레이블 각각에 대해
             for label in range(self.num_classes):
                 label_str = str(label)
-                # 만약 전체 데이터셋(현재 선택된 클라이언트 분포 합집합)에 해당 레이블의 데이터가 존재한다면, 
+                # 만약 전체 데이터셋(현재 선택된 클라이언트 분포 합집합)에 해당 레이블의 데이터가 존재한다면,
                 if global_dataset_sizes[label_str] > 0:
                     # 현재 클라이언트가 가진 해당 레이블의 데이터 수를 전체 데이터셋(현재 라운드에 선택된 클라이언트들의 데이터 분포 합집합)에 있는 해당 레이블의 데이터 수로 나누어 비율을 계산
                     # 즉, 현 라운드에서 각 클라이언트의 분포의 기여도 비율을 구하는 과정
@@ -547,7 +560,11 @@ class USFLStageOrganizer(BaseStageOrganizer):
         strategy = getattr(self.config, "balancing_strategy", None)
         if strategy is None:
             # Fallback to legacy option
-            strategy = "replication" if getattr(self.config, "use_data_replication", False) else "trimming"
+            strategy = (
+                "replication"
+                if getattr(self.config, "use_data_replication", False)
+                else "trimming"
+            )
 
         added_count = 0
         removed_count = 0
@@ -566,8 +583,12 @@ class USFLStageOrganizer(BaseStageOrganizer):
             else:
                 target_size = int(target_type)  # Fixed number
 
-            USFLLogger.log_debug(f"Target-based balancing: strategy={target_type}, target_size={target_size}")
-            print(f"[Round {round_number}] Target-based balancing: target={target_size} (strategy={target_type})")
+            USFLLogger.log_debug(
+                f"Target-based balancing: strategy={target_type}, target_size={target_size}"
+            )
+            print(
+                f"[Round {round_number}] Target-based balancing: target={target_size} (strategy={target_type})"
+            )
 
             # Calculate per-label adjustment
             should_add_count = {}
@@ -590,26 +611,40 @@ class USFLStageOrganizer(BaseStageOrganizer):
                     label_count = local_dataset_sizes[client_id_str][label_str]
 
                     if label_count > 0:
-                        proportion = local_dataset_proportion_per_label[client_id_str][label_str]
+                        proportion = local_dataset_proportion_per_label[client_id_str][
+                            label_str
+                        ]
 
                         if should_add_count[label_str] > 0:
                             # Replication for this label
-                            add_for_client = int(should_add_count[label_str] * proportion)
-                            client_label_counts[client_id_str][label_str] = label_count + add_for_client
+                            add_for_client = int(
+                                should_add_count[label_str] * proportion
+                            )
+                            client_label_counts[client_id_str][label_str] = (
+                                label_count + add_for_client
+                            )
                             added_count += add_for_client
                         elif should_remove_count[label_str] > 0:
                             # Trimming for this label
-                            remove_for_client = int(should_remove_count[label_str] * proportion)
-                            client_label_counts[client_id_str][label_str] = label_count - remove_for_client
+                            remove_for_client = int(
+                                should_remove_count[label_str] * proportion
+                            )
+                            client_label_counts[client_id_str][label_str] = (
+                                label_count - remove_for_client
+                            )
                             removed_count += remove_for_client
                         else:
                             client_label_counts[client_id_str][label_str] = label_count
 
-                        client_total_counts[client_id_str] += client_label_counts[client_id_str][label_str]
+                        client_total_counts[client_id_str] += client_label_counts[
+                            client_id_str
+                        ][label_str]
                     else:
                         client_label_counts[client_id_str][label_str] = 0
 
-            USFLLogger.log_debug(f"Target balancing: added={added_count}, removed={removed_count}")
+            USFLLogger.log_debug(
+                f"Target balancing: added={added_count}, removed={removed_count}"
+            )
 
         elif strategy == "replication":
             # --- Data Replication: Augment to max size ---
@@ -631,7 +666,9 @@ class USFLStageOrganizer(BaseStageOrganizer):
                     if label_count > 0 and should_add_count[label_str] > 0:
                         should_add_count_for_client = int(
                             should_add_count[label_str]
-                            * local_dataset_proportion_per_label[client_id_str][label_str]
+                            * local_dataset_proportion_per_label[client_id_str][
+                                label_str
+                            ]
                         )
                         client_label_counts[client_id_str][label_str] = (
                             local_dataset_sizes[client_id_str][label_str]
@@ -647,7 +684,9 @@ class USFLStageOrganizer(BaseStageOrganizer):
                         client_total_counts[client_id_str] += label_count
 
             USFLLogger.log_debug(f"Total added count (via replication): {added_count}")
-            print(f"[Round {round_number}] Data replication: {added_count} samples added (max_size={max_dataset_size})")
+            print(
+                f"[Round {round_number}] Data replication: {added_count} samples added (max_size={max_dataset_size})"
+            )
 
         else:  # "trimming" (default)
             # --- Original Trimming: Reduce to min size ---
@@ -669,7 +708,9 @@ class USFLStageOrganizer(BaseStageOrganizer):
                     if label_count > 0:
                         should_remove_count_for_client = int(
                             should_remove_count[label_str]
-                            * local_dataset_proportion_per_label[client_id_str][label_str]
+                            * local_dataset_proportion_per_label[client_id_str][
+                                label_str
+                            ]
                         )
                         client_label_counts[client_id_str][label_str] = (
                             local_dataset_sizes[client_id_str][label_str]
@@ -705,14 +746,16 @@ class USFLStageOrganizer(BaseStageOrganizer):
                     schedule_by_client_id[str(client_id)].append(batch_size)
 
             # Log detailed batch schedule to file
-            client_data_usage = {str(cid): C_list[i] for i, cid in enumerate(ordered_client_ids)}
+            client_data_usage = {
+                str(cid): C_list[i] for i, cid in enumerate(ordered_client_ids)
+            }
             USFLLogger.log_batch_schedule(
                 round_number=round_number,
                 client_data_usage=client_data_usage,
                 total_iterations=k,
                 schedule_by_client=schedule_by_client_id,
             )
-            
+
             payload_extension = {
                 "iterations": k,
                 "batch_schedule": schedule_by_client_id,
@@ -726,7 +769,9 @@ class USFLStageOrganizer(BaseStageOrganizer):
                 self._calculate_batch_size(client_total_counts, self.selected_clients)
             )
 
-            USFLLogger.log_debug(f"Using original min_iterations scheduler: {iterations_per_client}")
+            USFLLogger.log_debug(
+                f"Using original min_iterations scheduler: {iterations_per_client}"
+            )
 
             min_iterations = (
                 min(iterations_per_client.values()) if iterations_per_client else 0
@@ -747,7 +792,9 @@ class USFLStageOrganizer(BaseStageOrganizer):
                     additional_epoch += 1
                 additional_epoch = int(additional_epoch)
                 final_local_epochs += additional_epoch
-                USFLLogger.log_debug(f"Additional Epoch: {additional_epoch}, Final Epochs: {final_local_epochs}")
+                USFLLogger.log_debug(
+                    f"Additional Epoch: {additional_epoch}, Final Epochs: {final_local_epochs}"
+                )
             else:
                 USFLLogger.log_debug("Not using additional epochs.")
 
@@ -755,7 +802,9 @@ class USFLStageOrganizer(BaseStageOrganizer):
                 "batch_sizes": batch_sizes,
                 "iterations": min_iterations,
             }
-            self.global_dict.set(f"round_{round_number}_effective_epochs", final_local_epochs)
+            self.global_dict.set(
+                f"round_{round_number}_effective_epochs", final_local_epochs
+            )
             # --- End of Original Logic ---
 
         # 모델 분할 및 모델 큐 설정
@@ -784,14 +833,18 @@ class USFLStageOrganizer(BaseStageOrganizer):
         base_payload.update(payload_extension)
 
         # === G MEASUREMENT: Compute oracle for diagnostic rounds ===
-        if (self.g_measurement_system is not None and 
-            self.g_measurement_system.is_diagnostic_round(round_number)):
-            
+        if (
+            self.g_measurement_system is not None
+            and self.g_measurement_system.is_diagnostic_round(round_number)
+        ):
             import psutil, os
+
             process = psutil.Process(os.getpid())
             mem_before_oracle = process.memory_info().rss / (1024**3)
-            print(f"\n[G Measurement] === Round {round_number}: Computing Oracle === (mem={mem_before_oracle:.2f}GB)")
-            
+            print(
+                f"\n[G Measurement] === Round {round_number}: Computing Oracle === (mem={mem_before_oracle:.2f}GB)"
+            )
+
             # Lazy initialize oracle_calculator if needed
             if self.g_measurement_system.oracle_calculator is None:
                 full_trainset = self._dataset.get_trainset()
@@ -802,25 +855,29 @@ class USFLStageOrganizer(BaseStageOrganizer):
                     drop_last=False,
                 )
                 self.g_measurement_system.initialize(full_trainloader)
-                print(f"[G Measurement] Oracle calculator initialized with {len(full_trainloader.dataset)} samples")
-            
+                print(
+                    f"[G Measurement] Oracle calculator initialized with {len(full_trainloader.dataset)} samples"
+                )
+
             # Set param names for gradient splitting
             self.g_measurement_system.set_param_names(
                 self.split_models[0],  # client model
-                self.split_models[1]   # server model
+                self.split_models[1],  # server model
             )
-            
+
             # Compute oracle gradient using split models (includes split layer gradient)
             full_model = self.model.get_torch_model().to(self.config.device)
             self.g_measurement_system.compute_oracle_split_for_round(
                 self.split_models[0],  # client model
                 self.split_models[1],  # server model
-                full_model,            # full model for split layer gradient
-                split_layer_name=self.config.split_layer
+                full_model,  # full model for split layer gradient
+                split_layer_name=self.config.split_layer,
             )
-            
+
             mem_after_oracle = process.memory_info().rss / (1024**3)
-            print(f"[G Measurement] Oracle computed (mem={mem_after_oracle:.2f}GB, Δ={mem_after_oracle-mem_before_oracle:+.2f}GB)")
+            print(
+                f"[G Measurement] Oracle computed (mem={mem_after_oracle:.2f}GB, Δ={mem_after_oracle - mem_before_oracle:+.2f}GB)"
+            )
 
         await self.pre_round.send_customized_global_model(
             self.selected_clients,
@@ -854,17 +911,23 @@ class USFLStageOrganizer(BaseStageOrganizer):
                 for act in activations:
                     cid = act["client_id"]
                     labels = act["labels"]
-                    labels_list = labels.tolist() if hasattr(labels, 'tolist') else labels
+                    labels_list = (
+                        labels.tolist() if hasattr(labels, "tolist") else labels
+                    )
                     label_counts = Counter(labels_list)
 
                     client_data[cid] = {
                         "batch_size": len(labels_list),
-                        "label_distribution": {str(k): v for k, v in label_counts.items()}
+                        "label_distribution": {
+                            str(k): v for k, v in label_counts.items()
+                        },
                     }
                     server_total_labels.update(label_counts)
 
                 # Log client-level data
-                TrainingTracker.log_iteration_data(round_number, iteration_count, client_data)
+                TrainingTracker.log_iteration_data(
+                    round_number, iteration_count, client_data
+                )
 
                 # Log server total
                 total_samples = sum(len(act["labels"]) for act in activations)
@@ -872,7 +935,7 @@ class USFLStageOrganizer(BaseStageOrganizer):
                     round_number,
                     iteration_count,
                     total_samples,
-                    {str(k): v for k, v in server_total_labels.items()}
+                    {str(k): v for k, v in server_total_labels.items()},
                 )
                 # --- End Iteration Tracking ---
 
@@ -891,76 +954,115 @@ class USFLStageOrganizer(BaseStageOrganizer):
                     logits = await self.in_round.forward(
                         self.split_models[1], concatenated_activations
                     )
-                    
+
                     # G Measurement: only collect on first batch of diagnostic rounds
-                    is_diagnostic = (self.g_measurement_system is not None and 
-                                    self.g_measurement_system.is_diagnostic_round(round_number))
-                    
-                    grad, loss, server_grad = await self.in_round.backward_from_label(
-                        self.split_models[1], logits, concatenated_activations, 
-                        collect_server_grad=(is_diagnostic and self.g_measurement_system.server_g_tilde is None)
+                    is_diagnostic = (
+                        self.g_measurement_system is not None
+                        and self.g_measurement_system.is_diagnostic_round(round_number)
                     )
-                    
-                    # G Measurement: Store server gradient ONLY on first batch
-                    if is_diagnostic and server_grad and self.g_measurement_system.server_g_tilde is None:
-                        self.g_measurement_system.server_g_tilde = server_grad
+
+                    grad, loss, server_grad = await self.in_round.backward_from_label(
+                        self.split_models[1],
+                        logits,
+                        concatenated_activations,
+                        collect_server_grad=is_diagnostic,
+                    )
+
+                    if is_diagnostic and server_grad:
+                        batch_weight = sum(
+                            len(act["labels"]) for act in non_empty_activations
+                        )
+                        self.g_measurement_system.store_server_gradient(
+                            server_grad, batch_weight
+                        )
                         print(f"[G Measurement] Server gradient collected")
-                    
+
                     # G Measurement: Store split layer gradient ONLY on first batch
-                    if is_diagnostic and grad is not None and self.g_measurement_system.split_g_tilde is None:
+                    if (
+                        is_diagnostic
+                        and grad is not None
+                        and self.g_measurement_system.split_g_tilde is None
+                    ):
                         split_grad = grad.clone().detach().cpu()
                         if split_grad.dim() >= 1:
-                            self.g_measurement_system.split_g_tilde = split_grad.mean(dim=0)
+                            self.g_measurement_system.split_g_tilde = split_grad.mean(
+                                dim=0
+                            )
                         else:
                             self.g_measurement_system.split_g_tilde = split_grad
-                        print(f"[G Measurement] Split layer gradient collected, shape: {self.g_measurement_system.split_g_tilde.shape}")
+                        print(
+                            f"[G Measurement] Split layer gradient collected, shape: {self.g_measurement_system.split_g_tilde.shape}"
+                        )
 
                     if self.config.gradient_shuffle:
-                        #print(f"[Gradient Shuffle] Applying strategy: {self.config.gradient_shuffle_strategy}")
+                        # print(f"[Gradient Shuffle] Applying strategy: {self.config.gradient_shuffle_strategy}")
 
                         if self.config.gradient_shuffle_strategy == "inplace":
-                            #print(f"  → Class-balanced shuffle applied")
+                            # print(f"  → Class-balanced shuffle applied")
                             grad = self._shuffle_gradients(non_empty_activations, grad)
                         elif self.config.gradient_shuffle_strategy == "random":
-                            #print(f"  → Random permutation applied (grad shape: {grad.shape})")
+                            # print(f"  → Random permutation applied (grad shape: {grad.shape})")
                             perm = torch.randperm(grad.size(0))
                             grad = grad[perm]
                         elif self.config.gradient_shuffle_strategy == "average":
-                            weight = getattr(self.config, "gradient_average_weight", 0.5)
-                            #print(f"  → Average mixing: {(1-weight)*100:.0f}% original + {weight*100:.0f}% global mean")
+                            weight = getattr(
+                                self.config, "gradient_average_weight", 0.5
+                            )
+                            # print(f"  → Average mixing: {(1-weight)*100:.0f}% original + {weight*100:.0f}% global mean")
                             mean_grad = grad.mean(dim=0, keepdim=True)
                             grad = (1 - weight) * grad + weight * mean_grad
-                        elif self.config.gradient_shuffle_strategy == "average_adaptive_alpha":
+                        elif (
+                            self.config.gradient_shuffle_strategy
+                            == "average_adaptive_alpha"
+                        ):
                             # Adaptive mixing based on cosine similarity
                             # High similarity → keep local, Low similarity → use global
                             beta = getattr(self.config, "adaptive_alpha_beta", 2.0)
-                            mean_grad = grad.mean(dim=0, keepdim=True)  # [1, feature_dim]
+                            mean_grad = grad.mean(
+                                dim=0, keepdim=True
+                            )  # [1, feature_dim]
 
                             # Compute cosine similarity for each sample
                             # grad: [num_samples, feature_dim], mean_grad: [1, feature_dim]
-                            grad_norm = torch.norm(grad, dim=1, keepdim=True)  # [num_samples, 1]
-                            mean_norm = torch.norm(mean_grad, dim=1, keepdim=True)  # [1, 1]
+                            grad_norm = torch.norm(
+                                grad, dim=1, keepdim=True
+                            )  # [num_samples, 1]
+                            mean_norm = torch.norm(
+                                mean_grad, dim=1, keepdim=True
+                            )  # [1, 1]
 
                             # Avoid division by zero
                             grad_norm = torch.clamp(grad_norm, min=1e-8)
                             mean_norm = torch.clamp(mean_norm, min=1e-8)
 
                             # Cosine similarity: (grad · mean_grad) / (||grad|| * ||mean_grad||)
-                            dot_product = (grad * mean_grad).sum(dim=1, keepdim=True)  # [num_samples, 1]
-                            cos_sim = dot_product / (grad_norm * mean_norm)  # [num_samples, 1]
+                            dot_product = (grad * mean_grad).sum(
+                                dim=1, keepdim=True
+                            )  # [num_samples, 1]
+                            cos_sim = dot_product / (
+                                grad_norm * mean_norm
+                            )  # [num_samples, 1]
 
                             # Dynamic alpha using sigmoid
                             # High similarity → high alpha → more local
                             # Low similarity → low alpha → more global
-                            alpha_dynamic = torch.sigmoid(beta * cos_sim)  # [num_samples, 1]
+                            alpha_dynamic = torch.sigmoid(
+                                beta * cos_sim
+                            )  # [num_samples, 1]
 
                             # Log statistics
                             print(f"  → Adaptive alpha (β={beta}):")
-                            print(f"     Cosine similarity: min={cos_sim.min().item():.3f}, mean={cos_sim.mean().item():.3f}, max={cos_sim.max().item():.3f}")
-                            print(f"     Alpha (local weight): min={alpha_dynamic.min().item():.3f}, mean={alpha_dynamic.mean().item():.3f}, max={alpha_dynamic.max().item():.3f}")
+                            print(
+                                f"     Cosine similarity: min={cos_sim.min().item():.3f}, mean={cos_sim.mean().item():.3f}, max={cos_sim.max().item():.3f}"
+                            )
+                            print(
+                                f"     Alpha (local weight): min={alpha_dynamic.min().item():.3f}, mean={alpha_dynamic.mean().item():.3f}, max={alpha_dynamic.max().item():.3f}"
+                            )
 
                             # Mix: alpha * local + (1 - alpha) * global
-                            grad = alpha_dynamic * grad + (1 - alpha_dynamic) * mean_grad
+                            grad = (
+                                alpha_dynamic * grad + (1 - alpha_dynamic) * mean_grad
+                            )
                         else:
                             raise ValueError(
                                 f"Unknown gradient shuffle strategy: {self.config.gradient_shuffle_strategy}"
@@ -974,7 +1076,9 @@ class USFLStageOrganizer(BaseStageOrganizer):
                         end = start + length
 
                         g_slice = grad[start:end].clone()
-                        await self.in_round.send_gradients(self.connection, g_slice, cid, 0)
+                        await self.in_round.send_gradients(
+                            self.connection, g_slice, cid, 0
+                        )
                         start = end
 
                 # Send empty gradients to clients that sent empty activations
@@ -982,7 +1086,9 @@ class USFLStageOrganizer(BaseStageOrganizer):
                     cid = act["client_id"]
                     if activation_length_per_client[cid] == 0:
                         empty_grad = torch.tensor([]).to(self.config.device)
-                        await self.in_round.send_gradients(self.connection, empty_grad, cid, 0)
+                        await self.in_round.send_gradients(
+                            self.connection, empty_grad, cid, 0
+                        )
 
         wait_for_models = asyncio.create_task(
             self.in_round.wait_for_model_submission(
@@ -1007,48 +1113,82 @@ class USFLStageOrganizer(BaseStageOrganizer):
         # ===== G MEASUREMENT V2 (Oracle-based) =====
         if self.g_measurement_system is not None:
             import psutil, os, gc, pickle
+
             process = psutil.Process(os.getpid())
             mem_before = process.memory_info().rss / (1024**3)
-            
+
             # Extract client gradients from model_queue (diagnostic rounds)
             if self.g_measurement_system.is_diagnostic_round(round_number):
                 client_grads = {}
+                client_weights = {}
                 for item in model_queue.queue:
                     if len(item) >= 3:
                         client_id, model, num_samples = item[0], item[1], item[2]
                         # num_samples might be a dict containing client_gradient
-                        if isinstance(num_samples, dict) and 'client_gradient' in num_samples:
-                            grad_hex = num_samples['client_gradient']
+                        if (
+                            isinstance(num_samples, dict)
+                            and "client_gradient" in num_samples
+                        ):
+                            grad_hex = num_samples["client_gradient"]
                             if isinstance(grad_hex, str):
-                                client_grads[client_id] = pickle.loads(bytes.fromhex(grad_hex))
+                                client_grads[client_id] = pickle.loads(
+                                    bytes.fromhex(grad_hex)
+                                )
                             else:
                                 client_grads[client_id] = grad_hex
                             # IMPORTANT: Delete client_gradient after extraction to prevent bloated result JSON
-                            del num_samples['client_gradient']
-                
+                            del num_samples["client_gradient"]
+
+                        weight = None
+                        if isinstance(num_samples, dict):
+                            measurement_weight = num_samples.get(
+                                "measurement_gradient_weight"
+                            )
+                            if measurement_weight is not None:
+                                weight = measurement_weight
+                            else:
+                                augmented_counts = num_samples.get(
+                                    "augmented_label_counts", {}
+                                )
+                                if augmented_counts:
+                                    weight = sum(augmented_counts.values())
+                                else:
+                                    weight = num_samples.get("dataset_size", 0)
+                        else:
+                            weight = num_samples
+
+                        if weight is not None:
+                            client_weights[client_id] = float(weight)
+
                 if client_grads:
                     self.g_measurement_system.client_g_tildes = client_grads
-                    print(f"[G Measurement] Collected gradients from {len(client_grads)} clients")
-                
+                    print(
+                        f"[G Measurement] Collected gradients from {len(client_grads)} clients"
+                    )
+
                 # Compute G metrics
-                result = self.g_measurement_system.compute_g(round_number)
+                result = self.g_measurement_system.compute_g(
+                    round_number, client_weights=client_weights
+                )
                 if result:
                     self.global_dict.add_event("G_MEASUREMENT", result.to_dict())
                     print(f"[G Measurement] Round {round_number} G computed and logged")
-            
+
             # Clear gradient data to release memory
             self.g_measurement_system.clear_round_data()
             gc.collect()
-            
+
             mem_after = process.memory_info().rss / (1024**3)
-            print(f"[G Measurement] Memory: {mem_before:.2f}GB → {mem_after:.2f}GB (freed {mem_before-mem_after:.2f}GB)")
-        
+            print(
+                f"[G Measurement] Memory: {mem_before:.2f}GB → {mem_after:.2f}GB (freed {mem_before - mem_after:.2f}GB)"
+            )
+
         # ===== CLEANUP: Always remove client_gradient from model_queue to prevent JSON bloat =====
         for item in model_queue.queue:
             if len(item) >= 3:
                 num_samples = item[2]
-                if isinstance(num_samples, dict) and 'client_gradient' in num_samples:
-                    del num_samples['client_gradient']
+                if isinstance(num_samples, dict) and "client_gradient" in num_samples:
+                    del num_samples["client_gradient"]
         # ===== END G MEASUREMENT =====
 
         client_ids = [model[0] for model in model_queue.queue]
@@ -1086,14 +1226,16 @@ class USFLStageOrganizer(BaseStageOrganizer):
 
             # Get the effective epochs for this round
             # Use internal dict for .get() with default value support
-            effective_epochs = self.global_dict.global_dict.get(f"round_{round_number}_effective_epochs", 1)
+            effective_epochs = self.global_dict.global_dict.get(
+                f"round_{round_number}_effective_epochs", 1
+            )
 
             # Log to file
             USFLLogger.log_cumulative_usage_update(round_number, effective_epochs)
 
             for client_id_str, class_counts in self.client_label_counts.items():
                 if client_id_str not in cumulative_usage:
-                    continue # Should be initialized, but as a safeguard
+                    continue  # Should be initialized, but as a safeguard
 
                 for class_label, amount_to_use in class_counts.items():
                     if amount_to_use == 0:
@@ -1133,8 +1275,12 @@ class USFLStageOrganizer(BaseStageOrganizer):
                         target_bin = self._get_exponential_bin(new_usage_count)
 
                         # Record changes
-                        bin_changes[current_bin] = bin_changes.get(current_bin, 0) - can_move
-                        bin_changes[target_bin] = bin_changes.get(target_bin, 0) + can_move
+                        bin_changes[current_bin] = (
+                            bin_changes.get(current_bin, 0) - can_move
+                        )
+                        bin_changes[target_bin] = (
+                            bin_changes.get(target_bin, 0) + can_move
+                        )
 
                         remaining_to_move -= can_move
 

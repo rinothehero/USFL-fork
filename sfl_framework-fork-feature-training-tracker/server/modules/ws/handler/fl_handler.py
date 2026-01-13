@@ -36,10 +36,20 @@ class FLHandler(BaseHandler):
 
         for key in ["model", "signiture"]:
             params.pop(key)
-        
+
         # Filter out gradient-related fields to prevent JSON bloat
-        filtered_params = {k: v for k, v in params.items() 
-                          if k not in ['measurement_gradient', 'client_gradients', 'gradient_weights', 'client_gradient']}
+        filtered_params = {
+            k: v
+            for k, v in params.items()
+            if k
+            not in [
+                "measurement_gradient",
+                "client_gradients",
+                "gradient_weights",
+                "client_gradient",
+                "measurement_gradient_weight",
+            ]
+        }
 
         model_queue = self.global_dict.get("model_queue")
         result = model_queue.add_model(params["client_id"], model, signiture, params)

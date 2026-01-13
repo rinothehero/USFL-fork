@@ -68,21 +68,38 @@ class SFLStageOrganizer(BaseStageOrganizer):
 
     async def _post_round(self):
         import pickle
-        
+
         submit_params = {
             "dataset_size": len(self.dataset.get_trainset()),
         }
-        
+
         # G Measurement: Include client gradient if collected
-        if hasattr(self.model_trainer, 'measurement_gradient') and self.model_trainer.measurement_gradient is not None:
-            submit_params["client_gradient"] = pickle.dumps(self.model_trainer.measurement_gradient).hex()
+        if (
+            hasattr(self.model_trainer, "measurement_gradient")
+            and self.model_trainer.measurement_gradient is not None
+        ):
+            submit_params["client_gradient"] = pickle.dumps(
+                self.model_trainer.measurement_gradient
+            ).hex()
+            if self.model_trainer.measurement_gradient_weight is not None:
+                submit_params["measurement_gradient_weight"] = (
+                    self.model_trainer.measurement_gradient_weight
+                )
             self.model_trainer.measurement_gradient = None
-        elif hasattr(self.model_trainer, 'accumulated_gradients') and self.model_trainer.accumulated_gradients:
+            self.model_trainer.measurement_gradient_weight = None
+        elif (
+            hasattr(self.model_trainer, "accumulated_gradients")
+            and self.model_trainer.accumulated_gradients
+        ):
             grad_data = self.model_trainer.accumulated_gradients[0]
             submit_params["client_gradient"] = pickle.dumps(grad_data).hex()
+            if self.model_trainer.gradient_weights:
+                submit_params["measurement_gradient_weight"] = (
+                    self.model_trainer.gradient_weights[0]
+                )
             self.model_trainer.accumulated_gradients.clear()
             self.model_trainer.gradient_weights.clear()
-        
+
         await self.post_round.submit_model(
             self.api,
             self.model,

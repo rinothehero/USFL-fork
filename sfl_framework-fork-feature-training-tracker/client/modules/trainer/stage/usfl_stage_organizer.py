@@ -38,7 +38,6 @@ class USFLStageOrganizer(BaseStageOrganizer):
         self.model_trainer = None
 
     async def _pre_round(self):
-        
         await self.pre_round.notify_client_information(
             self.api, filter=["dataset"], dataset=self.dataset
         )
@@ -83,12 +82,12 @@ class USFLStageOrganizer(BaseStageOrganizer):
 
     async def _post_round(self):
         import pickle
-        
+
         # Get augmented (actual used) label counts from training_params
-        augmented_label_counts = self.training_params.get("augmented_dataset_sizes", {}).get(
-            str(self.config.client_id), {}
-        )
-        
+        augmented_label_counts = self.training_params.get(
+            "augmented_dataset_sizes", {}
+        ).get(str(self.config.client_id), {})
+
         submit_params = {
             "client_id": self.config.client_id,
             "round_number": self.training_params.get("round_number", 0),
@@ -96,20 +95,37 @@ class USFLStageOrganizer(BaseStageOrganizer):
             "label_distribution": self.dataset.trainset.get_label_distribution(),
             "augmented_label_counts": augmented_label_counts,  # Actual used data
         }
-        
+
         # G Measurement: Include client gradient if collected
-        if hasattr(self.model_trainer, 'measurement_gradient') and self.model_trainer.measurement_gradient is not None:
+        if (
+            hasattr(self.model_trainer, "measurement_gradient")
+            and self.model_trainer.measurement_gradient is not None
+        ):
             # Send measurement gradient as client_gradient
-            submit_params["client_gradient"] = pickle.dumps(self.model_trainer.measurement_gradient).hex()
+            submit_params["client_gradient"] = pickle.dumps(
+                self.model_trainer.measurement_gradient
+            ).hex()
+            if self.model_trainer.measurement_gradient_weight is not None:
+                submit_params["measurement_gradient_weight"] = (
+                    self.model_trainer.measurement_gradient_weight
+                )
             self.model_trainer.measurement_gradient = None
-        elif hasattr(self.model_trainer, 'accumulated_gradients') and self.model_trainer.accumulated_gradients:
+            self.model_trainer.measurement_gradient_weight = None
+        elif (
+            hasattr(self.model_trainer, "accumulated_gradients")
+            and self.model_trainer.accumulated_gradients
+        ):
             # Send only the first gradient (memory-efficient, already on CPU)
             grad_data = self.model_trainer.accumulated_gradients[0]
             submit_params["client_gradient"] = pickle.dumps(grad_data).hex()
+            if self.model_trainer.gradient_weights:
+                submit_params["measurement_gradient_weight"] = (
+                    self.model_trainer.gradient_weights[0]
+                )
             # Clear after sending to free memory
             self.model_trainer.accumulated_gradients.clear()
             self.model_trainer.gradient_weights.clear()
-        
+
         await self.post_round.submit_model(
             self.api,
             self.model,
