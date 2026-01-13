@@ -297,11 +297,10 @@ def compute_g_score(oracle_grads, current_grads, return_details=False):
     # Compute norms
     oracle_norm = torch.norm(oracle_flat).item()
     current_norm = torch.norm(current_flat).item()
+    oracle_norm_sq = torch.dot(oracle_flat, oracle_flat).item()
     diff = current_flat - oracle_flat
-    G = torch.norm(diff).item()
-    G_rel = (
-        (G / oracle_norm * 100) if oracle_norm > 1e-10 else float("nan")
-    )  # Percentage
+    G = torch.dot(diff, diff).item()
+    G_rel = G / (oracle_norm_sq + 1e-10)
 
     # Compute Cosine Distance (D_cosine)
     if current_norm > 1e-10 and oracle_norm > 1e-10:

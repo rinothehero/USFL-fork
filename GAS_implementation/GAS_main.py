@@ -428,7 +428,6 @@ def finalize_g_measurement(g_measure_state, g_manager, user_parti_num):
         total_weight = sum(g_measure_state["client_batch_sizes"].values())
         if total_weight > 0:
             Vc = 0.0
-            denom_c = 0.0
             for client_id, vec in per_client_vecs.items():
                 weight = (
                     g_measure_state["client_batch_sizes"].get(client_id, 0)
@@ -436,10 +435,14 @@ def finalize_g_measurement(g_measure_state, g_manager, user_parti_num):
                 )
                 diff = vec - oracle_client_vec
                 Vc += weight * torch.dot(diff, diff).item()
-                denom_c += weight * torch.dot(vec, vec).item()
-            variance_client_g = Vc**0.5
+            variance_client_g = Vc
+            oracle_client_norm_sq = torch.dot(
+                oracle_client_vec, oracle_client_vec
+            ).item()
             variance_client_g_rel = (
-                (Vc / denom_c) ** 0.5 if denom_c > 0 else float("nan")
+                Vc / oracle_client_norm_sq
+                if oracle_client_norm_sq > 0
+                else float("nan")
             )
 
     variance_server_g = float("nan")
@@ -449,17 +452,20 @@ def finalize_g_measurement(g_measure_state, g_manager, user_parti_num):
         total_weight = sum(g_measure_state["server_batch_sizes"])
         if total_weight > 0:
             Vs = 0.0
-            denom_s = 0.0
             for vec, batch_size in zip(
                 server_vecs, g_measure_state["server_batch_sizes"]
             ):
                 weight = batch_size / total_weight
                 diff = vec - oracle_server_vec
                 Vs += weight * torch.dot(diff, diff).item()
-                denom_s += weight * torch.dot(vec, vec).item()
-            variance_server_g = Vs**0.5
+            variance_server_g = Vs
+            oracle_server_norm_sq = torch.dot(
+                oracle_server_vec, oracle_server_vec
+            ).item()
             variance_server_g_rel = (
-                (Vs / denom_s) ** 0.5 if denom_s > 0 else float("nan")
+                Vs / oracle_server_norm_sq
+                if oracle_server_norm_sq > 0
+                else float("nan")
             )
 
     split_g = float("nan")
@@ -475,9 +481,9 @@ def finalize_g_measurement(g_measure_state, g_manager, user_parti_num):
     for cid, gd in per_client_g.items():
         print(
             f"  Client {cid}: ||oracle||={gd['oracle_norm']:.4f}, ||current||={gd['current_norm']:.4f}, "
-            f"G={gd['G']:.4f}, G_rel={gd['G_rel']:.1f}%"
+            f"G={gd['G']:.4f}, G_rel={gd['G_rel']:.6f}"
         )
-    print(f"  Average: G={avg_client_g:.4f}, G_rel={avg_g_rel:.1f}%")
+    print(f"  Average: G={avg_client_g:.4f}, G_rel={avg_g_rel:.6f}")
 
     for idx, g_val in enumerate(server_g_list):
         print(f"[G Measurement] Server update {idx}: G={g_val:.6f}")

@@ -273,15 +273,13 @@ def compute_g_metrics(
         print(f"[DEBUG] compute_g_metrics: g_star contains NaN/Inf!")
         return GMetrics(G=float("nan"), G_rel=float("nan"), D_cosine=1.0)
 
-    # G = ||g̃ - g*||
     diff = g_tilde_flat - g_star_flat
-    G = torch.norm(diff).item()
+    G = torch.dot(diff, diff).item()
 
-    # ||g*||
     g_star_norm_val = torch.norm(g_star_flat).item()
+    g_star_norm_sq = torch.dot(g_star_flat, g_star_flat).item()
 
-    # G_rel = G / (||g*|| + ε)
-    G_rel = G / (g_star_norm_val + epsilon)
+    G_rel = G / (g_star_norm_sq + epsilon)
 
     # D_cosine = 1 - cos(g̃, g*)
     g_tilde_norm_val = torch.norm(g_tilde_flat).item()
@@ -957,12 +955,11 @@ class GMeasurementSystem:
         g_tilde_flat = g_tilde.flatten().float()
         g_oracle_flat = g_oracle.flatten().float()
 
-        # G = L2 norm
-        G = torch.norm(g_tilde_flat - g_oracle_flat).item()
+        G = torch.dot(g_tilde_flat - g_oracle_flat, g_tilde_flat - g_oracle_flat).item()
 
-        # G_rel = G / ||oracle||
         oracle_norm = torch.norm(g_oracle_flat).item()
-        G_rel = G / (oracle_norm + epsilon)
+        oracle_norm_sq = torch.dot(g_oracle_flat, g_oracle_flat).item()
+        G_rel = G / (oracle_norm_sq + epsilon)
 
         # D_cosine = 1 - cos(g_tilde, g_oracle)
         tilde_norm = torch.norm(g_tilde_flat).item()
@@ -1072,17 +1069,16 @@ class GMeasurementSystem:
                 )
                 if total_weight > 0:
                     Vc = 0.0
-                    denom_c = 0.0
                     for client_id, g_tilde in self.client_g_tildes.items():
                         g_tilde_norm = normalize_grad_keys(g_tilde)
                         vec = gradient_to_vector(g_tilde_norm, oracle_keys)
                         weight = client_weights.get(client_id, 1.0) / total_weight
                         diff = vec - oracle_vec
                         Vc += weight * torch.dot(diff, diff).item()
-                        denom_c += weight * torch.dot(vec, vec).item()
-                    variance_client_g = Vc**0.5
+                    variance_client_g = Vc
+                    oracle_norm_sq = torch.dot(oracle_vec, oracle_vec).item()
                     variance_client_g_rel = (
-                        (Vc / denom_c) ** 0.5 if denom_c > 0 else float("nan")
+                        Vc / oracle_norm_sq if oracle_norm_sq > 0 else float("nan")
                     )
 
             if self.oracle_server_grad and self.server_g_tildes:
@@ -1095,19 +1091,16 @@ class GMeasurementSystem:
                 total_weight = sum(weights)
                 if total_weight > 0:
                     Vs = 0.0
-                    denom_s = 0.0
                     for server_grad, weight in zip(self.server_g_tildes, weights):
                         server_grad_norm = normalize_grad_keys(server_grad)
                         server_vec = gradient_to_vector(server_grad_norm, server_keys)
                         scaled_weight = weight / total_weight
                         diff = server_vec - oracle_vec
                         Vs += scaled_weight * torch.dot(diff, diff).item()
-                        denom_s += (
-                            scaled_weight * torch.dot(server_vec, server_vec).item()
-                        )
-                    variance_server_g = Vs**0.5
+                    variance_server_g = Vs
+                    oracle_norm_sq = torch.dot(oracle_vec, oracle_vec).item()
                     variance_server_g_rel = (
-                        (Vs / denom_s) ** 0.5 if denom_s > 0 else float("nan")
+                        Vs / oracle_norm_sq if oracle_norm_sq > 0 else float("nan")
                     )
 
             result.variance_client_g = variance_client_g

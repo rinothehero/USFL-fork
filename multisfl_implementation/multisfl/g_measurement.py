@@ -148,12 +148,13 @@ def compute_g_metrics(
         return GMetrics(G=float("nan"), G_rel=float("nan"), D_cosine=1.0)
 
     diff = g_tilde_flat - g_oracle_flat
-    G = torch.norm(diff).item()
+    G = torch.dot(diff, diff).item()
 
-    oracle_norm = torch.norm(g_oracle_flat).item()
-    G_rel = G / (oracle_norm + epsilon)
+    oracle_norm_sq = torch.dot(g_oracle_flat, g_oracle_flat).item()
+    G_rel = G / (oracle_norm_sq + epsilon)
 
     tilde_norm = torch.norm(g_tilde_flat).item()
+    oracle_norm = torch.norm(g_oracle_flat).item()
     if tilde_norm > epsilon and oracle_norm > epsilon:
         dot_product = torch.dot(g_tilde_flat, g_oracle_flat).item()
         cos_sim = dot_product / (tilde_norm * oracle_norm)
@@ -393,15 +394,14 @@ class GMeasurementSystem:
             if total_weight > 0:
                 oracle_vec = gradient_to_vector(self.oracle_client_grad, oracle_keys)
                 Vc = 0.0
-                denom_c = 0.0
                 for client_id, vec in per_client_vecs.items():
                     weight = client_weight_map.get(client_id, 1.0) / total_weight
                     diff = vec - oracle_vec
                     Vc += weight * torch.dot(diff, diff).item()
-                    denom_c += weight * torch.dot(vec, vec).item()
-                variance_client_g = Vc**0.5
+                variance_client_g = Vc
+                oracle_norm_sq = torch.dot(oracle_vec, oracle_vec).item()
                 variance_client_g_rel = (
-                    (Vc / denom_c) ** 0.5 if denom_c > 0 else float("nan")
+                    Vc / oracle_norm_sq if oracle_norm_sq > 0 else float("nan")
                 )
 
         if torch.cuda.is_available():
@@ -482,15 +482,14 @@ class GMeasurementSystem:
             if total_weight > 0:
                 oracle_vec = gradient_to_vector(self.oracle_server_grad, oracle_keys)
                 Vs = 0.0
-                denom_s = 0.0
                 for vec, weight in zip(per_batch_vecs, per_batch_weights):
                     w = weight / total_weight
                     diff = vec - oracle_vec
                     Vs += w * torch.dot(diff, diff).item()
-                    denom_s += w * torch.dot(vec, vec).item()
-                variance_server_g = Vs**0.5
+                variance_server_g = Vs
+                oracle_norm_sq = torch.dot(oracle_vec, oracle_vec).item()
                 variance_server_g_rel = (
-                    (Vs / denom_s) ** 0.5 if denom_s > 0 else float("nan")
+                    Vs / oracle_norm_sq if oracle_norm_sq > 0 else float("nan")
                 )
 
         server_model.zero_grad(set_to_none=True)
