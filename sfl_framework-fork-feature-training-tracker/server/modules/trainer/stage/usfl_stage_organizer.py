@@ -968,7 +968,7 @@ class USFLStageOrganizer(BaseStageOrganizer):
                         collect_server_grad=is_diagnostic,
                     )
 
-                    if is_diagnostic and server_grad:
+                    if is_diagnostic and server_grad and iteration_count == 1:
                         batch_weight = sum(
                             len(act["labels"]) for act in non_empty_activations
                         )
