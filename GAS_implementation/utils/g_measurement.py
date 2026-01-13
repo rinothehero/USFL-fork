@@ -118,12 +118,12 @@ def compute_oracle_gradients(
             'split': gradient tensor at split layer (on CPU)
         }
     """
-    user_model.eval()
-    server_model.eval()
-
     # Backup BN stats
     user_bn_stats = backup_bn_stats(user_model)
     server_bn_stats = backup_bn_stats(server_model)
+
+    user_model.train()
+    server_model.train()
 
     client_param_names = get_param_names(user_model)
     server_param_names = get_param_names(server_model)
