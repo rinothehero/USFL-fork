@@ -610,6 +610,15 @@ while epoch != epochs:
                 and g_manager is not None
                 and g_manager.should_measure(epoch)
             ):
+                from g_measurement import (
+                    backup_bn_stats,
+                    restore_bn_stats,
+                    collect_current_gradients,
+                    compute_all_g_scores,
+                    assert_param_name_alignment,
+                    compute_g_score,
+                )
+
                 # Compute Oracle gradients (full training data)
                 g_manager.compute_oracle(
                     user_model, server_model, full_train_loader, criterion
@@ -627,14 +636,6 @@ while epoch != epochs:
                     )
 
                 # Backup BN stats before Current gradient computation
-                from g_measurement import (
-                    backup_bn_stats,
-                    restore_bn_stats,
-                    collect_current_gradients,
-                    compute_all_g_scores,
-                    assert_param_name_alignment,
-                )
-
                 user_bn_backup = backup_bn_stats(user_model)
                 server_bn_backup = backup_bn_stats(server_model)
 
@@ -642,7 +643,7 @@ while epoch != epochs:
                 server_model.train()
 
                 # ========== Client G: Compute for EACH participating client ==========
-                from g_measurement import compute_g_score
+                # from g_measurement import compute_g_score  <-- Removed redundant import
 
                 per_client_g = {}
 
