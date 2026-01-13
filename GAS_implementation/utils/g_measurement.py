@@ -118,9 +118,8 @@ def compute_oracle_gradients(
             'split': gradient tensor at split layer (on CPU)
         }
     """
-    # Use train() to match actual training behavior (BN/Dropout), then restore stats.
-    user_model.train()
-    server_model.train()
+    user_model.eval()
+    server_model.eval()
 
     # Backup BN stats
     user_bn_stats = backup_bn_stats(user_model)
@@ -132,9 +131,9 @@ def compute_oracle_gradients(
     client_grad_accum = [torch.zeros_like(p).cpu() for p in user_model.parameters()]
     server_grad_accum = [torch.zeros_like(p).cpu() for p in server_model.parameters()]
     split_grad_accum = None
-    total_samples = 0
+    batch_count = 0
     for images, labels in train_loader:
-        if max_batches is not None and total_samples >= max_batches * images.size(0):
+        if max_batches is not None and batch_count >= max_batches:
             break
 
         images = images.to(device)
@@ -153,15 +152,15 @@ def compute_oracle_gradients(
             activation = split_output
             server_output = server_model(split_output)
 
-        # Use reduction='sum' for mathematically correct oracle gradient
-        # (each sample weighted equally regardless of batch size)
+        # Use reduction='mean' to match sfl_framework (per-batch mean, then average over batches)
         loss = torch.nn.functional.cross_entropy(
-            server_output, labels.long(), reduction="sum"
+            server_output, labels.long(), reduction="mean"
         )
 
         # Backward pass
         loss.backward()
 
+        # Accumulate client gradients (per-batch mean)
         for i, p in enumerate(user_model.parameters()):
             if p.grad is not None:
                 client_grad_accum[i] += p.grad.cpu()
@@ -176,16 +175,16 @@ def compute_oracle_gradients(
         if split_grad_accum is None and activation.grad is not None:
             split_grad_accum = activation.grad.mean(dim=0).clone().cpu()
 
-        total_samples += labels.size(0)
+        batch_count += 1
 
         # Clean up
         user_model.zero_grad()
         server_model.zero_grad()
         del images, labels, split_output, server_output, loss
 
-    if total_samples > 0:
-        client_grad_accum = [g / total_samples for g in client_grad_accum]
-        server_grad_accum = [g / total_samples for g in server_grad_accum]
+    if batch_count > 0:
+        client_grad_accum = [g / batch_count for g in client_grad_accum]
+        server_grad_accum = [g / batch_count for g in server_grad_accum]
 
     # Restore BN stats
     restore_bn_stats(user_model, user_bn_stats, device)
@@ -300,8 +299,9 @@ def compute_g_score(oracle_grads, current_grads, return_details=False):
     current_norm = torch.norm(current_flat).item()
     diff = current_flat - oracle_flat
     G = torch.norm(diff).item()
-    # Relative error ratio (unitless) for cross-framework comparability.
-    G_rel = (G / oracle_norm) if oracle_norm > 1e-10 else float("nan")
+    G_rel = (
+        (G / oracle_norm * 100) if oracle_norm > 1e-10 else float("nan")
+    )  # Percentage
 
     # Compute Cosine Distance (D_cosine)
     if current_norm > 1e-10 and oracle_norm > 1e-10:
