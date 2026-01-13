@@ -46,6 +46,22 @@ class GradientCollector:
         torch.cuda.empty_cache()
 
 
+def get_param_names(model):
+    return [name for name, _ in model.named_parameters()]
+
+
+def assert_param_name_alignment(expected_names, model, label):
+    current_names = get_param_names(model)
+    if current_names != expected_names:
+        missing = [name for name in expected_names if name not in current_names]
+        extra = [name for name in current_names if name not in expected_names]
+        raise ValueError(
+            "[G Measurement] Param name mismatch for "
+            f"{label}: missing={missing[:5]}, extra={extra[:5]}, "
+            f"missing_count={len(missing)}, extra_count={len(extra)}"
+        )
+
+
 def backup_bn_stats(model):
     """
     Backup only BatchNorm running statistics (memory-efficient).
@@ -109,6 +125,9 @@ def compute_oracle_gradients(
     # Backup BN stats
     user_bn_stats = backup_bn_stats(user_model)
     server_bn_stats = backup_bn_stats(server_model)
+
+    client_param_names = get_param_names(user_model)
+    server_param_names = get_param_names(server_model)
 
     client_grad_accum = [torch.zeros_like(p).cpu() for p in user_model.parameters()]
     server_grad_accum = [torch.zeros_like(p).cpu() for p in server_model.parameters()]
@@ -179,6 +198,8 @@ def compute_oracle_gradients(
         "client": client_grad_accum,
         "server": server_grad_accum,
         "split": split_grad_accum,
+        "client_names": client_param_names,
+        "server_names": server_param_names,
     }
 
 

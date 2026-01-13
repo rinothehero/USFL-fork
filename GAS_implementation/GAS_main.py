@@ -55,9 +55,10 @@ SVHN = False
 use_resnet = True
 split_ratio = "quarter"  # Legacy: 'half' or 'quarter' (only if split_layer is None)
 split_layer = "layer1.1.bn2"  # Fine-grained: 'layer1', 'layer1.0.bn1', 'layer2', etc.
-split_alexnet = 'default'
+split_alexnet = "default"
 # Random seeds selection
 seed_value = 2023
+random.seed(seed_value)
 torch.manual_seed(seed_value)
 np.random.seed(seed_value)
 torch.cuda.manual_seed(seed_value)
@@ -76,6 +77,8 @@ num_label = 100 if cifar100 else 10
 G_Measurement = True  # Enable 3-perspective G measurement
 G_Measure_Frequency = 10  # Diagnostic round frequency (every N epochs)
 G_Measure_Mode = "strict"  # 'strict' (Global Model) or 'realistic' (Individual Models)
+if G_Measure_Mode != "strict":
+    raise ValueError("G_Measure_Mode must be 'strict' for cross-framework comparison.")
 
 # Simulate real communication environments
 WRTT = True  # True for simulation, False for no simulation
@@ -271,8 +274,7 @@ alldata, alllabel, test_set, transform = Dataset(
     cifar=cifar, mnist=mnist, fmnist=fmnist, cinic=cinic, cifar100=cifar100, SVHN=SVHN
 )
 test_loader = dataloader.DataLoader(dataset=test_set, batch_size=128, shuffle=True)
-train_index = np.arange(0, len(alldata))
-random.shuffle(train_index)
+train_index = np.random.permutation(len(alldata))
 train_img = np.array(alldata)[train_index]
 train_label = np.array(alllabel)[train_index]
 users_data = Data_Partition(
@@ -289,6 +291,7 @@ users_data = Data_Partition(
     classOfLabel=num_label,
     label_dirichlet=label_dirichlet,
     min_require_size=min_require_size,
+    seed=seed_value,
 )
 
 # Model initialization
@@ -610,7 +613,12 @@ while epoch != epochs:
                 and g_measure_state["active"]
                 and g_measure_state["epoch"] == epoch
             ):
-                from g_measurement import backup_bn_stats, restore_bn_stats, compute_g_score
+                from g_measurement import (
+                    backup_bn_stats,
+                    restore_bn_stats,
+                    compute_g_score,
+                    assert_param_name_alignment,
+                )
 
                 if g_manager.oracle_grads is None:
                     print("[G Measurement] Warning: Oracle not available, skipping.")
@@ -649,7 +657,8 @@ while epoch != epochs:
                                 continue
                             idx = g_measure_state["order_snapshot"].index(client_id)
                             user_model.load_state_dict(
-                                g_measure_state["users_param_snapshot"][idx], strict=True
+                                g_measure_state["users_param_snapshot"][idx],
+                                strict=True,
                             )
 
                         client_images_cpu, client_labels_cpu = g_measure_state[
@@ -704,9 +713,7 @@ while epoch != epochs:
                         avg_g_rel = sum(
                             gd["G_rel"] for gd in per_client_g.values()
                         ) / len(per_client_g)
-                        print(
-                            f"  Average: G={avg_client_g:.4f}, G_rel={avg_g_rel:.4f}"
-                        )
+                        print(f"  Average: G={avg_client_g:.4f}, G_rel={avg_g_rel:.4f}")
                     else:
                         avg_client_g = float("nan")
                         print("[G Measurement] Warning: No client batches collected.")
@@ -731,7 +738,8 @@ while epoch != epochs:
                                 split_client_id
                             )
                             user_model.load_state_dict(
-                                g_measure_state["users_param_snapshot"][idx], strict=True
+                                g_measure_state["users_param_snapshot"][idx],
+                                strict=True,
                             )
 
                         split_images_cpu, split_labels_cpu = g_measure_state[
@@ -752,9 +760,7 @@ while epoch != epochs:
                             split_output.retain_grad()
 
                         split_server_output = server_model(split_output)
-                        split_loss = criterion(
-                            split_server_output, split_labels.long()
-                        )
+                        split_loss = criterion(split_server_output, split_labels.long())
                         split_loss.backward()
 
                         current_split_grad = (
@@ -782,9 +788,7 @@ while epoch != epochs:
                             "server_batch"
                         ]
                         server_input = (
-                            server_features_cpu.to(device)
-                            .detach()
-                            .requires_grad_(True)
+                            server_features_cpu.to(device).detach().requires_grad_(True)
                         )
                         server_labels = server_labels_cpu.to(device)
 
@@ -919,9 +923,7 @@ while epoch != epochs:
                 )
                 pending_g_measure_start_epoch = None
             else:
-                order_list = (
-                    order.tolist() if hasattr(order, "tolist") else list(order)
-                )
+                order_list = order.tolist() if hasattr(order, "tolist") else list(order)
                 g_measure_state["active"] = True
                 g_measure_state["epoch"] = pending_g_measure_start_epoch
                 g_measure_state["order_snapshot"] = order_list
@@ -945,6 +947,17 @@ while epoch != epochs:
                     g_manager.compute_oracle(
                         user_model, server_model, full_train_loader, criterion
                     )
+                    if g_manager.oracle_grads is not None:
+                        assert_param_name_alignment(
+                            g_manager.oracle_grads["client_names"],
+                            user_model,
+                            "client",
+                        )
+                        assert_param_name_alignment(
+                            g_manager.oracle_grads["server_names"],
+                            server_model,
+                            "server",
+                        )
 
                 pending_g_measure_start_epoch = None
     else:

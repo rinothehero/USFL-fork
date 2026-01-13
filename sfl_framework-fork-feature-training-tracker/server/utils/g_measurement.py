@@ -246,8 +246,18 @@ def compute_g_metrics(
     g_tilde_norm = normalize_keys(g_tilde)
     g_star_norm = normalize_keys(g_star)
 
-    # 공통 키만 사용 (순서 보장을 위해 sorted)
-    common_keys = sorted(set(g_tilde_norm.keys()) & set(g_star_norm.keys()))
+    tilde_keys = set(g_tilde_norm.keys())
+    star_keys = set(g_star_norm.keys())
+    if tilde_keys != star_keys:
+        missing = sorted(star_keys - tilde_keys)
+        extra = sorted(tilde_keys - star_keys)
+        raise ValueError(
+            "[G Measurement] Param key mismatch: "
+            f"missing={missing[:5]}, extra={extra[:5]}, "
+            f"missing_count={len(missing)}, extra_count={len(extra)}"
+        )
+
+    common_keys = sorted(tilde_keys)
 
     if not common_keys:
         print(f"[DEBUG] compute_g_metrics: No common keys!")

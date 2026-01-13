@@ -10,7 +10,7 @@ import datetime
 
 
 class TrainSet(Data.Dataset):
-    def __init__(self,data,label,transform):
+    def __init__(self, data, label, transform):
         self.data = data
         self.label = label
         self.transform = transform
@@ -27,6 +27,7 @@ class TrainSet(Data.Dataset):
         image = self.transform(image)
         return image, target
 
+
 class CINIC10(Data.Dataset):
     def __init__(self, root, train=True, transform=None):
         self.root = root
@@ -34,9 +35,11 @@ class CINIC10(Data.Dataset):
         self.transform = transform
 
         if self.train:
-            data_dir = os.path.join(self.root, 'train')
+            data_dir = os.path.join(self.root, "train")
         else:
-            data_dir = os.path.join(self.root, 'test')  # or 'test' depending on your requirement
+            data_dir = os.path.join(
+                self.root, "test"
+            )  # or 'test' depending on your requirement
 
         self.image_paths = []
         self.labels = []
@@ -54,8 +57,8 @@ class CINIC10(Data.Dataset):
         image_path = self.image_paths[idx]
         label = self.labels[idx]
         image = Image.open(image_path)
-        if image.mode != 'RGB':
-            image = image.convert('RGB')
+        if image.mode != "RGB":
+            image = image.convert("RGB")
 
         if self.train:
             image = np.array(image)
@@ -107,120 +110,161 @@ class CustomDataset(Data.Dataset):
         return image, label
 
 
-def Dataset(cifar = False, mnist = False, fmnist = False, cinic = False, cifar100 = False, SVHN = False):
+def Dataset(
+    cifar=False, mnist=False, fmnist=False, cinic=False, cifar100=False, SVHN=False
+):
     print("data preprocessing...")
     if cifar == True:
-        train_transform = transforms.Compose([
-            transforms.RandomCrop(32, padding=4),
-            transforms.ToTensor(),
-            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-            transforms.RandomHorizontalFlip()
-        ])
+        train_transform = transforms.Compose(
+            [
+                transforms.RandomCrop(32, padding=4),
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    (0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)
+                ),
+                transforms.RandomHorizontalFlip(),
+            ]
+        )
 
-        test_transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-        ])
+        test_transform = transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    (0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)
+                ),
+            ]
+        )
 
         train_set = torchvision.datasets.CIFAR10(
-            root=r'../data', train=True,  transform=train_transform, download=True)
+            root=r"../data", train=True, transform=train_transform, download=True
+        )
 
         test_set = torchvision.datasets.CIFAR10(
-            root=r'../data', train=False, transform=test_transform)
+            root=r"../data", train=False, transform=test_transform
+        )
 
         transform = train_transform
         train_img = train_set.data
         train_label = train_set.targets
 
-
     elif mnist == True:
-        transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.1307,), (0.3081,))
-        ])
+        transform = transforms.Compose(
+            [transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]
+        )
         train_set = torchvision.datasets.MNIST(
-            root=r'../data', train=True, transform=transform, download=False)
+            root=r"../data", train=True, transform=transform, download=False
+        )
 
         test_set = torchvision.datasets.MNIST(
-            root=r'../data', train=False, transform=transform)
+            root=r"../data", train=False, transform=transform
+        )
         train_img = train_set.data
         train_label = train_set.targets
 
     elif fmnist == True:
-        transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.286,), (0.3205,))
-        ])
+        transform = transforms.Compose(
+            [transforms.ToTensor(), transforms.Normalize((0.286,), (0.3205,))]
+        )
         train_set = torchvision.datasets.FashionMNIST(
-            root=r'../data', train=True, transform=transform, download=True)
+            root=r"../data", train=True, transform=transform, download=True
+        )
 
         test_set = torchvision.datasets.FashionMNIST(
-            root=r'../data', train=False, transform=transform, download=True)
+            root=r"../data", train=False, transform=transform, download=True
+        )
         train_img = train_set.data
         train_label = train_set.targets
     elif cinic == True:
         cinic_mean = [0.47889522, 0.47227842, 0.43047404]
         cinic_std = [0.24205776, 0.23828046, 0.25874835]
 
-        train_transform = transforms.Compose([
-            transforms.RandomCrop(32, padding=4),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=cinic_mean, std=cinic_std),
-            transforms.RandomHorizontalFlip()
-        ])
+        train_transform = transforms.Compose(
+            [
+                transforms.RandomCrop(32, padding=4),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=cinic_mean, std=cinic_std),
+                transforms.RandomHorizontalFlip(),
+            ]
+        )
         # Transformer for test set
         test_transform = transforms.Compose(
-            [transforms.ToTensor(), transforms.Normalize(mean=cinic_mean, std=cinic_std), ]
+            [
+                transforms.ToTensor(),
+                transforms.Normalize(mean=cinic_mean, std=cinic_std),
+            ]
         )
 
-        train_set = CINIC10(root=r'../data/CINIC-10', train=True, transform=train_transform)
-        test_set = CINIC10(root=r'../data/CINIC-10', train=False, transform=test_transform)
+        train_set = CINIC10(
+            root=r"../data/CINIC-10", train=True, transform=train_transform
+        )
+        test_set = CINIC10(
+            root=r"../data/CINIC-10", train=False, transform=test_transform
+        )
 
         transform = train_transform
 
-        train_img, train_label = np.array([s[0] for s in train_set]), np.array([int(s[1]) for s in train_set])
+        train_img, train_label = (
+            np.array([s[0] for s in train_set]),
+            np.array([int(s[1]) for s in train_set]),
+        )
 
     elif cifar100:
         mean_cifar100 = [0.5070751592371323, 0.48654887331495095, 0.4409178433670343]
         std_cifar100 = [0.2673342858792401, 0.2564384629170883, 0.27615047132568404]
-        train_transform = transforms.Compose([
-            transforms.RandomCrop(32, padding=4),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=mean_cifar100, std=std_cifar100),
-            transforms.RandomHorizontalFlip()
-        ])
-        test_transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize(mean=mean_cifar100, std=std_cifar100),
-        ])
+        train_transform = transforms.Compose(
+            [
+                transforms.RandomCrop(32, padding=4),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=mean_cifar100, std=std_cifar100),
+                transforms.RandomHorizontalFlip(),
+            ]
+        )
+        test_transform = transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Normalize(mean=mean_cifar100, std=std_cifar100),
+            ]
+        )
 
         train_set = torchvision.datasets.CIFAR100(
-            root=r'../data', train=True, transform=train_transform, download=False)
+            root=r"../data", train=True, transform=train_transform, download=False
+        )
 
         test_set = torchvision.datasets.CIFAR100(
-            root=r'../data', train=False, transform=test_transform)
+            root=r"../data", train=False, transform=test_transform
+        )
 
         transform = train_transform
         train_img = train_set.data
         train_label = train_set.targets
 
     elif SVHN:
-        train_transform = transforms.Compose([
-            # transforms.RandomCrop(32, padding=4),
-            transforms.ToTensor(),
-            transforms.Normalize((0.4377, 0.4438, 0.4728), (0.1980, 0.2010, 0.1970)),
-            # transforms.RandomHorizontalFlip()
-        ])
+        train_transform = transforms.Compose(
+            [
+                # transforms.RandomCrop(32, padding=4),
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    (0.4377, 0.4438, 0.4728), (0.1980, 0.2010, 0.1970)
+                ),
+                # transforms.RandomHorizontalFlip()
+            ]
+        )
 
-        test_transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.4377, 0.4438, 0.4728), (0.1980, 0.2010, 0.1970)),
-        ])
+        test_transform = transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    (0.4377, 0.4438, 0.4728), (0.1980, 0.2010, 0.1970)
+                ),
+            ]
+        )
         train_set = torchvision.datasets.SVHN(
-            root=r'../data', split='train', download=False, transform=train_transform)
+            root=r"../data", split="train", download=False, transform=train_transform
+        )
 
         test_set = torchvision.datasets.SVHN(
-            root=r'../data', split='test', download=False, transform=test_transform)
+            root=r"../data", split="test", download=False, transform=test_transform
+        )
 
         transform = train_transform
         train_img = train_set.data
@@ -236,72 +280,105 @@ def Dataset(cifar = False, mnist = False, fmnist = False, cinic = False, cifar10
     return train_img, train_label, test_set, transform
 
 
-def Data_Partition(iid, dirichlet, train_img, train_label, transform, user_num, batchSize, alpha=0.1,
-                   shard=2, drop=True, classOfLabel=10, label_dirichlet=False, min_require_size=10):
+def Data_Partition(
+    iid,
+    dirichlet,
+    train_img,
+    train_label,
+    transform,
+    user_num,
+    batchSize,
+    alpha=0.1,
+    shard=2,
+    drop=True,
+    classOfLabel=10,
+    label_dirichlet=False,
+    min_require_size=10,
+    seed=None,
+):
     users_data = []
+    rng = np.random.default_rng(seed)
     if iid:
         udata_size = int(len(train_label) / user_num)
         for i in range(user_num):
-            train_set = TrainSet(train_img[udata_size * i:(udata_size * (i + 1))],
-                           train_label[udata_size * i:(udata_size * (i + 1))], transform)
+            train_set = TrainSet(
+                train_img[udata_size * i : (udata_size * (i + 1))],
+                train_label[udata_size * i : (udata_size * (i + 1))],
+                transform,
+            )
             loader = Data.DataLoader(
-                dataset=train_set,
-                batch_size=batchSize,
-                shuffle=True,
-                drop_last=drop
+                dataset=train_set, batch_size=batchSize, shuffle=True, drop_last=drop
             )
             users_data.append(loader)
     elif dirichlet and shard > 0:
         # Shard + Dirichlet: Each client gets exactly 'shard' classes with Dirichlet distribution
-        print(f"Using Shard + Dirichlet mode: each client gets {shard} classes with alpha={alpha}")
-        indexOfClients = Shard_Dirichlet(train_label, user_num, classOfLabel, alpha, shard, min_require_size=min_require_size)
+        print(
+            f"Using Shard + Dirichlet mode: each client gets {shard} classes with alpha={alpha}"
+        )
+        indexOfClients = Shard_Dirichlet(
+            train_label,
+            user_num,
+            classOfLabel,
+            alpha,
+            shard,
+            min_require_size=min_require_size,
+            rng=rng,
+        )
         for i in range(user_num):
             local_data = train_img[indexOfClients[i]]
             local_label = train_label[indexOfClients[i]]
-            orderOfClient = np.random.permutation(local_data.shape[0])
+            orderOfClient = rng.permutation(local_data.shape[0])
             local_data = local_data[orderOfClient]
             local_label = local_label[orderOfClient]
             set = TrainSet(local_data, local_label, transform)
             loader = Data.DataLoader(
-                dataset=set,
-                batch_size=batchSize,
-                shuffle=True,
-                drop_last=drop
+                dataset=set, batch_size=batchSize, shuffle=True, drop_last=drop
             )
             users_data.append(loader)
     elif dirichlet:
-        indexOfClients = Dirichlet(train_label, user_num, classOfLabel, alpha, min_require_size=10)
+        indexOfClients = Dirichlet(
+            train_label,
+            user_num,
+            classOfLabel,
+            alpha,
+            min_require_size=10,
+            rng=rng,
+        )
         for i in range(user_num):
             local_data = train_img[indexOfClients[i]]
             local_label = train_label[indexOfClients[i]]
-            orderOfClient = np.random.permutation(local_data.shape[0])
+            orderOfClient = rng.permutation(local_data.shape[0])
             local_data = local_data[orderOfClient]
             local_label = local_label[orderOfClient]
             train_set = TrainSet(local_data, local_label, transform)
             loader = Data.DataLoader(
-                dataset=train_set,
-                batch_size=batchSize,
-                shuffle=True,
-                drop_last=drop
+                dataset=train_set, batch_size=batchSize, shuffle=True, drop_last=drop
             )
             users_data.append(loader)
     elif label_dirichlet:
         # Hybrid mode: shard-based class restriction + Dirichlet-based quantity distribution
         # Use the robust Shard_Dirichlet function
-        print(f"[label_dirichlet] Using Shard_Dirichlet: each client gets {shard} classes with alpha={alpha}")
-        indexOfClients = Shard_Dirichlet(train_label, user_num, classOfLabel, alpha, shard, min_require_size=min_require_size)
+        print(
+            f"[label_dirichlet] Using Shard_Dirichlet: each client gets {shard} classes with alpha={alpha}"
+        )
+        indexOfClients = Shard_Dirichlet(
+            train_label,
+            user_num,
+            classOfLabel,
+            alpha,
+            shard,
+            min_require_size=min_require_size,
+            rng=rng,
+        )
         for i in range(user_num):
             local_data = train_img[indexOfClients[i]]
             local_label = train_label[indexOfClients[i]]
-            orderOfClient = np.random.permutation(local_data.shape[0])
+            orderOfClient = rng.permutation(local_data.shape[0])
             local_data = local_data[orderOfClient]
             local_label = local_label[orderOfClient]
             train_set = TrainSet(local_data, local_label, transform)
             loader = Data.DataLoader(
-                dataset=train_set,
-                batch_size=batchSize,
-                shuffle=True,
-                drop_last=drop
+                dataset=train_set, batch_size=batchSize, shuffle=True, drop_last=drop
             )
             users_data.append(loader)
     else:
@@ -314,18 +391,21 @@ def Data_Partition(iid, dirichlet, train_img, train_label, transform, user_num, 
             print("Invalid Data Segmentation")
             interClassShardNum = 0
         else:
-            interClassShardNum = int((shard * user_num) / classOfLabel)  # 表示每个类别的数据需要进一步细分为多少块
+            interClassShardNum = int(
+                (shard * user_num) / classOfLabel
+            )  # 表示每个类别的数据需要进一步细分为多少块
         shard_index = [[] for i in range(classOfLabel * interClassShardNum)]
         for i in range(classOfLabel):
-            shard_index_temp = np.random.permutation(class_index[i])
+            shard_index_temp = rng.permutation(class_index[i])
             nnj = np.size(shard_index_temp)
             for ii in range(interClassShardNum):
-                shard_index[i * interClassShardNum + ii] = shard_index_temp[int(nnj / interClassShardNum)
-                                                                            * ii: int(nnj / interClassShardNum) * (
-                            ii + 1)]
+                shard_index[i * interClassShardNum + ii] = shard_index_temp[
+                    int(nnj / interClassShardNum) * ii : int(nnj / interClassShardNum)
+                    * (ii + 1)
+                ]
 
         order = np.arange(classOfLabel * interClassShardNum)
-        np.random.shuffle(order)
+        rng.shuffle(order)
         print(order)
         for i in range(user_num):
             local_data = None
@@ -338,27 +418,26 @@ def Data_Partition(iid, dirichlet, train_img, train_label, transform, user_num, 
                 else:
                     local_data = np.vstack([local_data, train_img[index_temp]])
                     local_label = np.hstack([local_label, train_label[index_temp]])
-            orderOfClient = np.random.permutation(local_data.shape[0])
+            orderOfClient = rng.permutation(local_data.shape[0])
             local_data = local_data[orderOfClient]
             local_label = local_label[orderOfClient]
             train_set = TrainSet(local_data, local_label, transform)
             loader = Data.DataLoader(
-                dataset=train_set,
-                batch_size=batchSize,
-                shuffle=True,
-                drop_last=drop
+                dataset=train_set, batch_size=batchSize, shuffle=True, drop_last=drop
             )
             users_data.append(loader)
     print("Data processing completed.")
     return users_data
 
 
-def Dirichlet(y_train, n_parties, K=10, alpha=0.1, min_require_size = 10):
-    '''
+def Dirichlet(y_train, n_parties, K=10, alpha=0.1, min_require_size=10, rng=None):
+    """
     K: Number of categories
     n_parties: number of users
     min_require_size: Make sure the user has data, at least min_require_size data.
-    '''
+    """
+    if rng is None:
+        rng = np.random.default_rng()
     min_size = 0
     N = y_train.shape[0]
     party2dataidx = {}
@@ -366,22 +445,32 @@ def Dirichlet(y_train, n_parties, K=10, alpha=0.1, min_require_size = 10):
         idx_batch = [[] for _ in range(n_parties)]
         for k in range(K):
             idx_k = np.where(y_train == k)[0]
-            np.random.shuffle(idx_k)
-            proportions = np.random.dirichlet(np.repeat(alpha, n_parties))
-            proportions = np.array([p * (len(idx_j) < N / n_parties) for p, idx_j in zip(proportions, idx_batch)])
+            rng.shuffle(idx_k)
+            proportions = rng.dirichlet(np.repeat(alpha, n_parties))
+            proportions = np.array(
+                [
+                    p * (len(idx_j) < N / n_parties)
+                    for p, idx_j in zip(proportions, idx_batch)
+                ]
+            )
             proportions = proportions / proportions.sum()
             proportions = (np.cumsum(proportions) * len(idx_k)).astype(int)[:-1]
-            idx_batch = [idx_j + idx.tolist() for idx_j, idx in zip(idx_batch, np.split(idx_k, proportions))]
+            idx_batch = [
+                idx_j + idx.tolist()
+                for idx_j, idx in zip(idx_batch, np.split(idx_k, proportions))
+            ]
             min_size = min([len(idx_j) for idx_j in idx_batch])
 
     for j in range(n_parties):
-        np.random.shuffle(idx_batch[j])
+        rng.shuffle(idx_batch[j])
         party2dataidx[j] = idx_batch[j]
     return party2dataidx
 
 
-def Shard_Dirichlet(y_train, n_parties, K=10, alpha=0.1, shard=2, min_require_size=10):
-    '''
+def Shard_Dirichlet(
+    y_train, n_parties, K=10, alpha=0.1, shard=2, min_require_size=10, rng=None
+):
+    """
     Hybrid approach: Each client gets exactly 'shard' number of classes,
     and within those classes, data is distributed according to Dirichlet distribution.
 
@@ -390,7 +479,9 @@ def Shard_Dirichlet(y_train, n_parties, K=10, alpha=0.1, shard=2, min_require_si
     alpha: Dirichlet concentration parameter
     shard: number of classes per client
     min_require_size: Make sure the user has data, at least min_require_size data.
-    '''
+    """
+    if rng is None:
+        rng = np.random.default_rng()
     min_size = -1  # Initialize to -1 to ensure loop runs at least once
     party2dataidx = {}
 
@@ -413,7 +504,7 @@ def Shard_Dirichlet(y_train, n_parties, K=10, alpha=0.1, shard=2, min_require_si
         class_pool = []
         for k in range(K):
             class_pool.extend([k] * assignments_per_class)
-        np.random.shuffle(class_pool)
+        rng.shuffle(class_pool)
 
         # Assign classes to clients
         for i in range(n_parties):
@@ -423,16 +514,18 @@ def Shard_Dirichlet(y_train, n_parties, K=10, alpha=0.1, shard=2, min_require_si
         # using Dirichlet distribution
         for k in range(K):
             idx_k = np.where(y_train == k)[0]
-            np.random.shuffle(idx_k)
+            rng.shuffle(idx_k)
 
             # Find which clients have this class
-            clients_with_class_k = [i for i in range(n_parties) if k in client2classes[i]]
+            clients_with_class_k = [
+                i for i in range(n_parties) if k in client2classes[i]
+            ]
 
             if len(clients_with_class_k) == 0:
                 continue
 
             # Distribute data of class k among these clients using Dirichlet
-            proportions = np.random.dirichlet(np.repeat(alpha, len(clients_with_class_k)))
+            proportions = rng.dirichlet(np.repeat(alpha, len(clients_with_class_k)))
             proportions = (np.cumsum(proportions) * len(idx_k)).astype(int)[:-1]
             idx_splits = np.split(idx_k, proportions)
 
@@ -445,21 +538,17 @@ def Shard_Dirichlet(y_train, n_parties, K=10, alpha=0.1, shard=2, min_require_si
 
     # Shuffle and return
     for j in range(n_parties):
-        np.random.shuffle(idx_batch[j])
+        rng.shuffle(idx_batch[j])
         party2dataidx[j] = idx_batch[j]
 
     # Print final statistics
-    print(f"[Shard_Dirichlet] Completed: {n_parties} clients, {shard} classes/client, alpha={alpha}")
+    print(
+        f"[Shard_Dirichlet] Completed: {n_parties} clients, {shard} classes/client, alpha={alpha}"
+    )
     for j in range(n_parties):
         labels_in_client = np.unique(y_train[party2dataidx[j]])
-        print(f"  Client {j}: {len(party2dataidx[j])} samples, classes: {labels_in_client}")
+        print(
+            f"  Client {j}: {len(party2dataidx[j])} samples, classes: {labels_in_client}"
+        )
 
     return party2dataidx
-
-
-
-
-
-
-
-

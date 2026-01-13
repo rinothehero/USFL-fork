@@ -112,7 +112,18 @@ def compute_g_metrics(
     if not g_tilde or not g_oracle:
         return GMetrics()
 
-    common_keys = sorted(set(g_tilde.keys()) & set(g_oracle.keys()))
+    tilde_keys = set(g_tilde.keys())
+    oracle_keys = set(g_oracle.keys())
+    if tilde_keys != oracle_keys:
+        missing = sorted(oracle_keys - tilde_keys)
+        extra = sorted(tilde_keys - oracle_keys)
+        raise ValueError(
+            "[G Measurement] Param key mismatch: "
+            f"missing={missing[:5]}, extra={extra[:5]}, "
+            f"missing_count={len(missing)}, extra_count={len(extra)}"
+        )
+
+    common_keys = sorted(tilde_keys)
     if not common_keys:
         return GMetrics()
 
