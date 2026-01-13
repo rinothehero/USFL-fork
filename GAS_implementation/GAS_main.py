@@ -77,6 +77,21 @@ G_Measurement = True  # Enable 3-perspective G measurement
 G_Measure_Frequency = 10  # Diagnostic round frequency (every N epochs)
 G_Measure_Mode = "strict"  # 'strict' (Global Model) or 'realistic' (Individual Models)
 
+# G Measurement Mode: distance-based (default) vs variance-based (SFL-style)
+# Usage: python GAS_main.py true  -> variance-based
+#        python GAS_main.py false -> distance-based
+USE_VARIANCE_G = False
+if len(sys.argv) > 1:
+    arg = sys.argv[1].strip().lower()
+    if arg in {"true", "1", "yes", "y"}:
+        USE_VARIANCE_G = True
+    elif arg in {"false", "0", "no", "n"}:
+        USE_VARIANCE_G = False
+    else:
+        raise ValueError(
+            "First argument must be a boolean (true/false) for USE_VARIANCE_G"
+        )
+
 # Simulate real communication environments
 WRTT = True  # True for simulation, False for no simulation
 
@@ -350,7 +365,9 @@ if G_Measurement:
         "client_order": [],
         "client_grads": {},
         "client_split_grads": {},
+        "client_batch_sizes": {},
         "server_grads": [],
+        "server_batch_sizes": [],
     }
 else:
     g_measure_state = None
@@ -368,7 +385,11 @@ def finalize_g_measurement(g_measure_state, g_manager, user_parti_num):
     ):
         return False
 
+    def flatten_grad_list(grad_list):
+        return torch.cat([g.flatten().float() for g in grad_list])
+
     per_client_g = {}
+    per_client_vecs = {}
     for client_id in g_measure_state["client_order"]:
         current_client_grads = g_measure_state["client_grads"].get(client_id)
         if current_client_grads is None:
@@ -379,6 +400,7 @@ def finalize_g_measurement(g_measure_state, g_manager, user_parti_num):
             return_details=True,
         )
         per_client_g[client_id] = g_details
+        per_client_vecs[client_id] = flatten_grad_list(current_client_grads)
 
     if per_client_g:
         avg_client_g = sum(gd["G"] for gd in per_client_g.values()) / len(per_client_g)
@@ -388,14 +410,57 @@ def finalize_g_measurement(g_measure_state, g_manager, user_parti_num):
         avg_g_rel = float("nan")
 
     server_g_list = []
+    server_vecs = []
     for server_grad in g_measure_state["server_grads"]:
         server_g_list.append(
             compute_g_score(g_manager.oracle_grads["server"], server_grad)
         )
+        server_vecs.append(flatten_grad_list(server_grad))
     if server_g_list:
         avg_server_g = sum(server_g_list) / len(server_g_list)
     else:
         avg_server_g = float("nan")
+
+    variance_client_g = float("nan")
+    variance_client_g_rel = float("nan")
+    if USE_VARIANCE_G and per_client_vecs:
+        oracle_client_vec = flatten_grad_list(g_manager.oracle_grads["client"])
+        total_weight = sum(g_measure_state["client_batch_sizes"].values())
+        if total_weight > 0:
+            Vc = 0.0
+            denom_c = 0.0
+            for client_id, vec in per_client_vecs.items():
+                weight = (
+                    g_measure_state["client_batch_sizes"].get(client_id, 0)
+                    / total_weight
+                )
+                diff = vec - oracle_client_vec
+                Vc += weight * torch.dot(diff, diff).item()
+                denom_c += weight * torch.dot(vec, vec).item()
+            variance_client_g = Vc**0.5
+            variance_client_g_rel = (
+                (Vc / denom_c) ** 0.5 if denom_c > 0 else float("nan")
+            )
+
+    variance_server_g = float("nan")
+    variance_server_g_rel = float("nan")
+    if USE_VARIANCE_G and server_vecs:
+        oracle_server_vec = flatten_grad_list(g_manager.oracle_grads["server"])
+        total_weight = sum(g_measure_state["server_batch_sizes"])
+        if total_weight > 0:
+            Vs = 0.0
+            denom_s = 0.0
+            for vec, batch_size in zip(
+                server_vecs, g_measure_state["server_batch_sizes"]
+            ):
+                weight = batch_size / total_weight
+                diff = vec - oracle_server_vec
+                Vs += weight * torch.dot(diff, diff).item()
+                denom_s += weight * torch.dot(vec, vec).item()
+            variance_server_g = Vs**0.5
+            variance_server_g_rel = (
+                (Vs / denom_s) ** 0.5 if denom_s > 0 else float("nan")
+            )
 
     split_g = float("nan")
     if (
@@ -418,8 +483,22 @@ def finalize_g_measurement(g_measure_state, g_manager, user_parti_num):
         print(f"[G Measurement] Server update {idx}: G={g_val:.6f}")
     print(f"[G Measurement] Server Average G = {avg_server_g:.6f}")
 
-    g_manager.g_history["client_g"].append(avg_client_g)
-    g_manager.g_history["server_g"].append(avg_server_g)
+    if USE_VARIANCE_G:
+        print(
+            f"[G Measurement] Variance Client G = {variance_client_g:.6f}, "
+            f"G_rel = {variance_client_g_rel:.6f}"
+        )
+        print(
+            f"[G Measurement] Variance Server G = {variance_server_g:.6f}, "
+            f"G_rel = {variance_server_g_rel:.6f}"
+        )
+
+    if USE_VARIANCE_G:
+        g_manager.g_history["client_g"].append(variance_client_g)
+        g_manager.g_history["server_g"].append(variance_server_g)
+    else:
+        g_manager.g_history["client_g"].append(avg_client_g)
+        g_manager.g_history["server_g"].append(avg_server_g)
     g_manager.g_history["split_g"].append(split_g)
 
     g_manager.oracle_grads = None
@@ -428,7 +507,9 @@ def finalize_g_measurement(g_measure_state, g_manager, user_parti_num):
     g_measure_state["client_order"] = []
     g_measure_state["client_grads"].clear()
     g_measure_state["client_split_grads"].clear()
+    g_measure_state["client_batch_sizes"].clear()
     g_measure_state["server_grads"].clear()
+    g_measure_state["server_batch_sizes"].clear()
 
     return True
 
@@ -541,6 +622,7 @@ while epoch != epochs:
                 else torch.zeros_like(p).cpu()
                 for p in user_model.parameters()
             ]
+            g_measure_state["client_batch_sizes"][selected_client] = labels.size(0)
             if activation.grad is not None:
                 g_measure_state["client_split_grads"][selected_client] = (
                     activation.grad.mean(dim=0).clone().cpu()
@@ -647,6 +729,7 @@ while epoch != epochs:
                         for p in server_model.parameters()
                     ]
                 )
+                g_measure_state["server_batch_sizes"].append(concat_labels.size(0))
             finalize_g_measurement(g_measure_state, g_manager, user_parti_num)
 
         optimizer_up.step()
