@@ -4,7 +4,7 @@ from .alexnet import AlexNet
 from .distilbert import DistilBert
 from .lenet import LeNet
 from .mobilenet import MobileNet
-from .resnet import ResNet
+from .resnet import ResNet, ResNetCifar
 from .vgg11 import VGG11
 
 if TYPE_CHECKING:
@@ -18,6 +18,8 @@ def get_model(config: "Config", num_classes: int):
         return DistilBert(config, num_classes)
     elif config.model == "resnet18":
         return ResNet(config, num_classes)
+    elif config.model == "resnet18_cifar":
+        return ResNetCifar(config, num_classes)
     elif config.model == "alexnet" or config.model == "alexnet_scala":
         return AlexNet(config, num_classes)
     elif config.model == "mobilenet":

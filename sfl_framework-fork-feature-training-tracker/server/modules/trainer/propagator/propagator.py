@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 
 def get_propagator(config: "Config", model: "Module"):
-    if config.model in ["resnet18"]:
+    if config.model in ["resnet18", "resnet18_cifar"]:
         return ResnetPropagator(model, config)
     elif config.model in ["vgg11", "tiny_vgg11", "lenet", "alexnet"]:
         return VGGPropagator(model, config)

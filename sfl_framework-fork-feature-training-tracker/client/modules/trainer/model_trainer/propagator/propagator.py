@@ -10,9 +10,15 @@ if TYPE_CHECKING:
 
 
 def get_propagator(server_config: "ServerConfig", config: "Config", model: "Module"):
-    if server_config.model == "resnet18":
+    if server_config.model in ["resnet18", "resnet18_cifar"]:
         return ResnetPropagator(model, config)
-    elif server_config.model in ["vgg11", "tiny_vgg11", "mobilenet", "lenet", "alexnet"]:
+    elif server_config.model in [
+        "vgg11",
+        "tiny_vgg11",
+        "mobilenet",
+        "lenet",
+        "alexnet",
+    ]:
         return VGGPropagator(model, config)
     elif server_config.model == "distilbert":
         return DistilbertPropagator(model, config)

@@ -256,6 +256,7 @@ def parse_args(custom_args=None):
         dest="model",
         choices=[
             "resnet18",
+            "resnet18_cifar",
             "lenet",
             "vgg11",
             "distilbert",

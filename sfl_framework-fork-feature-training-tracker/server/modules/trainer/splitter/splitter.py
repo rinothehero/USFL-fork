@@ -17,7 +17,7 @@ def get_splitter(config: "Config"):
         return DistilBertSplitter(config, strategy)
     elif config.model in ["vgg11", "tiny_vgg11", "alexnet", "alexnet_scala", "lenet"]:
         return VGGSplitter(config, strategy)
-    elif config.model == "resnet18":
+    elif config.model in ["resnet18", "resnet18_cifar"]:
         return ResnetSplitter(config, strategy)
     elif config.model == "mobilenet":
         return MobileNetSplitter(config, strategy)
