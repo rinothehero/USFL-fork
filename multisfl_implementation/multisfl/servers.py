@@ -93,13 +93,9 @@ class MainServer:
 
         f_rep = None
         y_rep = None
-        if len(f_replay_list) > 0:
-            if isinstance(f_replay_list[0], tuple):
-                f_rep = f_replay_list
-                y_rep = torch.cat(y_replay_list, dim=0)
-            else:
-                f_rep = torch.cat(f_replay_list, dim=0)
-                y_rep = torch.cat(y_replay_list, dim=0)
+        if len(f_replay_list) > 0 and not isinstance(f_replay_list[0], tuple):
+            f_rep = torch.cat(f_replay_list, dim=0)
+            y_rep = torch.cat(y_replay_list, dim=0)
 
         y_main = y_main.to(self.device)
 
@@ -161,7 +157,10 @@ class MainServer:
             )
             grad_f_main = grad_f_main.detach()
 
-        grad_f_main_norm = float(torch.norm(grad_f_main).item())
+        if isinstance(grad_f_main, tuple):
+            grad_f_main_norm = float(torch.norm(grad_f_main[0]).item())
+        else:
+            grad_f_main_norm = float(torch.norm(grad_f_main).item())
 
         grad_norm_sq = 0.0
         for p in ws.parameters():
