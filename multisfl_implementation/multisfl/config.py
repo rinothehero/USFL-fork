@@ -43,6 +43,7 @@ class MultiSFLConfig:
         "resnet18",
         "resnet18_light",
         "resnet18_flex",
+        "resnet18_image_style",
     ] = "simple"
     split_layer: Optional[str] = None
 

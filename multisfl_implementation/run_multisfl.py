@@ -109,6 +109,7 @@ def parse_args() -> argparse.Namespace:
             "resnet18",
             "resnet18_light",
             "resnet18_flex",
+            "resnet18_image_style",
         ],
     )
     parser.add_argument("--split_layer", type=str, default=None)

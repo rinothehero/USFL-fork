@@ -4,6 +4,16 @@ import numpy as np
 from typing import Tuple, Optional, Union, Literal, Dict, cast, List
 
 
+def disable_inplace(module: nn.Module) -> None:
+    for name, child in module.named_children():
+        if isinstance(child, nn.ReLU):
+            setattr(module, name, nn.ReLU(inplace=False))
+        elif isinstance(child, nn.ReLU6):
+            setattr(module, name, nn.ReLU6(inplace=False))
+        else:
+            disable_inplace(child)
+
+
 # =============================================================================
 # Basic Building Blocks
 # =============================================================================
@@ -331,6 +341,59 @@ class ResNet18Cifar(nn.Module):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
+        x = self.fc(x)
+        return x
+
+
+class ResNet18ImageStyle(nn.Module):
+    def __init__(self, num_classes: int = 10):
+        super(ResNet18ImageStyle, self).__init__()
+        self.in_channels = 64
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.relu = nn.ReLU(inplace=True)
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        self.layer1 = self._make_layer(64, 2, stride=1)
+        self.layer2 = self._make_layer(128, 2, stride=2)
+        self.layer3 = self._make_layer(256, 2, stride=2)
+        self.layer4 = self._make_layer(512, 2, stride=2)
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Linear(512, num_classes)
+        disable_inplace(self)
+
+    def _make_layer(
+        self, out_channels: int, num_blocks: int, stride: int
+    ) -> nn.Sequential:
+        downsample = None
+        if stride != 1 or self.in_channels != out_channels:
+            downsample = nn.Sequential(
+                nn.Conv2d(
+                    self.in_channels,
+                    out_channels,
+                    kernel_size=1,
+                    stride=stride,
+                    bias=False,
+                ),
+                nn.BatchNorm2d(out_channels),
+            )
+        layers = []
+        layers.append(BasicBlock(self.in_channels, out_channels, stride, downsample))
+        self.in_channels = out_channels
+        for _ in range(1, num_blocks):
+            layers.append(BasicBlock(out_channels, out_channels))
+        return nn.Sequential(*layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
@@ -765,28 +828,694 @@ class ResNet18FlexibleServer(nn.Module):
         split_layer_num = self.split_config["layer"]
         split_block = self.split_config["block"]
 
+        x_tensor: torch.Tensor
         if isinstance(x, tuple):
             activation, identity = x
-            x = self._complete_partial_block(activation, identity)
+            x_tensor = self._complete_partial_block(activation, identity)
             if split_block is not None and split_block < 1:
                 layer_attr = f"layer{split_layer_num}"
                 if hasattr(self, layer_attr):
                     layer = getattr(self, layer_attr)
                     for i, block in enumerate(layer):
                         if i > split_block:
-                            x = block(x)
+                            x_tensor = block(x_tensor)
+        else:
+            x_tensor = x
 
         if split_layer_num <= 1 and hasattr(self, "layer2"):
-            x = self.layer2(x)
+            x_tensor = self.layer2(x_tensor)
         if split_layer_num <= 2 and hasattr(self, "layer3"):
-            x = self.layer3(x)
+            x_tensor = self.layer3(x_tensor)
         if split_layer_num <= 3 and hasattr(self, "layer4"):
-            x = self.layer4(x)
+            x_tensor = self.layer4(x_tensor)
 
-        x = self.avgpool(x)
-        x = torch.flatten(x, 1)
-        x = self.fc(x)
+        x_tensor = self.avgpool(x_tensor)
+        x_tensor = torch.flatten(x_tensor, 1)
+        return self.fc(x_tensor)
+
+
+class ResNet18ImageStyleFlexibleClient(nn.Module):
+    def __init__(self, split_layer: str = "layer2"):
+        super(ResNet18ImageStyleFlexibleClient, self).__init__()
+        self.split_config = parse_split_layer(split_layer)
+        self.split_layer = split_layer
+        self.in_channels = 64
+
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.relu = nn.ReLU(inplace=True)
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+
+        self.layer1 = self._make_layer(64, 2, stride=1)
+        if self.split_config["layer"] >= 2:
+            self.layer2 = self._make_layer(128, 2, stride=2)
+        if self.split_config["layer"] >= 3:
+            self.layer3 = self._make_layer(256, 2, stride=2)
+        if self.split_config["layer"] >= 4:
+            self.layer4 = self._make_layer(512, 2, stride=2)
+        disable_inplace(self)
+
+    def _make_layer(
+        self, out_channels: int, num_blocks: int, stride: int
+    ) -> nn.Sequential:
+        downsample = None
+        if stride != 1 or self.in_channels != out_channels:
+            downsample = nn.Sequential(
+                nn.Conv2d(
+                    self.in_channels,
+                    out_channels,
+                    kernel_size=1,
+                    stride=stride,
+                    bias=False,
+                ),
+                nn.BatchNorm2d(out_channels),
+            )
+        layers = []
+        layers.append(BasicBlock(self.in_channels, out_channels, stride, downsample))
+        self.in_channels = out_channels
+        for _ in range(1, num_blocks):
+            layers.append(BasicBlock(out_channels, out_channels))
+        return nn.Sequential(*layers)
+
+    def _forward_partial_block(
+        self, block: BasicBlock, x: torch.Tensor, stop_at: str
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        identity = x
+        if block.downsample is not None:
+            identity = block.downsample(x)
+        out = block.conv1(x)
+        if stop_at == "conv1":
+            return out, identity
+        out = block.bn1(out)
+        if stop_at == "bn1":
+            return out, identity
+        out = block.relu(out)
+        if stop_at == "relu1":
+            return out, identity
+        out = block.conv2(out)
+        if stop_at == "conv2":
+            return out, identity
+        out = block.bn2(out)
+        if stop_at == "bn2":
+            return out, identity
+        out += identity
+        out = block.relu(out)
+        return out, identity
+
+    def forward(
+        self, x: torch.Tensor
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+
+        split_layer = self.split_config["layer"]
+        split_block = self.split_config["block"]
+        split_sublayer = self.split_config["sublayer"]
+
+        if split_layer == 1:
+            if split_block is not None and split_sublayer is not None:
+                for i, block in enumerate(self.layer1):
+                    block = cast(BasicBlock, block)
+                    if i < split_block:
+                        x = block(x)
+                    elif i == split_block:
+                        return self._forward_partial_block(block, x, split_sublayer)
+            elif split_block is not None:
+                for i, block in enumerate(self.layer1):
+                    if i <= split_block:
+                        x = block(x)
+                return x
+            else:
+                x = self.layer1(x)
+            return x
+        else:
+            x = self.layer1(x)
+
+        if split_layer == 2:
+            if split_block is not None and split_sublayer is not None:
+                for i, block in enumerate(self.layer2):
+                    block = cast(BasicBlock, block)
+                    if i < split_block:
+                        x = block(x)
+                    elif i == split_block:
+                        return self._forward_partial_block(block, x, split_sublayer)
+            elif split_block is not None:
+                for i, block in enumerate(self.layer2):
+                    if i <= split_block:
+                        x = block(x)
+                return x
+            else:
+                x = self.layer2(x)
+            return x
+        elif hasattr(self, "layer2"):
+            x = self.layer2(x)
+
+        if split_layer == 3:
+            if split_block is not None and split_sublayer is not None:
+                for i, block in enumerate(self.layer3):
+                    block = cast(BasicBlock, block)
+                    if i < split_block:
+                        x = block(x)
+                    elif i == split_block:
+                        return self._forward_partial_block(block, x, split_sublayer)
+            elif split_block is not None:
+                for i, block in enumerate(self.layer3):
+                    if i <= split_block:
+                        x = block(x)
+                return x
+            else:
+                x = self.layer3(x)
+            return x
+        elif hasattr(self, "layer3"):
+            x = self.layer3(x)
+
+        if split_layer == 4:
+            if hasattr(self, "layer4"):
+                x = self.layer4(x)
+            return x
+
         return x
+
+
+class ResNet18ImageStyleFlexibleServer(nn.Module):
+    def __init__(self, split_layer: str = "layer2", num_classes: int = 10):
+        super(ResNet18ImageStyleFlexibleServer, self).__init__()
+        self.split_config = parse_split_layer(split_layer)
+        self.split_layer = split_layer
+
+        channel_map = {1: 64, 2: 128, 3: 256, 4: 512}
+        split_layer_num = self.split_config["layer"]
+        self.in_channels = channel_map.get(split_layer_num, 64)
+
+        if split_layer_num <= 1:
+            self.layer2 = self._make_layer(128, 2, stride=2)
+        if split_layer_num <= 2:
+            self.layer3 = self._make_layer(256, 2, stride=2)
+        if split_layer_num <= 3:
+            self.layer4 = self._make_layer(512, 2, stride=2)
+
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Linear(512, num_classes)
+        self._build_partial_block_completer()
+        disable_inplace(self)
+
+    def _make_layer(
+        self, out_channels: int, num_blocks: int, stride: int
+    ) -> nn.Sequential:
+        downsample = None
+        if stride != 1 or self.in_channels != out_channels:
+            downsample = nn.Sequential(
+                nn.Conv2d(
+                    self.in_channels,
+                    out_channels,
+                    kernel_size=1,
+                    stride=stride,
+                    bias=False,
+                ),
+                nn.BatchNorm2d(out_channels),
+            )
+        layers = []
+        layers.append(BasicBlock(self.in_channels, out_channels, stride, downsample))
+        self.in_channels = out_channels
+        for _ in range(1, num_blocks):
+            layers.append(BasicBlock(out_channels, out_channels))
+        return nn.Sequential(*layers)
+
+    def _build_partial_block_completer(self):
+        split_sublayer = self.split_config["sublayer"]
+        if split_sublayer is None:
+            self.partial_block = None
+            return
+
+        split_layer_num = self.split_config["layer"]
+        channel_map = {1: 64, 2: 128, 3: 256, 4: 512}
+        out_channels = channel_map[split_layer_num]
+
+        self.partial_block = nn.ModuleDict()
+        if split_sublayer in ["conv1", "bn1", "relu1"]:
+            if split_sublayer == "conv1":
+                self.partial_block["bn1"] = nn.BatchNorm2d(out_channels)
+            self.partial_block["relu"] = nn.ReLU(inplace=True)
+            self.partial_block["conv2"] = nn.Conv2d(
+                out_channels,
+                out_channels,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                bias=False,
+            )
+            self.partial_block["bn2"] = nn.BatchNorm2d(out_channels)
+            self.partial_block["final_relu"] = nn.ReLU(inplace=True)
+        elif split_sublayer == "conv2":
+            self.partial_block["bn2"] = nn.BatchNorm2d(out_channels)
+            self.partial_block["final_relu"] = nn.ReLU(inplace=True)
+        elif split_sublayer == "bn2":
+            self.partial_block["final_relu"] = nn.ReLU(inplace=True)
+
+    def _complete_partial_block(
+        self, activation: torch.Tensor, identity: torch.Tensor
+    ) -> torch.Tensor:
+        split_sublayer = self.split_config["sublayer"]
+        x = activation
+
+        if self.partial_block is not None:
+            if "bn1" in self.partial_block:
+                x = self.partial_block["bn1"](x)
+            if "relu" in self.partial_block and split_sublayer in ["conv1", "bn1"]:
+                x = self.partial_block["relu"](x)
+            if "conv2" in self.partial_block:
+                x = self.partial_block["conv2"](x)
+            if "bn2" in self.partial_block and split_sublayer != "bn2":
+                x = self.partial_block["bn2"](x)
+            x = x + identity
+            x = self.partial_block["final_relu"](x)
+        return x
+
+    def forward(
+        self, x: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]
+    ) -> torch.Tensor:
+        split_layer_num = self.split_config["layer"]
+        split_block = self.split_config["block"]
+
+        x_tensor: torch.Tensor
+        if isinstance(x, tuple):
+            activation, identity = x
+            x_tensor = self._complete_partial_block(activation, identity)
+            if split_block is not None and split_block < 1:
+                layer_attr = f"layer{split_layer_num}"
+                if hasattr(self, layer_attr):
+                    layer = getattr(self, layer_attr)
+                    for i, block in enumerate(layer):
+                        if i > split_block:
+                            x_tensor = block(x_tensor)
+        else:
+            x_tensor = x
+
+        if split_layer_num <= 1 and hasattr(self, "layer2"):
+            x_tensor = self.layer2(x_tensor)
+        if split_layer_num <= 2 and hasattr(self, "layer3"):
+            x_tensor = self.layer3(x_tensor)
+        if split_layer_num <= 3 and hasattr(self, "layer4"):
+            x_tensor = self.layer4(x_tensor)
+
+        x_tensor = self.avgpool(x_tensor)
+        x_tensor = torch.flatten(x_tensor, 1)
+        return self.fc(x_tensor)
+
+
+# =============================================================================
+# Model Selection Factory
+# =============================================================================
+
+
+class ResNet18Cifar(nn.Module):
+    def __init__(self, num_classes: int = 10):
+        super(ResNet18Cifar, self).__init__()
+        self.in_channels = 64
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.relu = nn.ReLU(inplace=True)
+        self.layer1 = self._make_layer(64, 2, stride=1)
+        self.layer2 = self._make_layer(128, 2, stride=2)
+        self.layer3 = self._make_layer(256, 2, stride=2)
+        self.layer4 = self._make_layer(512, 2, stride=2)
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Linear(512, num_classes)
+        self._build_partial_block_completer()
+        disable_inplace(self)
+
+    def _make_layer(
+        self, out_channels: int, num_blocks: int, stride: int
+    ) -> nn.Sequential:
+        downsample = None
+        if stride != 1 or self.in_channels != out_channels:
+            downsample = nn.Sequential(
+                nn.Conv2d(
+                    self.in_channels,
+                    out_channels,
+                    kernel_size=1,
+                    stride=stride,
+                    bias=False,
+                ),
+                nn.BatchNorm2d(out_channels),
+            )
+        layers = []
+        layers.append(BasicBlock(self.in_channels, out_channels, stride, downsample))
+        self.in_channels = out_channels
+        for _ in range(1, num_blocks):
+            layers.append(BasicBlock(out_channels, out_channels))
+        return nn.Sequential(*layers)
+
+    def _build_partial_block_completer(self):
+        split_sublayer = self.split_config["sublayer"]
+        if split_sublayer is None:
+            self.partial_block = None
+            return
+
+        split_layer_num = self.split_config["layer"]
+        channel_map = {1: 64, 2: 128, 3: 256, 4: 512}
+        out_channels = channel_map[split_layer_num]
+
+        self.partial_block = nn.ModuleDict()
+        if split_sublayer in ["conv1", "bn1", "relu1"]:
+            if split_sublayer == "conv1":
+                self.partial_block["bn1"] = nn.BatchNorm2d(out_channels)
+            self.partial_block["relu"] = nn.ReLU(inplace=True)
+            self.partial_block["conv2"] = nn.Conv2d(
+                out_channels,
+                out_channels,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                bias=False,
+            )
+            self.partial_block["bn2"] = nn.BatchNorm2d(out_channels)
+            self.partial_block["final_relu"] = nn.ReLU(inplace=True)
+        elif split_sublayer == "conv2":
+            self.partial_block["bn2"] = nn.BatchNorm2d(out_channels)
+            self.partial_block["final_relu"] = nn.ReLU(inplace=True)
+        elif split_sublayer == "bn2":
+            self.partial_block["final_relu"] = nn.ReLU(inplace=True)
+
+    def _complete_partial_block(
+        self, activation: torch.Tensor, identity: torch.Tensor
+    ) -> torch.Tensor:
+        split_sublayer = self.split_config["sublayer"]
+        x = activation
+
+        if self.partial_block is not None:
+            if "bn1" in self.partial_block:
+                x = self.partial_block["bn1"](x)
+            if "relu" in self.partial_block and split_sublayer in ["conv1", "bn1"]:
+                x = self.partial_block["relu"](x)
+            if "conv2" in self.partial_block:
+                x = self.partial_block["conv2"](x)
+            if "bn2" in self.partial_block and split_sublayer != "bn2":
+                x = self.partial_block["bn2"](x)
+            x = x + identity
+            x = self.partial_block["final_relu"](x)
+        return x
+
+    def forward(
+        self, x: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]
+    ) -> torch.Tensor:
+        split_layer_num = self.split_config["layer"]
+        split_block = self.split_config["block"]
+
+        x_tensor: torch.Tensor
+        if isinstance(x, tuple):
+            activation, identity = x
+            x_tensor = self._complete_partial_block(activation, identity)
+
+            if split_block is not None and split_block < 1:
+                layer_attr = f"layer{split_layer_num}"
+                if hasattr(self, layer_attr):
+                    layer = getattr(self, layer_attr)
+                    for i, block in enumerate(layer):
+                        if i > split_block:
+                            x_tensor = block(x_tensor)
+        else:
+            x_tensor = x
+
+        if split_layer_num <= 1 and hasattr(self, "layer2"):
+            x_tensor = self.layer2(x_tensor)
+        if split_layer_num <= 2 and hasattr(self, "layer3"):
+            x_tensor = self.layer3(x_tensor)
+        if split_layer_num <= 3 and hasattr(self, "layer4"):
+            x_tensor = self.layer4(x_tensor)
+
+        x_tensor = self.avgpool(x_tensor)
+        x_tensor = torch.flatten(x_tensor, 1)
+        return self.fc(x_tensor)
+
+
+class ResNet18FlexibleClient(nn.Module):
+    def __init__(self, split_layer: str = "layer2"):
+        super(ResNet18FlexibleClient, self).__init__()
+        self.split_config = parse_split_layer(split_layer)
+        self.split_layer = split_layer
+        self.in_channels = 64
+
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.relu = nn.ReLU(inplace=True)
+
+        self.layer1 = self._make_layer(64, 2, stride=1)
+        if self.split_config["layer"] >= 2:
+            self.layer2 = self._make_layer(128, 2, stride=2)
+        if self.split_config["layer"] >= 3:
+            self.layer3 = self._make_layer(256, 2, stride=2)
+        if self.split_config["layer"] >= 4:
+            self.layer4 = self._make_layer(512, 2, stride=2)
+
+    def _make_layer(
+        self, out_channels: int, num_blocks: int, stride: int
+    ) -> nn.Sequential:
+        downsample = None
+        if stride != 1 or self.in_channels != out_channels:
+            downsample = nn.Sequential(
+                nn.Conv2d(
+                    self.in_channels,
+                    out_channels,
+                    kernel_size=1,
+                    stride=stride,
+                    bias=False,
+                ),
+                nn.BatchNorm2d(out_channels),
+            )
+        layers = []
+        layers.append(BasicBlock(self.in_channels, out_channels, stride, downsample))
+        self.in_channels = out_channels
+        for _ in range(1, num_blocks):
+            layers.append(BasicBlock(out_channels, out_channels))
+        return nn.Sequential(*layers)
+
+    def _forward_partial_block(
+        self, block: BasicBlock, x: torch.Tensor, stop_at: str
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        identity = x
+        if block.downsample is not None:
+            identity = block.downsample(x)
+        out = block.conv1(x)
+        if stop_at == "conv1":
+            return out, identity
+        out = block.bn1(out)
+        if stop_at == "bn1":
+            return out, identity
+        out = block.relu(out)
+        if stop_at == "relu1":
+            return out, identity
+        out = block.conv2(out)
+        if stop_at == "conv2":
+            return out, identity
+        out = block.bn2(out)
+        if stop_at == "bn2":
+            return out, identity
+        out += identity
+        out = block.relu(out)
+        return out, identity
+
+    def forward(
+        self, x: torch.Tensor
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+
+        split_layer = self.split_config["layer"]
+        split_block = self.split_config["block"]
+        split_sublayer = self.split_config["sublayer"]
+
+        if split_layer == 1:
+            if split_block is not None and split_sublayer is not None:
+                for i, block in enumerate(self.layer1):
+                    block = cast(BasicBlock, block)
+                    if i < split_block:
+                        x = block(x)
+                    elif i == split_block:
+                        return self._forward_partial_block(block, x, split_sublayer)
+            elif split_block is not None:
+                for i, block in enumerate(self.layer1):
+                    if i <= split_block:
+                        x = block(x)
+                return x
+            else:
+                x = self.layer1(x)
+            return x
+        else:
+            x = self.layer1(x)
+
+        if split_layer == 2:
+            if split_block is not None and split_sublayer is not None:
+                for i, block in enumerate(self.layer2):
+                    block = cast(BasicBlock, block)
+                    if i < split_block:
+                        x = block(x)
+                    elif i == split_block:
+                        return self._forward_partial_block(block, x, split_sublayer)
+            elif split_block is not None:
+                for i, block in enumerate(self.layer2):
+                    if i <= split_block:
+                        x = block(x)
+                return x
+            else:
+                x = self.layer2(x)
+            return x
+        elif hasattr(self, "layer2"):
+            x = self.layer2(x)
+
+        if split_layer == 3:
+            if split_block is not None and split_sublayer is not None:
+                for i, block in enumerate(self.layer3):
+                    block = cast(BasicBlock, block)
+                    if i < split_block:
+                        x = block(x)
+                    elif i == split_block:
+                        return self._forward_partial_block(block, x, split_sublayer)
+            elif split_block is not None:
+                for i, block in enumerate(self.layer3):
+                    if i <= split_block:
+                        x = block(x)
+                return x
+            else:
+                x = self.layer3(x)
+            return x
+        elif hasattr(self, "layer3"):
+            x = self.layer3(x)
+
+        if split_layer == 4:
+            if hasattr(self, "layer4"):
+                x = self.layer4(x)
+            return x
+
+        return x
+
+
+class ResNet18FlexibleServer(nn.Module):
+    def __init__(self, split_layer: str = "layer2", num_classes: int = 10):
+        super(ResNet18FlexibleServer, self).__init__()
+        self.split_config = parse_split_layer(split_layer)
+        self.split_layer = split_layer
+
+        channel_map = {1: 64, 2: 128, 3: 256, 4: 512}
+        split_layer_num = self.split_config["layer"]
+        self.in_channels = channel_map.get(split_layer_num, 64)
+
+        if split_layer_num <= 1:
+            self.layer2 = self._make_layer(128, 2, stride=2)
+        if split_layer_num <= 2:
+            self.layer3 = self._make_layer(256, 2, stride=2)
+        if split_layer_num <= 3:
+            self.layer4 = self._make_layer(512, 2, stride=2)
+
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Linear(512, num_classes)
+        self._build_partial_block_completer()
+
+    def _make_layer(
+        self, out_channels: int, num_blocks: int, stride: int
+    ) -> nn.Sequential:
+        downsample = None
+        if stride != 1 or self.in_channels != out_channels:
+            downsample = nn.Sequential(
+                nn.Conv2d(
+                    self.in_channels,
+                    out_channels,
+                    kernel_size=1,
+                    stride=stride,
+                    bias=False,
+                ),
+                nn.BatchNorm2d(out_channels),
+            )
+        layers = []
+        layers.append(BasicBlock(self.in_channels, out_channels, stride, downsample))
+        self.in_channels = out_channels
+        for _ in range(1, num_blocks):
+            layers.append(BasicBlock(out_channels, out_channels))
+        return nn.Sequential(*layers)
+
+    def _build_partial_block_completer(self):
+        split_sublayer = self.split_config["sublayer"]
+        if split_sublayer is None:
+            self.partial_block = None
+            return
+
+        split_layer_num = self.split_config["layer"]
+        channel_map = {1: 64, 2: 128, 3: 256, 4: 512}
+        out_channels = channel_map[split_layer_num]
+
+        self.partial_block = nn.ModuleDict()
+        if split_sublayer in ["conv1", "bn1", "relu1"]:
+            if split_sublayer == "conv1":
+                self.partial_block["bn1"] = nn.BatchNorm2d(out_channels)
+            self.partial_block["relu"] = nn.ReLU(inplace=True)
+            self.partial_block["conv2"] = nn.Conv2d(
+                out_channels,
+                out_channels,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                bias=False,
+            )
+            self.partial_block["bn2"] = nn.BatchNorm2d(out_channels)
+            self.partial_block["final_relu"] = nn.ReLU(inplace=True)
+        elif split_sublayer == "conv2":
+            self.partial_block["bn2"] = nn.BatchNorm2d(out_channels)
+            self.partial_block["final_relu"] = nn.ReLU(inplace=True)
+        elif split_sublayer == "bn2":
+            self.partial_block["final_relu"] = nn.ReLU(inplace=True)
+
+    def _complete_partial_block(
+        self, activation: torch.Tensor, identity: torch.Tensor
+    ) -> torch.Tensor:
+        split_sublayer = self.split_config["sublayer"]
+        x = activation
+
+        if self.partial_block is not None:
+            if "bn1" in self.partial_block:
+                x = self.partial_block["bn1"](x)
+            if "relu" in self.partial_block and split_sublayer in ["conv1", "bn1"]:
+                x = self.partial_block["relu"](x)
+            if "conv2" in self.partial_block:
+                x = self.partial_block["conv2"](x)
+            if "bn2" in self.partial_block and split_sublayer != "bn2":
+                x = self.partial_block["bn2"](x)
+            x = x + identity
+            x = self.partial_block["final_relu"](x)
+        return x
+
+    def forward(
+        self, x: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]
+    ) -> torch.Tensor:
+        split_layer_num = self.split_config["layer"]
+        split_block = self.split_config["block"]
+
+        x_tensor: torch.Tensor
+        if isinstance(x, tuple):
+            activation, identity = x
+            x_tensor = self._complete_partial_block(activation, identity)
+            if split_block is not None and split_block < 1:
+                layer_attr = f"layer{split_layer_num}"
+                if hasattr(self, layer_attr):
+                    layer = getattr(self, layer_attr)
+                    for i, block in enumerate(layer):
+                        if i > split_block:
+                            x_tensor = block(x_tensor)
+        else:
+            x_tensor = x
+
+        if split_layer_num <= 1 and hasattr(self, "layer2"):
+            x_tensor = self.layer2(x_tensor)
+        if split_layer_num <= 2 and hasattr(self, "layer3"):
+            x_tensor = self.layer3(x_tensor)
+        if split_layer_num <= 3 and hasattr(self, "layer4"):
+            x_tensor = self.layer4(x_tensor)
+
+        x_tensor = self.avgpool(x_tensor)
+        x_tensor = torch.flatten(x_tensor, 1)
+        return self.fc(x_tensor)
 
 
 # =============================================================================
@@ -794,7 +1523,13 @@ class ResNet18FlexibleServer(nn.Module):
 # =============================================================================
 
 ModelType = Literal[
-    "simple", "alexnet", "alexnet_light", "resnet18", "resnet18_light", "resnet18_flex"
+    "simple",
+    "alexnet",
+    "alexnet_light",
+    "resnet18",
+    "resnet18_light",
+    "resnet18_flex",
+    "resnet18_image_style",
 ]
 DatasetType = Literal["cifar10", "cifar100", "mnist", "fmnist", "synthetic"]
 
@@ -852,6 +1587,16 @@ def get_split_models(
             split_layer=layer, num_classes=num_classes
         )
 
+    elif model_type == "resnet18_image_style":
+        layer = split_layer or "layer2"
+        client = ResNet18ImageStyleFlexibleClient(split_layer=layer)
+        server = ResNet18ImageStyleFlexibleServer(
+            split_layer=layer, num_classes=num_classes
+        )
+        disable_inplace(client)
+        disable_inplace(server)
+        return client, server
+
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
@@ -880,8 +1625,17 @@ def get_full_model(
         else:
             return AlexNetCifar(num_classes=num_classes)
 
-    elif model_type in ["resnet18", "resnet18_light", "resnet18_flex"]:
+    elif model_type in [
+        "resnet18",
+        "resnet18_light",
+        "resnet18_flex",
+    ]:
         return ResNet18Cifar(num_classes=num_classes)
+
+    elif model_type == "resnet18_image_style":
+        model = ResNet18ImageStyle(num_classes=num_classes)
+        disable_inplace(model)
+        return model
 
     else:
         raise ValueError(f"Unknown model type: {model_type}")
@@ -916,6 +1670,11 @@ MODEL_INFO = {
     "resnet18_flex": {
         "description": "ResNet-18 with flexible split point",
         "client_output_shape": "varies",
+        "suitable_for": ["cifar10", "cifar100"],
+    },
+    "resnet18_image_style": {
+        "description": "ResNet-18 with ImageNet-style stem",
+        "client_output_shape": (128, 4, 4),
         "suitable_for": ["cifar10", "cifar100"],
     },
 }
