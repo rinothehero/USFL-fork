@@ -7,6 +7,21 @@ import torch.nn as nn
 from .utils import average_state_dicts, blend_state_dict
 
 
+def _set_batchnorm_eval(module: nn.Module) -> Dict[str, bool]:
+    states: Dict[str, bool] = {}
+    for name, child in module.named_modules():
+        if isinstance(child, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
+            states[name] = child.training
+            child.eval()
+    return states
+
+
+def _restore_batchnorm(module: nn.Module, states: Dict[str, bool]) -> None:
+    for name, child in module.named_modules():
+        if name in states:
+            child.train(states[name])
+
+
 @dataclass
 class BranchClientState:
     model: nn.Module
@@ -125,9 +140,16 @@ class MainServer:
                 f_all = (f_main_act_srv, f_main_id_srv)
                 y_all = y_main
 
+            bn_states: Optional[Dict[str, bool]] = None
+            if y_all.size(0) == 1:
+                bn_states = _set_batchnorm_eval(ws)
+
             logits = ws(f_all)
             loss = self.criterion(logits, y_all)
             loss.backward()
+
+            if bn_states is not None:
+                _restore_batchnorm(ws, bn_states)
 
             grad_act = f_main_act_srv.grad
             grad_id = f_main_id_srv.grad
@@ -147,9 +169,16 @@ class MainServer:
                 f_all = f_main_srv
                 y_all = y_main
 
+            bn_states: Optional[Dict[str, bool]] = None
+            if y_all.size(0) == 1:
+                bn_states = _set_batchnorm_eval(ws)
+
             logits = ws(f_all)
             loss = self.criterion(logits, y_all)
             loss.backward()
+
+            if bn_states is not None:
+                _restore_batchnorm(ws, bn_states)
 
             grad_f_main = f_main_srv.grad
             assert grad_f_main is not None, (
