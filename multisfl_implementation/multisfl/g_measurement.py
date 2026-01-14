@@ -187,6 +187,7 @@ class OracleCalculator:
         client_grad_accum: Dict[str, torch.Tensor] = {}
         server_grad_accum: Dict[str, torch.Tensor] = {}
         num_batches = 0
+        total_samples = 0
 
         for batch in self.full_dataloader:
             if len(batch) >= 2:
@@ -200,6 +201,7 @@ class OracleCalculator:
             data = data.to(self.device)
             labels = labels.to(self.device)
             num_batches += 1
+            total_samples += labels.size(0)
 
             activation = client_model(data)
             activation_detached = None
@@ -210,7 +212,7 @@ class OracleCalculator:
                 act_detached = act.detach().requires_grad_(True)
                 id_detached = identity.detach().requires_grad_(True)
                 logits = server_model((act_detached, id_detached))
-                loss = F.cross_entropy(logits, labels, reduction="mean")
+                loss = F.cross_entropy(logits, labels, reduction="sum")
                 loss.backward()
 
                 if act_detached.grad is None or id_detached.grad is None:
@@ -222,7 +224,7 @@ class OracleCalculator:
                 activation_detached = activation.detach().requires_grad_(True)
                 logits = server_model(activation_detached)
 
-                loss = F.cross_entropy(logits, labels, reduction="mean")
+                loss = F.cross_entropy(logits, labels, reduction="sum")
                 loss.backward()
 
                 activation.backward(activation_detached.grad)
@@ -251,8 +253,8 @@ class OracleCalculator:
             if id_detached is not None:
                 del id_detached
 
-        divisor = num_batches if num_batches > 0 else 1
-        if num_batches > 0:
+        divisor = total_samples if total_samples > 0 else 1
+        if total_samples > 0:
             for name in client_grad_accum:
                 client_grad_accum[name] /= divisor
             for name in server_grad_accum:
@@ -285,6 +287,7 @@ class OracleCalculator:
         grad_accum: Dict[str, torch.Tensor] = {}
         split_grad_sum = None
         num_batches = 0
+        total_samples = 0
         activation_holder: Dict[str, Optional[torch.Tensor]] = {"tensor": None}
         hook_handle = None
         debug_logged = False
@@ -324,6 +327,7 @@ class OracleCalculator:
             data = data.to(self.device)
             labels = labels.to(self.device)
             num_batches += 1
+            total_samples += labels.size(0)
 
             outputs = full_model(data)
             if not debug_logged:
@@ -344,7 +348,7 @@ class OracleCalculator:
             if activation_holder["tensor"] is not None:
                 activation_grad = activation_holder["tensor"].grad
                 if activation_grad is not None:
-                    batch_split_grad = activation_grad.detach().mean(dim=0).cpu()
+                    batch_split_grad = activation_grad.detach().sum(dim=0).cpu()
                     if split_grad_sum is None:
                         split_grad_sum = batch_split_grad
                         print(
@@ -363,7 +367,7 @@ class OracleCalculator:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        divisor = num_batches if num_batches > 0 else 1
+        divisor = total_samples if total_samples > 0 else 1
         oracle_full = {name: grad / divisor for name, grad in grad_accum.items()}
 
         oracle_client = {

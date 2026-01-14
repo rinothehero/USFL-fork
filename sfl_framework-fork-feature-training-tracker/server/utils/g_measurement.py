@@ -342,120 +342,7 @@ class OracleGradientCalculator:
         num_batches = 0
 
         grad_accum = {}
-
-        for batch in self.full_dataloader:
-            if len(batch) >= 2:
-                data, labels = batch[0], batch[1]
-            else:
-                continue
-
-            model.zero_grad(set_to_none=True)
-
-            data = data.to(self.device)
-            labels = labels.to(self.device)
-            batch_size = labels.size(0)
-            total_samples += batch_size
-            num_batches += 1
-
-            outputs = model(data)
-
-            loss = F.cross_entropy(outputs, labels, reduction="mean")
-            loss.backward()
-
-            for name, param in model.named_parameters():
-                if param.grad is not None:
-                    if name not in grad_accum:
-                        grad_accum[name] = param.grad.clone().detach().cpu()
-                    else:
-                        grad_accum[name] += param.grad.clone().detach().cpu()
-
-            total_loss += loss.item()
-
-            # Clear intermediate tensors to prevent OOM
-            del outputs, loss, data, labels
-
-        # Clear CUDA cache after oracle computation
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
-        divisor = num_batches if num_batches > 0 else 1
-
-        oracle_grad = {}
-        for name, grad in grad_accum.items():
-            oracle_grad[name] = grad / divisor
-
-        model.zero_grad(set_to_none=True)
-
-        # 5. BN stats 복구
-        restore_bn_stats(model, bn_backup)
-
-        avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
-        print(
-            f"[Oracle] Computed from {total_samples} samples over {num_batches} batches, avg_loss={avg_loss:.4f}"
-        )
-
-        if return_loss:
-            return oracle_grad, avg_loss
-        return oracle_grad
-
-    def compute_oracle_with_split_hook(
-        self,
-        full_model: nn.Module,
-        client_param_names: Set[str],
-        split_layer_name: str = None,
-    ) -> Tuple[
-        Dict[str, torch.Tensor], Dict[str, torch.Tensor], Optional[torch.Tensor]
-    ]:
-        """
-        Full model로 Oracle 계산 + Split layer에 backward hook을 걸어 정확한 split gradient 수집
-
-        Args:
-            full_model: Full model (client + server combined)
-            client_param_names: 클라이언트 모델의 파라미터 이름들
-            split_layer_name: Split layer 이름 (예: "layer1.1.conv2"). None이면 자동 감지
-
-        Returns:
-            (oracle_client_grad, oracle_server_grad, oracle_split_grad)
-        """
-        print("[Oracle Split Hook] Computing oracle gradient with split layer hook...")
-
-        # Find split layer name from client_param_names if not provided
-        if split_layer_name is None:
-            # Get the "deepest" layer in client model (last layer before split)
-            client_layers = set()
-            for name in client_param_names:
-                parts = name.rsplit(".", 1)
-                if len(parts) > 1:
-                    client_layers.add(parts[0])
-
-            sorted_layers = sorted(
-                client_layers,
-                key=lambda x: (x.count(".") + x.count("-"), x),
-                reverse=True,
-            )
-            if sorted_layers:
-                split_layer_name = sorted_layers[0]
-                # Convert '-' to '.' (ModuleDict uses '-' but full_model uses '.')
-                split_layer_name = split_layer_name.replace("-", ".")
-                print(
-                    f"[Oracle Split Hook] Auto-detected split layer: {split_layer_name}"
-                )
-
-        full_model = full_model.to(self.device)
-
-        # Find the split layer module
-        split_layer = None
-        for name, module in full_model.named_modules():
-            if name == split_layer_name:
-                split_layer = module
-                break
-
-        if split_layer is None:
-            print(
-                f"[Oracle Split Hook] Warning: Could not find split layer '{split_layer_name}'"
-            )
-
-        # Storage for split layer gradient (using forward hook + retain_grad)
+        split_grad_sum = None
         split_activation_storage = {"activations": []}
         hook_handle = None
 
@@ -512,13 +399,7 @@ class OracleGradientCalculator:
             num_batches += 1
 
             outputs = full_model(data)
-
-            if total_samples == 0:
-                print(f"[DEBUG] Oracle Input shape: {data.shape}")
-                print(f"[DEBUG] Oracle Output shape: {outputs.shape}")
-                print(f"[DEBUG] Oracle Labels shape: {labels.shape}")
-
-            loss = F.cross_entropy(outputs, labels, reduction="mean")
+            loss = F.cross_entropy(outputs, labels, reduction="sum")
             loss.backward()
 
             for name, param in full_model.named_parameters():
@@ -536,7 +417,7 @@ class OracleGradientCalculator:
         if hook_handle is not None:
             hook_handle.remove()
 
-        divisor = num_batches if num_batches > 0 else 1
+        divisor = total_samples if total_samples > 0 else 1
 
         oracle_grad = {}
         for name, grad in grad_accum.items():
@@ -569,23 +450,20 @@ class OracleGradientCalculator:
             else:
                 oracle_server_grad[name] = grad
 
-        # Split layer gradient from forward hook (평균)
         oracle_split_grad = None
         if split_activation_storage["activations"]:
             split_grad_sum = None
-            split_count = 0
             for activation in split_activation_storage["activations"]:
                 if activation.grad is not None:
                     batch_grad = activation.grad.detach()
-                    batch_grad_mean = batch_grad.mean(dim=0)
+                    batch_grad_sum = batch_grad.sum(dim=0)
                     if split_grad_sum is None:
-                        split_grad_sum = batch_grad_mean.cpu()
+                        split_grad_sum = batch_grad_sum.cpu()
                     else:
-                        split_grad_sum = split_grad_sum + batch_grad_mean.cpu()
-                    split_count += 1
+                        split_grad_sum = split_grad_sum + batch_grad_sum.cpu()
 
-            if split_count > 0:
-                oracle_split_grad = split_grad_sum / split_count
+            if split_grad_sum is not None:
+                oracle_split_grad = split_grad_sum / divisor
                 print(
                     f"[Oracle Split Hook] Split layer grad shape: {oracle_split_grad.shape}"
                 )
@@ -648,7 +526,7 @@ class OracleGradientCalculator:
             activation.retain_grad()  # Activation gradient 유지
 
             logits = server_model(activation)
-            loss = F.cross_entropy(logits, labels, reduction="mean")
+            loss = F.cross_entropy(logits, labels, reduction="sum")
             loss.backward()
 
             # Accumulate client gradients
@@ -668,7 +546,7 @@ class OracleGradientCalculator:
                         server_grad_accum[name] += param.grad.clone().detach().cpu()
 
             if activation.grad is not None:
-                batch_split_grad = activation.grad.detach().mean(dim=0)
+                batch_split_grad = activation.grad.detach().sum(dim=0)
                 if split_grad_sum is None:
                     split_grad_sum = batch_split_grad.cpu()
                 else:
@@ -683,7 +561,7 @@ class OracleGradientCalculator:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        divisor = num_batches if num_batches > 0 else 1
+        divisor = total_samples if total_samples > 0 else 1
 
         oracle_client_grad = {}
         for name, grad in client_grad_accum.items():

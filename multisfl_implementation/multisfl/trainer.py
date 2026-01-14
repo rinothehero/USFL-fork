@@ -64,7 +64,7 @@ class MultiSFLTrainer:
             # Use the same batch size as training for fair Oracle averaging.
             full_loader = DataLoader(
                 full_dataset,
-                batch_size=cfg.batch_size * cfg.n_main_clients_per_round,
+                batch_size=cfg.batch_size,
                 shuffle=False,
                 drop_last=False,
                 num_workers=2,

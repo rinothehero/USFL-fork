@@ -409,7 +409,7 @@ def finalize_g_measurement(g_measure_state, g_manager, user_parti_num):
 
     if (
         len(g_measure_state["client_grads"]) < user_parti_num
-        or len(g_measure_state["server_grads"]) < user_parti_num
+        or len(g_measure_state["server_grads"]) < 1
     ):
         return False
 
@@ -754,7 +754,7 @@ while epoch != epochs:
             )
 
         if g_measure_state is not None and g_measure_state["active"]:
-            if len(g_measure_state["server_grads"]) < user_parti_num:
+            if len(g_measure_state["server_grads"]) < 1:
                 g_measure_state["server_grads"].append(
                     [
                         p.grad.clone().cpu()

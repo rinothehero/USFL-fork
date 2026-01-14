@@ -17,6 +17,7 @@ Memory Optimization Strategies:
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import copy
 
 
@@ -131,13 +132,17 @@ def compute_oracle_gradients(
     client_grad_accum = [torch.zeros_like(p).cpu() for p in user_model.parameters()]
     server_grad_accum = [torch.zeros_like(p).cpu() for p in server_model.parameters()]
     split_grad_accum = None
+    split_batch_size = None
     batch_count = 0
+    total_samples = 0
     for images, labels in train_loader:
         if max_batches is not None and batch_count >= max_batches:
             break
 
         images = images.to(device)
         labels = labels.to(device)
+        batch_size = labels.size(0)
+        total_samples += batch_size
 
         # Forward pass with gradient tracking for split layer
         split_output = user_model(images)
@@ -152,9 +157,8 @@ def compute_oracle_gradients(
             activation = split_output
             server_output = server_model(split_output)
 
-        # Use reduction='mean' to match sfl_framework (per-batch mean, then average over batches)
         loss = torch.nn.functional.cross_entropy(
-            server_output, labels.long(), reduction="mean"
+            server_output, labels.long(), reduction="sum"
         )
 
         # Backward pass
@@ -171,9 +175,9 @@ def compute_oracle_gradients(
                 server_grad_accum[i] += p.grad.cpu()
 
         # Accumulate split layer gradient (first batch only for memory)
-        # Take mean over batch dimension to make shape batch-size independent
         if split_grad_accum is None and activation.grad is not None:
-            split_grad_accum = activation.grad.mean(dim=0).clone().cpu()
+            split_grad_accum = activation.grad.sum(dim=0).clone().cpu()
+            split_batch_size = batch_size
 
         batch_count += 1
 
@@ -182,9 +186,11 @@ def compute_oracle_gradients(
         server_model.zero_grad()
         del images, labels, split_output, server_output, loss
 
-    if batch_count > 0:
-        client_grad_accum = [g / batch_count for g in client_grad_accum]
-        server_grad_accum = [g / batch_count for g in server_grad_accum]
+    if total_samples > 0:
+        client_grad_accum = [g / total_samples for g in client_grad_accum]
+        server_grad_accum = [g / total_samples for g in server_grad_accum]
+        if split_grad_accum is not None and split_batch_size:
+            split_grad_accum = split_grad_accum / split_batch_size
 
     # Restore BN stats
     restore_bn_stats(user_model, user_bn_stats, device)
@@ -233,6 +239,7 @@ def compute_oracle_with_split_hook(
     grad_accum = {}
     split_grad_sum = None
     batch_count = 0
+    total_samples = 0
     activation_holder = {"tensor": None}
     hook_handle = None
     debug_logged = False
@@ -264,6 +271,8 @@ def compute_oracle_with_split_hook(
     for images, labels in train_loader:
         images = images.to(device)
         labels = labels.to(device)
+        batch_size = labels.size(0)
+        total_samples += batch_size
 
         full_model.zero_grad(set_to_none=True)
 
@@ -273,7 +282,7 @@ def compute_oracle_with_split_hook(
             print(f"[DEBUG] Oracle Output shape: {outputs.shape}")
             print(f"[DEBUG] Oracle Labels shape: {labels.shape}")
             debug_logged = True
-        loss = criterion(outputs, labels.long())
+        loss = F.cross_entropy(outputs, labels.long(), reduction="sum")
         loss.backward()
 
         for name, param in full_model.named_parameters():
@@ -286,7 +295,7 @@ def compute_oracle_with_split_hook(
         if activation_holder["tensor"] is not None:
             activation_grad = activation_holder["tensor"].grad
             if activation_grad is not None:
-                batch_split_grad = activation_grad.detach().mean(dim=0).cpu()
+                batch_split_grad = activation_grad.detach().sum(dim=0).cpu()
                 if split_grad_sum is None:
                     split_grad_sum = batch_split_grad
                     print(
@@ -304,7 +313,7 @@ def compute_oracle_with_split_hook(
     restore_bn_stats(full_model, bn_backup, device)
     torch.cuda.empty_cache()
 
-    divisor = batch_count if batch_count > 0 else 1
+    divisor = total_samples if total_samples > 0 else 1
     oracle_full = {name: grad / divisor for name, grad in grad_accum.items()}
 
     oracle_client = {n: g for n, g in oracle_full.items() if n in client_param_names}
