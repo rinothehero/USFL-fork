@@ -53,6 +53,7 @@ cifar100 = False
 SVHN = False
 # Model selection
 use_resnet = True
+use_resnet_image_style = False  # True to match torchvision ResNet18 stem
 split_ratio = "quarter"  # Legacy: 'half' or 'quarter' (only if split_layer is None)
 split_layer = "layer1.1.bn2"  # Fine-grained: 'layer1', 'layer1.0.bn1', 'layer2', etc.
 split_alexnet = "default"
@@ -327,6 +328,7 @@ user_model, server_model = model_selection(
     cifar100=cifar100,
     SVHN=SVHN,
     resnet=use_resnet,
+    resnet_image_style=use_resnet_image_style,
     split_ratio=split_ratio,
     split_layer=split_layer,
     split_alexnet=split_alexnet,
@@ -344,6 +346,7 @@ if USE_SFL_ORACLE:
         cifar100=cifar100,
         SVHN=SVHN,
         resnet=use_resnet,
+        resnet_image_style=use_resnet_image_style,
     )
     if full_model is not None:
         full_model.to(device)
