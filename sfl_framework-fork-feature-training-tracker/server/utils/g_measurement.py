@@ -892,6 +892,26 @@ class GMeasurementSystem:
             }
             self.oracle_split_grad = None
 
+        # DEBUG: Oracle norm 확인
+        if self.oracle_client_grad:
+            client_oracle_vec = gradient_to_vector(
+                normalize_grad_keys(self.oracle_client_grad)
+            )
+            client_oracle_norm = torch.norm(client_oracle_vec).item()
+            client_numel = client_oracle_vec.numel()
+            print(
+                f"[DEBUG Oracle] Client: ||g*||={client_oracle_norm:.4f}, numel={client_numel}"
+            )
+        if self.oracle_server_grad:
+            server_oracle_vec = gradient_to_vector(
+                normalize_grad_keys(self.oracle_server_grad)
+            )
+            server_oracle_norm = torch.norm(server_oracle_vec).item()
+            server_numel = server_oracle_vec.numel()
+            print(
+                f"[DEBUG Oracle] Server: ||g*||={server_oracle_norm:.4f}, numel={server_numel}"
+            )
+
         print(
             f"[G Measurement] Oracle computed: client={len(self.oracle_client_grad)}, "
             f"server={len(self.oracle_server_grad)}, "
