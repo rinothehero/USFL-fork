@@ -19,6 +19,21 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 
+def _set_batchnorm_eval(module: nn.Module) -> Dict[str, bool]:
+    states: Dict[str, bool] = {}
+    for name, child in module.named_modules():
+        if isinstance(child, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
+            states[name] = child.training
+            child.eval()
+    return states
+
+
+def _restore_batchnorm(module: nn.Module, states: Dict[str, bool]) -> None:
+    for name, child in module.named_modules():
+        if name in states:
+            child.train(states[name])
+
+
 @dataclass
 class GMetrics:
     G: float = 0.0
@@ -512,9 +527,17 @@ class GMeasurementSystem:
                 act, identity = activation
                 act_detached = act.detach().requires_grad_(True)
                 id_detached = identity.detach().requires_grad_(True)
+
+                bn_states: Optional[Dict[str, bool]] = None
+                if y.size(0) == 1:
+                    bn_states = _set_batchnorm_eval(server_model)
+
                 logits = server_model((act_detached, id_detached))
                 loss = F.cross_entropy(logits, y, reduction="mean")
                 loss.backward()
+
+                if bn_states is not None:
+                    _restore_batchnorm(server_model, bn_states)
 
                 if act_detached.grad is None or id_detached.grad is None:
                     raise RuntimeError("Missing gradients for tuple split output")
@@ -523,10 +546,18 @@ class GMeasurementSystem:
                 )
             else:
                 activation_detached = activation.detach().requires_grad_(True)
+
+                bn_states: Optional[Dict[str, bool]] = None
+                if y.size(0) == 1:
+                    bn_states = _set_batchnorm_eval(server_model)
+
                 logits = server_model(activation_detached)
 
                 loss = F.cross_entropy(logits, y, reduction="mean")
                 loss.backward()
+
+                if bn_states is not None:
+                    _restore_batchnorm(server_model, bn_states)
 
                 activation.backward(activation_detached.grad)
 

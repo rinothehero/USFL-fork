@@ -2,7 +2,6 @@ import torch
 import numpy as np
 
 
-
 def adjust_positive_definite(loc, matrix, device, max_attempts=100, epsilon_start=1e-6):
     """
     Adjust the matrix by gradually increasing the positive values on the diagonal until it becomes positive definite.
@@ -11,7 +10,9 @@ def adjust_positive_definite(loc, matrix, device, max_attempts=100, epsilon_star
     for attempt in range(max_attempts):
         try:
             # Attempt to check positive definiteness using Cholesky decomposition.
-            eye_matrix = epsilon * torch.eye(matrix.size(0), device=device)  # 在相同设备上创建单位矩阵
+            eye_matrix = epsilon * torch.eye(
+                matrix.size(0), device=device
+            )  # 在相同设备上创建单位矩阵
             mvn = torch.distributions.MultivariateNormal(loc, matrix + eye_matrix)
             return mvn, True
         except ValueError:
@@ -28,18 +29,30 @@ def try_multivariate_normal(loc, covariance_matrix, device):
         return mvn
     except ValueError as e:
         if "PositiveDefinite" in str(e):
-            print("The covariance matrix is not positive definite, attempting to adjust it....")
+            print(
+                "The covariance matrix is not positive definite, attempting to adjust it...."
+            )
             mvn, success = adjust_positive_definite(loc, covariance_matrix, device)
             if success:
                 return mvn
             else:
-                raise ValueError("Unable to adjust the covariance matrix to make it positive definite.")
+                raise ValueError(
+                    "Unable to adjust the covariance matrix to make it positive definite."
+                )
         else:
             raise
 
 
-def calculate_v_value(server_model, user_model, concat_features, concat_labels, test_loader, criterion, device, num_minibatches=10):
-
+def calculate_v_value(
+    server_model,
+    user_model,
+    concat_features,
+    concat_labels,
+    test_loader,
+    criterion,
+    device,
+    num_minibatches=10,
+):
     total_gradients = [torch.zeros_like(param) for param in server_model.parameters()]
 
     # Estimate the true gradient
@@ -50,9 +63,12 @@ def calculate_v_value(server_model, user_model, concat_features, concat_labels, 
         split_layer_output = user_model(images)
         server_output = server_model(split_layer_output)
         loss = criterion(server_output, labels.long())
-        grads_server = torch.autograd.grad(loss, server_model.parameters(), retain_graph=True)
-        # Accumulate the gradients
+        grads_server = torch.autograd.grad(
+            loss, server_model.parameters(), retain_graph=True, allow_unused=True
+        )
         for total_grad, grad in zip(total_gradients, grads_server):
+            if grad is None:
+                continue
             total_grad += grad
         server_model.zero_grad()
         user_model.zero_grad()
@@ -63,12 +79,22 @@ def calculate_v_value(server_model, user_model, concat_features, concat_labels, 
     # Calculate gradient dissimilarity
     server_output = server_model(concat_features)
     loss = criterion(server_output, concat_labels.long())
-    grads_sampled = torch.autograd.grad(loss, server_model.parameters(), retain_graph=True, create_graph=True, allow_unused=True)
+    grads_sampled = torch.autograd.grad(
+        loss,
+        server_model.parameters(),
+        retain_graph=True,
+        create_graph=True,
+        allow_unused=True,
+    )
     # Filter out None gradients (from unused parameters in flexible split)
-    grads_sampled = [g if g is not None else torch.zeros_like(p) for g, p in zip(grads_sampled, server_model.parameters())]
+    grads_sampled = [
+        g if g is not None else torch.zeros_like(p)
+        for g, p in zip(grads_sampled, server_model.parameters())
+    ]
 
-    v_value = sum((torch.norm(g - gr) ** 2).item() for g, gr in zip(grads_sampled, grads_real)) / len(
-        grads_sampled)
+    v_value = sum(
+        (torch.norm(g - gr) ** 2).item() for g, gr in zip(grads_sampled, grads_real)
+    ) / len(grads_sampled)
 
     return v_value
 
@@ -80,7 +106,16 @@ def replace_user(order, k, user_num):
     return order
 
 
-def sample_or_generate_features(concat_features, concat_labels, batchsize, num_labels, original_shape, device, stats, diagonal=True):
+def sample_or_generate_features(
+    concat_features,
+    concat_labels,
+    batchsize,
+    num_labels,
+    original_shape,
+    device,
+    stats,
+    diagonal=True,
+):
     """
     Sample or generate features.
     Args:
@@ -107,13 +142,17 @@ def sample_or_generate_features(concat_features, concat_labels, batchsize, num_l
                     std = torch.sqrt(variance + 1e-5)
                     mean_expanded = mean.unsqueeze(0).expand(samples_needed, -1)
                     std_expanded = std.unsqueeze(0).expand(samples_needed, -1)
-                    generated_features = torch.normal(mean=mean_expanded, std=std_expanded).to(device)
+                    generated_features = torch.normal(
+                        mean=mean_expanded, std=std_expanded
+                    ).to(device)
                 else:
                     # Full covariance (AlexNet)
                     mvn = try_multivariate_normal(mean, variance, device)
                     generated_features = mvn.sample((samples_needed,)).to(device)
                 # Restore the sampled features back to original dimensions
-                restored_features = generated_features.reshape(samples_needed, *original_shape)
+                restored_features = generated_features.reshape(
+                    samples_needed, *original_shape
+                )
                 sampled_features = torch.cat([label_features, restored_features], dim=0)
         else:
             # If the current label does not exist in concat_features, directly generate the activations.
@@ -123,15 +162,23 @@ def sample_or_generate_features(concat_features, concat_labels, batchsize, num_l
                 std = torch.sqrt(variance + 1e-5)
                 mean_expanded = mean.unsqueeze(0).expand(samples_needed, -1)
                 std_expanded = std.unsqueeze(0).expand(samples_needed, -1)
-                generated_features = torch.normal(mean=mean_expanded, std=std_expanded).to(device)
+                generated_features = torch.normal(
+                    mean=mean_expanded, std=std_expanded
+                ).to(device)
             else:
                 # Full covariance (AlexNet)
                 mvn = try_multivariate_normal(mean, variance, device)
                 generated_features = mvn.sample((samples_needed,)).to(device)
-            sampled_features = generated_features.reshape(samples_needed, *original_shape)
+            sampled_features = generated_features.reshape(
+                samples_needed, *original_shape
+            )
 
         new_features_list.append(sampled_features)
-        new_labels_list.append(torch.full((sampled_features.size(0),), fill_value=label, dtype=concat_labels.dtype))
+        new_labels_list.append(
+            torch.full(
+                (sampled_features.size(0),), fill_value=label, dtype=concat_labels.dtype
+            )
+        )
 
     # Concatenate all processed activations and labels
     new_concat_features = torch.cat(new_features_list, dim=0).to(device)
@@ -139,7 +186,8 @@ def sample_or_generate_features(concat_features, concat_labels, batchsize, num_l
     return new_concat_features, new_concat_labels
 
 
-''' LA '''
+""" LA """
+
 
 def compute_local_adjustment(train_loader, device, numOfLabel=10, tro=1):
     label_freq = {}
@@ -156,14 +204,15 @@ def compute_local_adjustment(train_loader, device, numOfLabel=10, tro=1):
     # print(label_freq_array)
     label_freq_array = label_freq_array / label_freq_array.sum()
     # print(label_freq_array)
-    adjustments = np.log(label_freq_array ** tro + 1e-12)
+    adjustments = np.log(label_freq_array**tro + 1e-12)
     adjustments = torch.from_numpy(adjustments).float()
     adjustments = adjustments.to(device)
     return adjustments
 
+
 def find_client_with_min_time(clients, order):
     # Initialize the minimum time and the corresponding client
-    min_time = float('inf')
+    min_time = float("inf")
     client_with_min_time = None
     # Iterate over each index in order
     for index in order:
@@ -173,5 +222,3 @@ def find_client_with_min_time(clients, order):
             client_with_min_time = index
 
     return client_with_min_time
-
-
