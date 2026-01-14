@@ -14,6 +14,7 @@ import torch.utils.data.dataloader as dataloader
 import random
 import numpy as np
 import datetime
+from typing import Dict
 from network import model_selection
 from dataset import Dataset, Data_Partition
 from utils import (
@@ -24,6 +25,21 @@ from utils import (
     find_client_with_min_time,
 )
 from g_measurement import GMeasurementManager, compute_g_score
+
+
+def _set_batchnorm_eval(module: nn.Module) -> Dict[str, bool]:
+    states: Dict[str, bool] = {}
+    for name, child in module.named_modules():
+        if isinstance(child, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
+            states[name] = child.training
+            child.eval()
+    return states
+
+
+def _restore_batchnorm(module: nn.Module, states: Dict[str, bool]) -> None:
+    for name, child in module.named_modules():
+        if name in states:
+            child.train(states[name])
 
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "3"
@@ -634,9 +650,12 @@ while epoch != epochs:
     clients[selected_client].weight_count = clients[selected_client].weight_count + 1
 
     # client-side model update
-    local_output = server_model(
-        split_layer_output
-    )  # Pass original output (tuple or tensor)
+    bn_states = None
+    if labels.size(0) == 1:
+        bn_states = _set_batchnorm_eval(server_model)
+    local_output = server_model(split_layer_output)
+    if bn_states is not None:
+        _restore_batchnorm(server_model, bn_states)
 
     # localLoss = criterion(local_output, labels)
     localLoss = criterion(
