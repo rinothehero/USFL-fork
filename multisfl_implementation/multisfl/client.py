@@ -1,11 +1,14 @@
 from dataclasses import dataclass
-from typing import Dict, Tuple, Optional, List, Any
+from typing import Dict, Tuple, Optional, List, Any, Union
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
 from .utils import count_labels, to_dense_label_dist
 from .data import build_class_to_indices
+
+
+SplitOutput = Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]
 
 
 @dataclass
@@ -68,7 +71,7 @@ class Client:
 
     def forward_main(
         self, w_c: torch.nn.Module, batch_size: int
-    ) -> Tuple[torch.Tensor, torch.Tensor, np.ndarray, ForwardCache, int]:
+    ) -> Tuple[SplitOutput, torch.Tensor, np.ndarray, ForwardCache, int]:
         w_c.eval()
         x, y = self._get_iter(batch_size)
         x = x.to(self.device)
@@ -80,6 +83,11 @@ class Client:
 
         with torch.no_grad():
             f = w_c(x)
+
+        if isinstance(f, tuple):
+            f = tuple(t.detach() for t in f)
+        else:
+            f = f.detach()
 
         sparse_counts = count_labels(y, self.num_classes)
         dense = to_dense_label_dist(
@@ -93,14 +101,14 @@ class Client:
 
         cache = ForwardCache(x=x, y=y)
         base_count = len(y)
-        return f.detach(), y.detach(), dense, cache, base_count
+        return f, y.detach(), dense, cache, base_count
 
     def apply_feature_grad(
         self,
         w_c: torch.nn.Module,
         opt_c: Any,
         cache: ForwardCache,
-        grad_f: torch.Tensor,
+        grad_f: SplitOutput,
     ) -> ClientUpdateStats:
         params_before = {n: p.clone() for n, p in w_c.named_parameters()}
 
@@ -109,7 +117,14 @@ class Client:
 
         x = cache.x
         f = w_c(x)
-        f.backward(grad_f)
+        if isinstance(f, tuple):
+            if not isinstance(grad_f, tuple):
+                raise ValueError("grad_f must be a tuple for tuple split output")
+            torch.autograd.backward(list(f), list(grad_f))
+        else:
+            if isinstance(grad_f, tuple):
+                raise ValueError("grad_f must be a tensor for tensor split output")
+            f.backward(grad_f)
         opt_c.step()
 
         update_norm_sq = 0.0
@@ -169,10 +184,12 @@ class Client:
 
         return x, y, provided
 
-    def forward_assistant(self, w_c: torch.nn.Module, x: torch.Tensor) -> torch.Tensor:
+    def forward_assistant(self, w_c: torch.nn.Module, x: torch.Tensor) -> SplitOutput:
         w_c.eval()
         with torch.no_grad():
             f = w_c(x)
+        if isinstance(f, tuple):
+            return tuple(t.detach() for t in f)
         return f.detach()
 
     def get_local_class_counts(self) -> np.ndarray:

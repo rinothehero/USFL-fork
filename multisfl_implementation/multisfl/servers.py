@@ -21,7 +21,7 @@ class BranchServerState:
 
 @dataclass
 class ServerTrainResult:
-    grad_f_main: torch.Tensor
+    grad_f_main: Any
     grad_norm_sq: float
     server_param_update_norm: float
     grad_f_main_norm: float
@@ -77,9 +77,9 @@ class MainServer:
     def train_branch_with_replay(
         self,
         b: int,
-        f_main: torch.Tensor,
+        f_main: Any,
         y_main: torch.Tensor,
-        f_replay_list: List[torch.Tensor],
+        f_replay_list: List[Any],
         y_replay_list: List[torch.Tensor],
     ) -> ServerTrainResult:
         bs = self.branches[b]
@@ -91,34 +91,75 @@ class MainServer:
         ws.train()
         opt.zero_grad(set_to_none=True)
 
+        f_rep = None
+        y_rep = None
         if len(f_replay_list) > 0:
-            f_rep = torch.cat(f_replay_list, dim=0)
-            y_rep = torch.cat(y_replay_list, dim=0)
-        else:
-            f_rep = None
-            y_rep = None
+            if isinstance(f_replay_list[0], tuple):
+                f_rep = f_replay_list
+                y_rep = torch.cat(y_replay_list, dim=0)
+            else:
+                f_rep = torch.cat(f_replay_list, dim=0)
+                y_rep = torch.cat(y_replay_list, dim=0)
 
-        f_main = f_main.to(self.device)
         y_main = y_main.to(self.device)
 
-        f_main_srv = f_main.detach().requires_grad_(True)
+        if isinstance(f_main, tuple):
+            f_main_act, f_main_id = f_main
+            f_main_act = f_main_act.to(self.device)
+            f_main_id = f_main_id.to(self.device)
+            f_main_act_srv = f_main_act.detach().requires_grad_(True)
+            f_main_id_srv = f_main_id.detach().requires_grad_(True)
 
-        if f_rep is not None and y_rep is not None:
-            f_rep = f_rep.to(self.device).detach()
-            y_rep = y_rep.to(self.device)
-            f_all = torch.cat([f_main_srv, f_rep], dim=0)
-            y_all = torch.cat([y_main, y_rep], dim=0)
+            if f_rep is not None and y_rep is not None:
+                if not all(isinstance(fr, tuple) for fr in f_replay_list):
+                    raise ValueError(
+                        "Replay features must be tuples for tuple split output"
+                    )
+                f_rep_act = torch.cat([fr[0] for fr in f_replay_list], dim=0)
+                f_rep_id = torch.cat([fr[1] for fr in f_replay_list], dim=0)
+                f_rep_act = f_rep_act.to(self.device).detach()
+                f_rep_id = f_rep_id.to(self.device).detach()
+                f_all = (
+                    torch.cat([f_main_act_srv, f_rep_act], dim=0),
+                    torch.cat([f_main_id_srv, f_rep_id], dim=0),
+                )
+                y_rep = y_rep.to(self.device)
+                y_all = torch.cat([y_main, y_rep], dim=0)
+            else:
+                f_all = (f_main_act_srv, f_main_id_srv)
+                y_all = y_main
+
+            logits = ws(f_all)
+            loss = self.criterion(logits, y_all)
+            loss.backward()
+
+            grad_act = f_main_act_srv.grad
+            grad_id = f_main_id_srv.grad
+            if grad_act is None or grad_id is None:
+                raise RuntimeError("grad_f_main tuple must not be None after backward")
+            grad_f_main = (grad_act.detach(), grad_id.detach())
         else:
-            f_all = f_main_srv
-            y_all = y_main
+            f_main = f_main.to(self.device)
+            f_main_srv = f_main.detach().requires_grad_(True)
 
-        logits = ws(f_all)
-        loss = self.criterion(logits, y_all)
-        loss.backward()
+            if f_rep is not None and y_rep is not None:
+                f_rep = f_rep.to(self.device).detach()
+                y_rep = y_rep.to(self.device)
+                f_all = torch.cat([f_main_srv, f_rep], dim=0)
+                y_all = torch.cat([y_main, y_rep], dim=0)
+            else:
+                f_all = f_main_srv
+                y_all = y_main
 
-        grad_f_main = f_main_srv.grad
-        assert grad_f_main is not None, "grad_f_main must not be None after backward"
-        grad_f_main = grad_f_main.detach()
+            logits = ws(f_all)
+            loss = self.criterion(logits, y_all)
+            loss.backward()
+
+            grad_f_main = f_main_srv.grad
+            assert grad_f_main is not None, (
+                "grad_f_main must not be None after backward"
+            )
+            grad_f_main = grad_f_main.detach()
 
         grad_f_main_norm = float(torch.norm(grad_f_main).item())
 

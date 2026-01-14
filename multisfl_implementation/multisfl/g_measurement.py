@@ -202,16 +202,30 @@ class OracleCalculator:
             num_batches += 1
 
             activation = client_model(data)
+            activation_detached = None
+            act_detached = None
+            id_detached = None
             if isinstance(activation, tuple):
-                activation = activation[0]
+                act, identity = activation
+                act_detached = act.detach().requires_grad_(True)
+                id_detached = identity.detach().requires_grad_(True)
+                logits = server_model((act_detached, id_detached))
+                loss = F.cross_entropy(logits, labels, reduction="mean")
+                loss.backward()
 
-            activation_detached = activation.detach().requires_grad_(True)
-            logits = server_model(activation_detached)
+                if act_detached.grad is None or id_detached.grad is None:
+                    raise RuntimeError("Missing gradients for tuple split output")
+                torch.autograd.backward(
+                    [act, identity], [act_detached.grad, id_detached.grad]
+                )
+            else:
+                activation_detached = activation.detach().requires_grad_(True)
+                logits = server_model(activation_detached)
 
-            loss = F.cross_entropy(logits, labels, reduction="mean")
-            loss.backward()
+                loss = F.cross_entropy(logits, labels, reduction="mean")
+                loss.backward()
 
-            activation.backward(activation_detached.grad)
+                activation.backward(activation_detached.grad)
 
             for name, param in client_model.named_parameters():
                 if param.grad is not None:
@@ -229,7 +243,13 @@ class OracleCalculator:
                     else:
                         server_grad_accum[name] += grad_cpu
 
-            del data, labels, activation, activation_detached, logits, loss
+            del data, labels, activation, logits, loss
+            if activation_detached is not None:
+                del activation_detached
+            if act_detached is not None:
+                del act_detached
+            if id_detached is not None:
+                del id_detached
 
         divisor = num_batches if num_batches > 0 else 1
         if num_batches > 0:
@@ -481,16 +501,30 @@ class GMeasurementSystem:
             y = y.to(self.device)
 
             activation = client_model(x)
+            activation_detached = None
+            act_detached = None
+            id_detached = None
             if isinstance(activation, tuple):
-                activation = activation[0]
+                act, identity = activation
+                act_detached = act.detach().requires_grad_(True)
+                id_detached = identity.detach().requires_grad_(True)
+                logits = server_model((act_detached, id_detached))
+                loss = F.cross_entropy(logits, y, reduction="mean")
+                loss.backward()
 
-            activation_detached = activation.detach().requires_grad_(True)
-            logits = server_model(activation_detached)
+                if act_detached.grad is None or id_detached.grad is None:
+                    raise RuntimeError("Missing gradients for tuple split output")
+                torch.autograd.backward(
+                    [act, identity], [act_detached.grad, id_detached.grad]
+                )
+            else:
+                activation_detached = activation.detach().requires_grad_(True)
+                logits = server_model(activation_detached)
 
-            loss = F.cross_entropy(logits, y, reduction="mean")
-            loss.backward()
+                loss = F.cross_entropy(logits, y, reduction="mean")
+                loss.backward()
 
-            activation.backward(activation_detached.grad)
+                activation.backward(activation_detached.grad)
 
             current_client_grad = {
                 name: param.grad.clone().detach().cpu()
@@ -506,7 +540,13 @@ class GMeasurementSystem:
             per_client_vecs[client_id] = gradient_to_vector(
                 current_client_grad, oracle_keys
             )
-            del x, y, activation, activation_detached, logits, loss, current_client_grad
+            del x, y, activation, logits, loss, current_client_grad
+            if activation_detached is not None:
+                del activation_detached
+            if act_detached is not None:
+                del act_detached
+            if id_detached is not None:
+                del id_detached
 
         restore_bn_stats(client_model, client_bn_backup)
         restore_bn_stats(server_model, server_bn_backup)
@@ -544,7 +584,7 @@ class GMeasurementSystem:
     def measure_server_g(
         self,
         server_model: nn.Module,
-        f_list: List[torch.Tensor],
+        f_list: List[Any],
         y_list: List[torch.Tensor],
         server_weights: Optional[List[int]] = None,
     ) -> Tuple[GMetrics, Dict[int, GMetrics], float, float]:
@@ -571,10 +611,17 @@ class GMeasurementSystem:
         for idx, (f_batch, y_batch) in enumerate(zip(f_list, y_list)):
             server_model.zero_grad(set_to_none=True)
 
-            f_batch = f_batch.to(self.device).detach().requires_grad_(True)
             y_batch = y_batch.to(self.device)
 
-            logits = server_model(f_batch)
+            if isinstance(f_batch, tuple):
+                f_act, f_id = f_batch
+                f_act = f_act.to(self.device).detach().requires_grad_(True)
+                f_id = f_id.to(self.device).detach().requires_grad_(True)
+                logits = server_model((f_act, f_id))
+            else:
+                f_batch = f_batch.to(self.device).detach().requires_grad_(True)
+                logits = server_model(f_batch)
+
             loss = F.cross_entropy(logits, y_batch, reduction="mean")
             loss.backward()
 

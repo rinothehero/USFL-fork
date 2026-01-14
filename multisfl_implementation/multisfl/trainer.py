@@ -216,7 +216,7 @@ class MultiSFLTrainer:
             collected_total = 0
             trials_total = 0
 
-            g_f_all_list: List[torch.Tensor] = []
+            g_f_all_list: List[Any] = []
             g_y_server_list: List[torch.Tensor] = []
             g_server_weights: List[int] = []
             g_x_client_list: List[torch.Tensor] = []
@@ -299,20 +299,55 @@ class MultiSFLTrainer:
 
                     # G Measurement: Collect features for Server G (first step only)
                     if is_diagnostic and local_step == 0:
-                        f_main_cpu = f_main.detach().cpu()
                         y_main_cpu = y_main.detach().cpu()
 
                         # Server G data (per branch)
-                        if f_rep_list:
-                            f_rep = torch.cat(f_rep_list, dim=0).detach().cpu()
-                            y_rep = torch.cat(y_rep_list, dim=0).detach().cpu()
-                            g_f_all_list.append(torch.cat([f_main_cpu, f_rep], dim=0))
-                            g_y_server_list.append(
-                                torch.cat([y_main_cpu, y_rep], dim=0)
-                            )
+                        if isinstance(f_main, tuple):
+                            f_main_act, f_main_id = f_main
+                            f_main_act_cpu = f_main_act.detach().cpu()
+                            f_main_id_cpu = f_main_id.detach().cpu()
+                            if f_rep_list:
+                                if not all(isinstance(fr, tuple) for fr in f_rep_list):
+                                    raise ValueError(
+                                        "Replay features must be tuples for tuple split output"
+                                    )
+                                f_rep_act = (
+                                    torch.cat([fr[0] for fr in f_rep_list], dim=0)
+                                    .detach()
+                                    .cpu()
+                                )
+                                f_rep_id = (
+                                    torch.cat([fr[1] for fr in f_rep_list], dim=0)
+                                    .detach()
+                                    .cpu()
+                                )
+                                g_f_all_list.append(
+                                    (
+                                        torch.cat([f_main_act_cpu, f_rep_act], dim=0),
+                                        torch.cat([f_main_id_cpu, f_rep_id], dim=0),
+                                    )
+                                )
+                                y_rep = torch.cat(y_rep_list, dim=0).detach().cpu()
+                                g_y_server_list.append(
+                                    torch.cat([y_main_cpu, y_rep], dim=0)
+                                )
+                            else:
+                                g_f_all_list.append((f_main_act_cpu, f_main_id_cpu))
+                                g_y_server_list.append(y_main_cpu)
                         else:
-                            g_f_all_list.append(f_main_cpu)
-                            g_y_server_list.append(y_main_cpu)
+                            f_main_cpu = f_main.detach().cpu()
+                            if f_rep_list:
+                                f_rep = torch.cat(f_rep_list, dim=0).detach().cpu()
+                                y_rep = torch.cat(y_rep_list, dim=0).detach().cpu()
+                                g_f_all_list.append(
+                                    torch.cat([f_main_cpu, f_rep], dim=0)
+                                )
+                                g_y_server_list.append(
+                                    torch.cat([y_main_cpu, y_rep], dim=0)
+                                )
+                            else:
+                                g_f_all_list.append(f_main_cpu)
+                                g_y_server_list.append(y_main_cpu)
 
                         g_server_weights.append(int(g_y_server_list[-1].size(0)))
 
