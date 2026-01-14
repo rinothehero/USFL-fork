@@ -267,6 +267,7 @@ class OracleCalculator:
         num_batches = 0
         activation_holder: Dict[str, Optional[torch.Tensor]] = {"tensor": None}
         hook_handle = None
+        debug_logged = False
 
         if split_layer_name:
             for name, module in full_model.named_modules():
@@ -278,6 +279,9 @@ class OracleCalculator:
                         activation_holder["tensor"] = out
 
                     hook_handle = module.register_forward_hook(hook_fn)
+                    print(
+                        f"[Oracle Split Hook] Registered forward hook on '{split_layer_name}'"
+                    )
                     break
 
         for batch in self.full_dataloader:
@@ -293,6 +297,11 @@ class OracleCalculator:
             num_batches += 1
 
             outputs = full_model(data)
+            if not debug_logged:
+                print(f"[DEBUG] Oracle Input shape: {data.shape}")
+                print(f"[DEBUG] Oracle Output shape: {outputs.shape}")
+                print(f"[DEBUG] Oracle Labels shape: {labels.shape}")
+                debug_logged = True
             loss = F.cross_entropy(outputs, labels, reduction="mean")
             loss.backward()
 
@@ -309,6 +318,9 @@ class OracleCalculator:
                     batch_split_grad = activation_grad.detach().mean(dim=0).cpu()
                     if split_grad_sum is None:
                         split_grad_sum = batch_split_grad
+                        print(
+                            f"[Oracle Split Hook] Split layer grad shape: {batch_split_grad.shape}"
+                        )
                     else:
                         split_grad_sum += batch_split_grad
 
@@ -332,6 +344,20 @@ class OracleCalculator:
             n: g for n, g in oracle_full.items() if n not in client_param_names
         }
         split_grad = split_grad_sum / divisor if split_grad_sum is not None else None
+
+        split_flag = "yes" if split_grad is not None else "no"
+        print(
+            f"[Oracle Split Hook] Split: client={len(oracle_client)}, server={len(oracle_server)}, split_layer={split_flag}"
+        )
+
+        client_vec = gradient_to_vector(oracle_client)
+        print(
+            f"[DEBUG Oracle] Client: ||g*||={torch.norm(client_vec).item():.4f}, numel={client_vec.numel()}"
+        )
+        server_vec = gradient_to_vector(oracle_server)
+        print(
+            f"[DEBUG Oracle] Server: ||g*||={torch.norm(server_vec).item():.4f}, numel={server_vec.numel()}"
+        )
 
         return oracle_client, oracle_server, split_grad
 

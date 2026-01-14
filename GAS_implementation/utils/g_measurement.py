@@ -235,6 +235,7 @@ def compute_oracle_with_split_hook(
     batch_count = 0
     activation_holder = {"tensor": None}
     hook_handle = None
+    debug_logged = False
 
     if split_layer_name:
         for name, module in full_model.named_modules():
@@ -246,6 +247,9 @@ def compute_oracle_with_split_hook(
                     activation_holder["tensor"] = out
 
                 hook_handle = module.register_forward_hook(hook_fn)
+                print(
+                    f"[Oracle Split Hook] Registered forward hook on '{split_layer_name}'"
+                )
                 break
 
     for images, labels in train_loader:
@@ -255,6 +259,11 @@ def compute_oracle_with_split_hook(
         full_model.zero_grad(set_to_none=True)
 
         outputs = full_model(images)
+        if not debug_logged:
+            print(f"[DEBUG] Oracle Input shape: {images.shape}")
+            print(f"[DEBUG] Oracle Output shape: {outputs.shape}")
+            print(f"[DEBUG] Oracle Labels shape: {labels.shape}")
+            debug_logged = True
         loss = criterion(outputs, labels.long())
         loss.backward()
 
@@ -271,6 +280,9 @@ def compute_oracle_with_split_hook(
                 batch_split_grad = activation_grad.detach().mean(dim=0).cpu()
                 if split_grad_sum is None:
                     split_grad_sum = batch_split_grad
+                    print(
+                        f"[Oracle Split Hook] Split layer grad shape: {batch_split_grad.shape}"
+                    )
                 else:
                     split_grad_sum += batch_split_grad
 
@@ -295,6 +307,22 @@ def compute_oracle_with_split_hook(
     server_grad_list = _build_grad_list(server_model, oracle_server)
 
     split_grad = split_grad_sum / divisor if split_grad_sum is not None else None
+
+    split_flag = "yes" if split_grad is not None else "no"
+    print(
+        f"[Oracle Split Hook] Split: client={len(oracle_client)}, server={len(oracle_server)}, split_layer={split_flag}"
+    )
+
+    if client_grad_list:
+        client_flat = torch.cat([g.flatten().float() for g in client_grad_list])
+        print(
+            f"[DEBUG Oracle] Client: ||g*||={torch.norm(client_flat).item():.4f}, numel={client_flat.numel()}"
+        )
+    if server_grad_list:
+        server_flat = torch.cat([g.flatten().float() for g in server_grad_list])
+        print(
+            f"[DEBUG Oracle] Server: ||g*||={torch.norm(server_flat).item():.4f}, numel={server_flat.numel()}"
+        )
 
     return {
         "client": client_grad_list,
