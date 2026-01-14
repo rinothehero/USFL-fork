@@ -92,6 +92,11 @@ if len(sys.argv) > 1:
             "First argument must be a boolean (true/false) for USE_VARIANCE_G"
         )
 
+USE_SFL_TRANSFORM = "--sfl-transform" in sys.argv
+USE_SFL_ORACLE = True
+if "--legacy-oracle" in sys.argv:
+    USE_SFL_ORACLE = False
+
 # Simulate real communication environments
 WRTT = True  # True for simulation, False for no simulation
 
@@ -283,7 +288,13 @@ class IncrementalStats:
 
 # Data loading and preprocessing
 alldata, alllabel, test_set, transform = Dataset(
-    cifar=cifar, mnist=mnist, fmnist=fmnist, cinic=cinic, cifar100=cifar100, SVHN=SVHN
+    cifar=cifar,
+    mnist=mnist,
+    fmnist=fmnist,
+    cinic=cinic,
+    cifar100=cifar100,
+    SVHN=SVHN,
+    use_sfl_transform=USE_SFL_TRANSFORM,
 )
 test_loader = dataloader.DataLoader(dataset=test_set, batch_size=128, shuffle=True)
 train_index = np.arange(0, len(alldata))
@@ -322,6 +333,20 @@ user_model, server_model = model_selection(
 )
 user_model.to(device)
 server_model.to(device)
+full_model = None
+if USE_SFL_ORACLE:
+    full_model = model_selection(
+        cifar,
+        mnist,
+        fmnist,
+        cinic=cinic,
+        split=False,
+        cifar100=cifar100,
+        SVHN=SVHN,
+        resnet=use_resnet,
+    )
+    if full_model is not None:
+        full_model.to(device)
 userParam = copy.deepcopy(user_model.state_dict())
 optimizer_down = torch.optim.SGD(
     user_model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay
@@ -828,7 +853,13 @@ while epoch != epochs:
 
                 user_model.load_state_dict(userParam, strict=True)
                 g_manager.compute_oracle(
-                    user_model, server_model, full_train_loader, criterion
+                    user_model,
+                    server_model,
+                    full_train_loader,
+                    criterion,
+                    full_model=full_model,
+                    split_layer_name=split_layer,
+                    use_sfl_oracle=USE_SFL_ORACLE,
                 )
                 if g_manager.oracle_grads is not None:
                     assert_param_name_alignment(

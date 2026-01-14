@@ -186,8 +186,27 @@ class MultiSFLTrainer:
                     wc_measure.load_state_dict(wc_master_sd)
                     ws_measure.load_state_dict(ws_master_sd)
 
-                # Compute Oracle NOW (using pre-round model)
-                self.g_system.compute_oracle(wc_measure, ws_measure)
+                full_model = None
+                if wc_master_sd is not None and ws_master_sd is not None:
+                    full_model = get_full_model(
+                        self.cfg.model_type, self.cfg.dataset, self.cfg.num_classes
+                    ).to(self.cfg.device)
+                    full_sd = full_model.state_dict()
+                    for k, v in wc_master_sd.items():
+                        if k in full_sd:
+                            full_sd[k] = v
+                    for k, v in ws_master_sd.items():
+                        if k in full_sd:
+                            full_sd[k] = v
+                    full_model.load_state_dict(full_sd)
+
+                self.g_system.compute_oracle(
+                    wc_measure,
+                    ws_measure,
+                    full_model=full_model,
+                    split_layer_name=self.cfg.split_layer,
+                    use_sfl_oracle=True,
+                )
 
             grad_norm_sq_list: List[float] = []
             grad_f_main_norm_list: List[float] = []

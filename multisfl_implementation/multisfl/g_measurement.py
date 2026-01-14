@@ -175,10 +175,6 @@ class OracleCalculator:
     def compute_oracle_gradient(
         self, client_model: nn.Module, server_model: nn.Module
     ) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
-        """
-        Compute Oracle gradient using full training data.
-        Uses reduction='mean' + divide by num_batches.
-        """
         client_model = client_model.to(self.device)
         server_model = server_model.to(self.device)
 
@@ -190,7 +186,6 @@ class OracleCalculator:
 
         client_grad_accum: Dict[str, torch.Tensor] = {}
         server_grad_accum: Dict[str, torch.Tensor] = {}
-        total_samples = 0
         num_batches = 0
 
         for batch in self.full_dataloader:
@@ -204,7 +199,6 @@ class OracleCalculator:
 
             data = data.to(self.device)
             labels = labels.to(self.device)
-            batch_size = labels.size(0)
             num_batches += 1
 
             activation = client_model(data)
@@ -235,8 +229,6 @@ class OracleCalculator:
                     else:
                         server_grad_accum[name] += grad_cpu
 
-            total_samples += batch_size
-
             del data, labels, activation, activation_detached, logits, loss
 
         divisor = num_batches if num_batches > 0 else 1
@@ -256,6 +248,92 @@ class OracleCalculator:
             torch.cuda.empty_cache()
 
         return client_grad_accum, server_grad_accum
+
+    def compute_oracle_with_split_hook(
+        self,
+        full_model: nn.Module,
+        client_param_names: set[str],
+        split_layer_name: Optional[str] = None,
+    ) -> Tuple[
+        Dict[str, torch.Tensor], Dict[str, torch.Tensor], Optional[torch.Tensor]
+    ]:
+        full_model = full_model.to(self.device)
+
+        bn_backup = backup_bn_stats(full_model)
+        full_model.train()
+
+        grad_accum: Dict[str, torch.Tensor] = {}
+        split_grad_sum = None
+        num_batches = 0
+        activation_holder: Dict[str, Optional[torch.Tensor]] = {"tensor": None}
+        hook_handle = None
+
+        if split_layer_name:
+            for name, module in full_model.named_modules():
+                if name == split_layer_name:
+
+                    def hook_fn(_module, _input, output):
+                        out = output[0] if isinstance(output, tuple) else output
+                        out.retain_grad()
+                        activation_holder["tensor"] = out
+
+                    hook_handle = module.register_forward_hook(hook_fn)
+                    break
+
+        for batch in self.full_dataloader:
+            if len(batch) >= 2:
+                data, labels = batch[0], batch[1]
+            else:
+                continue
+
+            full_model.zero_grad(set_to_none=True)
+
+            data = data.to(self.device)
+            labels = labels.to(self.device)
+            num_batches += 1
+
+            outputs = full_model(data)
+            loss = F.cross_entropy(outputs, labels, reduction="mean")
+            loss.backward()
+
+            for name, param in full_model.named_parameters():
+                if param.grad is not None:
+                    if name not in grad_accum:
+                        grad_accum[name] = param.grad.clone().detach().cpu()
+                    else:
+                        grad_accum[name] += param.grad.clone().detach().cpu()
+
+            if activation_holder["tensor"] is not None:
+                activation_grad = activation_holder["tensor"].grad
+                if activation_grad is not None:
+                    batch_split_grad = activation_grad.detach().mean(dim=0).cpu()
+                    if split_grad_sum is None:
+                        split_grad_sum = batch_split_grad
+                    else:
+                        split_grad_sum += batch_split_grad
+
+            del outputs, loss, data, labels
+
+        if hook_handle is not None:
+            hook_handle.remove()
+
+        restore_bn_stats(full_model, bn_backup)
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        divisor = num_batches if num_batches > 0 else 1
+        oracle_full = {name: grad / divisor for name, grad in grad_accum.items()}
+
+        oracle_client = {
+            n: g for n, g in oracle_full.items() if n in client_param_names
+        }
+        oracle_server = {
+            n: g for n, g in oracle_full.items() if n not in client_param_names
+        }
+        split_grad = split_grad_sum / divisor if split_grad_sum is not None else None
+
+        return oracle_client, oracle_server, split_grad
 
 
 class GMeasurementSystem:
@@ -280,11 +358,30 @@ class GMeasurementSystem:
     def is_diagnostic_round(self, round_idx: int) -> bool:
         return (round_idx + 1) % self.diagnostic_frequency == 0
 
-    def compute_oracle(self, client_model: nn.Module, server_model: nn.Module):
+    def compute_oracle(
+        self,
+        client_model: nn.Module,
+        server_model: nn.Module,
+        full_model: Optional[nn.Module] = None,
+        split_layer_name: Optional[str] = None,
+        use_sfl_oracle: bool = False,
+    ):
         print(f"[G Measurement] Computing Oracle gradient...")
-        self.oracle_client_grad, self.oracle_server_grad = (
-            self.oracle_calculator.compute_oracle_gradient(client_model, server_model)
-        )
+        if use_sfl_oracle and full_model is not None:
+            client_param_names = {name for name, _ in client_model.named_parameters()}
+            (
+                self.oracle_client_grad,
+                self.oracle_server_grad,
+                _,
+            ) = self.oracle_calculator.compute_oracle_with_split_hook(
+                full_model, client_param_names, split_layer_name=split_layer_name
+            )
+        else:
+            self.oracle_client_grad, self.oracle_server_grad = (
+                self.oracle_calculator.compute_oracle_gradient(
+                    client_model, server_model
+                )
+            )
         print(
             f"[G Measurement] Oracle computed: "
             f"client={len(self.oracle_client_grad)} params, "

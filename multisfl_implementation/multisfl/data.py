@@ -35,27 +35,31 @@ class CIFAR10Dataset(Dataset):
         train: bool = True,
         augment: bool = True,
         download: bool = True,
+        use_sfl_transform: bool = False,
     ):
-        normalize = transforms.Normalize(
-            mean=[0.4914, 0.4822, 0.4465], std=[0.2470, 0.2435, 0.2616]
-        )
-
-        if train and augment:
-            transform = transforms.Compose(
-                [
-                    transforms.RandomCrop(32, padding=4),
-                    transforms.RandomHorizontalFlip(),
-                    transforms.ToTensor(),
-                    normalize,
-                ]
-            )
+        if use_sfl_transform:
+            transform = transforms.Compose([transforms.ToTensor()])
         else:
-            transform = transforms.Compose(
-                [
-                    transforms.ToTensor(),
-                    normalize,
-                ]
+            normalize = transforms.Normalize(
+                mean=[0.4914, 0.4822, 0.4465], std=[0.2470, 0.2435, 0.2616]
             )
+
+            if train and augment:
+                transform = transforms.Compose(
+                    [
+                        transforms.RandomCrop(32, padding=4),
+                        transforms.RandomHorizontalFlip(),
+                        transforms.ToTensor(),
+                        normalize,
+                    ]
+                )
+            else:
+                transform = transforms.Compose(
+                    [
+                        transforms.ToTensor(),
+                        normalize,
+                    ]
+                )
 
         self.dataset = torchvision.datasets.CIFAR10(
             root=root, train=train, download=download, transform=transform
@@ -373,8 +377,16 @@ def print_partition_stats(clients: List[ClientData], num_classes: int = 10) -> N
     print("=" * 70 + "\n")
 
 
-def get_cifar10_test_loader(batch_size: int = 128, root: str = "./data") -> DataLoader:
-    test_dataset = CIFAR10Dataset(root=root, train=False, augment=False, download=True)
+def get_cifar10_test_loader(
+    batch_size: int = 128, root: str = "./data", use_sfl_transform: bool = False
+) -> DataLoader:
+    test_dataset = CIFAR10Dataset(
+        root=root,
+        train=False,
+        augment=False,
+        download=True,
+        use_sfl_transform=use_sfl_transform,
+    )
     return DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
 
 

@@ -202,6 +202,109 @@ def compute_oracle_gradients(
     }
 
 
+def _build_grad_list(model, grad_map):
+    grads = []
+    for name, param in model.named_parameters():
+        if name in grad_map:
+            grads.append(grad_map[name])
+        else:
+            grads.append(torch.zeros_like(param).cpu())
+    return grads
+
+
+def compute_oracle_with_split_hook(
+    user_model,
+    server_model,
+    full_model,
+    train_loader,
+    criterion,
+    device,
+    split_layer_name=None,
+):
+    user_model = user_model.to(device)
+    server_model = server_model.to(device)
+    full_model = full_model.to(device)
+
+    bn_backup = backup_bn_stats(full_model)
+    full_model.train()
+
+    client_param_names = {name for name, _ in user_model.named_parameters()}
+
+    grad_accum = {}
+    split_grad_sum = None
+    batch_count = 0
+    activation_holder = {"tensor": None}
+    hook_handle = None
+
+    if split_layer_name:
+        for name, module in full_model.named_modules():
+            if name == split_layer_name:
+
+                def hook_fn(_module, _input, output):
+                    out = output[0] if isinstance(output, tuple) else output
+                    out.retain_grad()
+                    activation_holder["tensor"] = out
+
+                hook_handle = module.register_forward_hook(hook_fn)
+                break
+
+    for images, labels in train_loader:
+        images = images.to(device)
+        labels = labels.to(device)
+
+        full_model.zero_grad(set_to_none=True)
+
+        outputs = full_model(images)
+        loss = criterion(outputs, labels.long())
+        loss.backward()
+
+        for name, param in full_model.named_parameters():
+            if param.grad is not None:
+                if name not in grad_accum:
+                    grad_accum[name] = param.grad.clone().detach().cpu()
+                else:
+                    grad_accum[name] += param.grad.clone().detach().cpu()
+
+        if activation_holder["tensor"] is not None:
+            activation_grad = activation_holder["tensor"].grad
+            if activation_grad is not None:
+                batch_split_grad = activation_grad.detach().mean(dim=0).cpu()
+                if split_grad_sum is None:
+                    split_grad_sum = batch_split_grad
+                else:
+                    split_grad_sum += batch_split_grad
+
+        batch_count += 1
+        del images, labels, outputs, loss
+
+    if hook_handle is not None:
+        hook_handle.remove()
+
+    restore_bn_stats(full_model, bn_backup, device)
+    torch.cuda.empty_cache()
+
+    divisor = batch_count if batch_count > 0 else 1
+    oracle_full = {name: grad / divisor for name, grad in grad_accum.items()}
+
+    oracle_client = {n: g for n, g in oracle_full.items() if n in client_param_names}
+    oracle_server = {
+        n: g for n, g in oracle_full.items() if n not in client_param_names
+    }
+
+    client_grad_list = _build_grad_list(user_model, oracle_client)
+    server_grad_list = _build_grad_list(server_model, oracle_server)
+
+    split_grad = split_grad_sum / divisor if split_grad_sum is not None else None
+
+    return {
+        "client": client_grad_list,
+        "server": server_grad_list,
+        "split": split_grad,
+        "client_names": get_param_names(user_model),
+        "server_names": get_param_names(server_model),
+    }
+
+
 def collect_current_gradients(user_model, server_model, split_output, loss):
     """
     Collect current gradients during normal training step.
@@ -366,15 +469,31 @@ class GMeasurementManager:
         """Check if this epoch is a diagnostic round."""
         return (epoch + 1) % self.measure_frequency == 0
 
-    def compute_oracle(self, user_model, server_model, train_loader, criterion):
-        """
-        Compute and store Oracle gradients.
-        Should be called once per diagnostic round before training step.
-        """
+    def compute_oracle(
+        self,
+        user_model,
+        server_model,
+        train_loader,
+        criterion,
+        full_model=None,
+        split_layer_name=None,
+        use_sfl_oracle=False,
+    ):
         print("[G Measurement] Computing Oracle gradients...")
-        self.oracle_grads = compute_oracle_gradients(
-            user_model, server_model, train_loader, criterion, self.device
-        )
+        if use_sfl_oracle and full_model is not None:
+            self.oracle_grads = compute_oracle_with_split_hook(
+                user_model,
+                server_model,
+                full_model,
+                train_loader,
+                criterion,
+                self.device,
+                split_layer_name=split_layer_name,
+            )
+        else:
+            self.oracle_grads = compute_oracle_gradients(
+                user_model, server_model, train_loader, criterion, self.device
+            )
         self.oracle_computed = True
         print("[G Measurement] Oracle computation complete.")
 

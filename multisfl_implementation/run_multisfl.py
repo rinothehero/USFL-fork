@@ -134,6 +134,13 @@ def parse_args() -> argparse.Namespace:
         choices=["true", "false"],
         help="Use variance-based G metrics (SFL-style)",
     )
+    parser.add_argument(
+        "--use_sfl_transform",
+        type=str,
+        default="false",
+        choices=["true", "false"],
+        help="Use SFL-style ToTensor-only transforms",
+    )
 
     return parser.parse_args()
 
@@ -178,14 +185,21 @@ def main():
         enable_g_measurement=(args.enable_g_measurement.lower() == "true"),
         g_measure_frequency=args.g_measure_frequency,
         use_variance_g=(args.use_variance_g.lower() == "true"),
+        use_sfl_transform=(args.use_sfl_transform.lower() == "true"),
     )
 
     print(f"\nLoading dataset: {args.dataset}")
     if args.dataset == "cifar10":
         train_dataset = CIFAR10Dataset(
-            root=args.data_root, train=True, augment=True, download=True
+            root=args.data_root,
+            train=True,
+            augment=True,
+            download=True,
+            use_sfl_transform=cfg.use_sfl_transform,
         )
-        test_loader = get_cifar10_test_loader(batch_size=128, root=args.data_root)
+        test_loader = get_cifar10_test_loader(
+            batch_size=128, root=args.data_root, use_sfl_transform=cfg.use_sfl_transform
+        )
     elif args.dataset == "fmnist":
         train_dataset = FashionMNISTDataset(
             root=args.data_root, train=True, augment=True, download=True

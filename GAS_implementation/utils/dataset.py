@@ -111,29 +111,39 @@ class CustomDataset(Data.Dataset):
 
 
 def Dataset(
-    cifar=False, mnist=False, fmnist=False, cinic=False, cifar100=False, SVHN=False
+    cifar=False,
+    mnist=False,
+    fmnist=False,
+    cinic=False,
+    cifar100=False,
+    SVHN=False,
+    use_sfl_transform=False,
 ):
     print("data preprocessing...")
     if cifar == True:
-        train_transform = transforms.Compose(
-            [
-                transforms.RandomCrop(32, padding=4),
-                transforms.ToTensor(),
-                transforms.Normalize(
-                    (0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)
-                ),
-                transforms.RandomHorizontalFlip(),
-            ]
-        )
+        if use_sfl_transform:
+            train_transform = transforms.Compose([transforms.ToTensor()])
+            test_transform = transforms.Compose([transforms.ToTensor()])
+        else:
+            train_transform = transforms.Compose(
+                [
+                    transforms.RandomCrop(32, padding=4),
+                    transforms.ToTensor(),
+                    transforms.Normalize(
+                        (0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)
+                    ),
+                    transforms.RandomHorizontalFlip(),
+                ]
+            )
 
-        test_transform = transforms.Compose(
-            [
-                transforms.ToTensor(),
-                transforms.Normalize(
-                    (0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)
-                ),
-            ]
-        )
+            test_transform = transforms.Compose(
+                [
+                    transforms.ToTensor(),
+                    transforms.Normalize(
+                        (0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)
+                    ),
+                ]
+            )
 
         train_set = torchvision.datasets.CIFAR10(
             root=r"../data", train=True, transform=train_transform, download=True
