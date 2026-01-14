@@ -648,6 +648,10 @@ class GMeasurementSystem:
 
             y_batch = y_batch.to(self.device)
 
+            bn_states: Optional[Dict[str, bool]] = None
+            if y_batch.size(0) == 1:
+                bn_states = _set_batchnorm_eval(server_model)
+
             if isinstance(f_batch, tuple):
                 f_act, f_id = f_batch
                 f_act = f_act.to(self.device).detach().requires_grad_(True)
@@ -659,6 +663,9 @@ class GMeasurementSystem:
 
             loss = F.cross_entropy(logits, y_batch, reduction="mean")
             loss.backward()
+
+            if bn_states is not None:
+                _restore_batchnorm(server_model, bn_states)
 
             current_server_grad = {
                 name: param.grad.clone().detach().cpu()
