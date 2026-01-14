@@ -380,7 +380,10 @@ if G_Measurement:
 
     full_train_set = TrainSet(train_img, train_label, transform)
     full_train_loader = dataloader.DataLoader(
-        dataset=full_train_set, batch_size=batchSize, shuffle=False, drop_last=False
+        dataset=full_train_set,
+        batch_size=batchSize * user_parti_num,
+        shuffle=False,
+        drop_last=False,
     )
     print(f"[G Measurement] Initialized. Frequency: every {G_Measure_Frequency} epochs")
 
