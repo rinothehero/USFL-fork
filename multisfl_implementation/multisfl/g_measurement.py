@@ -335,7 +335,7 @@ class OracleCalculator:
                 print(f"[DEBUG] Oracle Output shape: {outputs.shape}")
                 print(f"[DEBUG] Oracle Labels shape: {labels.shape}")
                 debug_logged = True
-            loss = F.cross_entropy(outputs, labels, reduction="mean")
+            loss = F.cross_entropy(outputs, labels, reduction="sum")
             loss.backward()
 
             for name, param in full_model.named_parameters():
