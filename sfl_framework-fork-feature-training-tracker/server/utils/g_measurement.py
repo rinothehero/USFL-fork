@@ -461,6 +461,13 @@ class OracleGradientCalculator:
 
         def forward_hook(module, input, output):
             """Forward hook to capture split layer output for gradient computation"""
+            if isinstance(output, tuple):
+                out = output[0]
+                out_clone = out.clone()
+                out_clone.requires_grad_(True)
+                out_clone.retain_grad()
+                split_activation_storage["activations"].append(out_clone)
+                return (out_clone, *output[1:])
             # Clone output to avoid inplace modification issues
             output_clone = output.clone()
             output_clone.requires_grad_(True)

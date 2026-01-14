@@ -242,9 +242,18 @@ def compute_oracle_with_split_hook(
             if name == split_layer_name:
 
                 def hook_fn(_module, _input, output):
-                    out = output[0] if isinstance(output, tuple) else output
-                    out.retain_grad()
-                    activation_holder["tensor"] = out
+                    if isinstance(output, tuple):
+                        out = output[0]
+                        out_clone = out.clone()
+                        out_clone.requires_grad_(True)
+                        out_clone.retain_grad()
+                        activation_holder["tensor"] = out_clone
+                        return (out_clone, *output[1:])
+                    out_clone = output.clone()
+                    out_clone.requires_grad_(True)
+                    out_clone.retain_grad()
+                    activation_holder["tensor"] = out_clone
+                    return out_clone
 
                 hook_handle = module.register_forward_hook(hook_fn)
                 print(
