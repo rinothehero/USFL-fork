@@ -131,6 +131,19 @@ def main() -> None:
             ],
         ),
         Experiment(
+            name="MultiSFL-A (cifar10, resnet18_image_style, layer1.1.bn2)",
+            kind="MultiSFL",
+            env={},
+            command=multisfl_command(
+                dataset="cifar10",
+                model_type="resnet18_image_style",
+                batch_size=50,
+                split_layer="layer1.1.bn2",
+                labels_per_client=2,
+                dirichlet_alpha=0.3,
+            ),
+        ),
+        Experiment(
             name="GAS-O (cifar10, resnet18, layer1.0.bn1)",
             kind="GAS",
             env=gas_env(
@@ -147,6 +160,19 @@ def main() -> None:
                 "true",
                 "--sfl-transform",
             ],
+        ),
+        Experiment(
+            name="MultiSFL-O (cifar10, resnet18_image_style, layer1.0.bn1)",
+            kind="MultiSFL",
+            env={},
+            command=multisfl_command(
+                dataset="cifar10",
+                model_type="resnet18_image_style",
+                batch_size=50,
+                split_layer="layer1.0.bn1",
+                labels_per_client=2,
+                dirichlet_alpha=0.3,
+            ),
         ),
         Experiment(
             name="GAS-B (fmnist, resnet18, layer2.1.bn2)",
@@ -166,32 +192,7 @@ def main() -> None:
                 "--sfl-transform",
             ],
         ),
-        Experiment(
-            name="MultiSFL-A (cifar10, resnet18_image_style, layer1.1.bn2)",
-            kind="MultiSFL",
-            env={},
-            command=multisfl_command(
-                dataset="cifar10",
-                model_type="resnet18_image_style",
-                batch_size=50,
-                split_layer="layer1.1.bn2",
-                labels_per_client=2,
-                dirichlet_alpha=0.3,
-            ),
-        ),
-        Experiment(
-            name="MultiSFL-O (cifar10, resnet18_image_style, layer1.0.bn1)",
-            kind="MultiSFL",
-            env={},
-            command=multisfl_command(
-                dataset="cifar10",
-                model_type="resnet18_image_style",
-                batch_size=50,
-                split_layer="layer1.0.bn1",
-                labels_per_client=2,
-                dirichlet_alpha=0.3,
-            ),
-        ),
+    
         Experiment(
             name="MultiSFL-B (cifar10, resnet18_image_style, layer2.1.bn2)",
             kind="MultiSFL",
