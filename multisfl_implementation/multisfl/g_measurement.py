@@ -754,10 +754,14 @@ class GMeasurementSystem:
         self.oracle_client_grad = None
         self.oracle_server_grad = None
 
+        client_batch_sizes = [int(y.size(0)) for y in y_all_client]
+        server_batch_sizes = [int(y.size(0)) for y in y_all_server]
         print(
             f"[G Measurement] Round {round_idx + 1}: "
             f"Client G={client_g.G:.6f} (G_rel={client_g.G_rel:.4f}), "
-            f"Server G={server_g.G:.6f} (G_rel={server_g.G_rel:.4f})"
+            f"Server G={server_g.G:.6f} (G_rel={server_g.G_rel:.4f}) "
+            f"(client_batch_sizes={client_batch_sizes}, "
+            f"server_batch_sizes={server_batch_sizes})"
         )
         if per_branch_server_g:
             for branch_idx in sorted(per_branch_server_g.keys()):

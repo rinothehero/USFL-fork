@@ -530,7 +530,17 @@ def finalize_g_measurement(g_measure_state, g_manager, user_parti_num):
         split_avg = split_stack.mean(dim=0)
         split_g = compute_g_score(g_manager.oracle_grads["split"], split_avg)
 
-    print(f"[G Measurement] Epoch {g_measure_state['epoch']} - Per-Client G:")
+    if g_measure_state["client_batch_sizes"]:
+        client_sizes = [
+            g_measure_state["client_batch_sizes"].get(cid, 0)
+            for cid in g_measure_state["client_order"]
+        ]
+        print(
+            f"[G Measurement] Epoch {g_measure_state['epoch']} - Per-Client G "
+            f"(batch_sizes={client_sizes}):"
+        )
+    else:
+        print(f"[G Measurement] Epoch {g_measure_state['epoch']} - Per-Client G:")
     for cid, gd in per_client_g.items():
         print(
             f"  Client {cid}: ||oracle||={gd['oracle_norm']:.4f}, ||current||={gd['current_norm']:.4f}, "
@@ -539,7 +549,15 @@ def finalize_g_measurement(g_measure_state, g_manager, user_parti_num):
     print(f"  Average: G={avg_client_g:.4f}, G_rel={avg_g_rel:.6f}")
 
     for idx, g_val in enumerate(server_g_list):
-        print(f"[G Measurement] Server update {idx}: G={g_val:.6f}")
+        batch_size = (
+            g_measure_state["server_batch_sizes"][idx]
+            if idx < len(g_measure_state["server_batch_sizes"])
+            else 0
+        )
+        print(
+            f"[G Measurement] Server update {idx}: G={g_val:.6f} "
+            f"(batch_size={batch_size})"
+        )
     print(f"[G Measurement] Server Average G = {avg_server_g:.6f}")
 
     if USE_VARIANCE_G:

@@ -982,7 +982,9 @@ class USFLStageOrganizer(BaseStageOrganizer):
                         self.g_measurement_system.store_server_gradient(
                             server_grad, batch_weight
                         )
-                        print(f"[G Measurement] Server gradient collected")
+                        print(
+                            f"[G Measurement] Server gradient collected (batch_size={batch_weight})"
+                        )
 
                     # G Measurement: Store split layer gradient ONLY on first batch
                     if (
@@ -1244,9 +1246,19 @@ class USFLStageOrganizer(BaseStageOrganizer):
 
                 if client_grads:
                     self.g_measurement_system.client_g_tildes = client_grads
-                    print(
-                        f"[G Measurement] Collected gradients from {len(client_grads)} clients"
-                    )
+                    if client_weights:
+                        sorted_sizes = [
+                            int(client_weights[cid])
+                            for cid in sorted(client_weights.keys())
+                        ]
+                        print(
+                            "[G Measurement] Collected gradients from "
+                            f"{len(client_grads)} clients (batch_sizes={sorted_sizes})"
+                        )
+                    else:
+                        print(
+                            f"[G Measurement] Collected gradients from {len(client_grads)} clients"
+                        )
 
                 # Compute G metrics
                 result = self.g_measurement_system.compute_g(
