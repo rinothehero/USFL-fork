@@ -14,6 +14,7 @@ import torch.utils.data.dataloader as dataloader
 import random
 import numpy as np
 import datetime
+import json
 from typing import Dict
 from network import model_selection, load_torchvision_resnet18_init
 from dataset import Dataset, Data_Partition
@@ -458,7 +459,9 @@ def finalize_g_measurement(g_measure_state, g_manager, user_parti_num):
     if per_client_g:
         avg_client_g = sum(gd["G"] for gd in per_client_g.values()) / len(per_client_g)
         avg_g_rel = sum(gd["G_rel"] for gd in per_client_g.values()) / len(per_client_g)
-        avg_d_cosine = sum(gd["D_cosine"] for gd in per_client_g.values()) / len(per_client_g)
+        avg_d_cosine = sum(gd["D_cosine"] for gd in per_client_g.values()) / len(
+            per_client_g
+        )
     else:
         avg_client_g = float("nan")
         avg_g_rel = float("nan")
@@ -579,13 +582,41 @@ def finalize_g_measurement(g_measure_state, g_manager, user_parti_num):
             f"G_rel={variance_server_g_rel:.6f}"
         )
 
+    per_client_g_payload = {
+        str(cid): {
+            "G": gd["G"],
+            "G_rel": gd["G_rel"],
+            "D": gd["D_cosine"],
+        }
+        for cid, gd in per_client_g.items()
+    }
+    per_server_g_payload = [
+        {"G": gd["G"], "G_rel": gd["G_rel"], "D": gd["D_cosine"]}
+        for gd in server_g_list
+    ]
+
     if USE_VARIANCE_G:
         g_manager.g_history["client_g"].append(variance_client_g)
+        g_manager.g_history["client_g_rel"].append(variance_client_g_rel)
+        g_manager.g_history["client_d"].append(avg_d_cosine)
         g_manager.g_history["server_g"].append(variance_server_g)
+        g_manager.g_history["server_g_rel"].append(variance_server_g_rel)
+        g_manager.g_history["server_d"].append(avg_server_d)
     else:
         g_manager.g_history["client_g"].append(avg_client_g)
+        g_manager.g_history["client_g_rel"].append(avg_g_rel)
+        g_manager.g_history["client_d"].append(avg_d_cosine)
         g_manager.g_history["server_g"].append(avg_server_g)
+        g_manager.g_history["server_g_rel"].append(avg_server_g_rel)
+        g_manager.g_history["server_d"].append(avg_server_d)
+
+    g_manager.g_history["variance_client_g"].append(variance_client_g)
+    g_manager.g_history["variance_client_g_rel"].append(variance_client_g_rel)
+    g_manager.g_history["variance_server_g"].append(variance_server_g)
+    g_manager.g_history["variance_server_g_rel"].append(variance_server_g_rel)
     g_manager.g_history["split_g"].append(split_g)
+    g_manager.g_history["per_client_g"].append(per_client_g_payload)
+    g_manager.g_history["per_server_g"].append(per_server_g_payload)
 
     g_manager.oracle_grads = None
     g_measure_state["active"] = False
@@ -1093,3 +1124,50 @@ with open(output_filename, "w") as f:
 
     f.write(f"{begin_time_str} ~ {end_time_str};\n")
     f.write("GAS = [" + total_accuracy_str + "]\n")
+
+# Save results to JSON
+results = {
+    "config": {
+        "dataset": selectDataset,
+        "model": model_type,
+        "split_layer": split_layer if use_resnet else None,
+        "split_ratio": split_ratio if use_resnet else None,
+        "split_alexnet": split_alexnet if not use_resnet else None,
+        "epochs": epochs,
+        "local_epochs": localEpoch,
+        "users": user_num,
+        "participating": user_parti_num,
+        "batch_size": batchSize,
+        "lr": lr,
+        "momentum": momentum,
+        "weight_decay": weight_decay,
+        "clip_grad": clip_grad,
+        "iid": iid,
+        "dirichlet": dirichlet,
+        "label_dirichlet": label_dirichlet,
+        "alpha": alpha,
+        "shard": shard,
+        "min_require_size": min_require_size,
+        "generate": Generate,
+        "sample_frequency": Sample_Frequency,
+        "v_test": V_Test,
+        "v_test_frequency": V_Test_Frequency,
+        "g_measurement": G_Measurement,
+        "g_measure_frequency": G_Measure_Frequency,
+        "seed": seed_value,
+        "method": selectMethod,
+    },
+    "timestamp": end_time_str,
+    "time_record": time_record,
+    "accuracy": total_accuracy,
+    "v_value": total_v_value,
+}
+if G_Measurement and g_manager is not None:
+    results["g_history"] = g_manager.get_history()
+
+os.makedirs("results", exist_ok=True)
+json_filename = f"results/results_gas_{selectDataset}_{timestamp_str}.json"
+with open(json_filename, "w") as f_json:
+    json.dump(results, f_json, indent=4)
+
+print(f"\nResults saved to {json_filename}")

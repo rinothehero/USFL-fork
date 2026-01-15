@@ -379,14 +379,16 @@ def main():
     print(f"Total replay requested: {total_requested}, collected: {total_collected}")
     print("=" * 70)
 
+    g_summary = trainer.g_system.get_summary() if trainer.g_system else {}
+    g_measurements = trainer.g_system.get_all_measurements() if trainer.g_system else []
+
     # Save results to JSON
     results = {
         "config": vars(args),
         "timestamp": datetime.now().isoformat(),
         "rounds": [],
+        "g_measurements": g_measurements,
     }
-
-    g_summary = trainer.g_system.get_summary() if trainer.g_system else {}
     g_map = {}
     if g_summary:
         for i, r_idx in enumerate(g_summary["rounds"]):
@@ -395,7 +397,15 @@ def main():
                 "client_g_rel": g_summary["client_g_rel"][i],
                 "server_g": g_summary["server_g"][i],
                 "server_g_rel": g_summary["server_g_rel"][i],
+                "variance_client_g": g_summary["variance_client_g"][i],
+                "variance_client_g_rel": g_summary["variance_client_g_rel"][i],
+                "variance_server_g": g_summary["variance_server_g"][i],
+                "variance_server_g_rel": g_summary["variance_server_g_rel"][i],
             }
+
+    g_detail_map = {}
+    for measurement in g_measurements:
+        g_detail_map[measurement["round"]] = measurement
 
     for s in stats:
         round_data = {
@@ -415,6 +425,11 @@ def main():
         g_idx = s.round_idx - 1
         if g_idx in g_map:
             round_data.update(g_map[g_idx])
+        if g_idx in g_detail_map:
+            round_data["per_client_g"] = g_detail_map[g_idx].get("per_client_g", {})
+            round_data["per_branch_server_g"] = g_detail_map[g_idx].get(
+                "per_branch_server_g", {}
+            )
 
         results["rounds"].append(round_data)
 

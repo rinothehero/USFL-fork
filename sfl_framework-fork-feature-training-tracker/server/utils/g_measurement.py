@@ -1104,8 +1104,12 @@ class GMeasurementSystem:
 
         client_sizes = []
         if client_weights:
-            client_sizes = [int(client_weights[cid]) for cid in sorted(client_weights.keys())]
-        server_sizes = [int(w) for w in self.server_weights] if self.server_weights else []
+            client_sizes = [
+                int(client_weights[cid]) for cid in sorted(client_weights.keys())
+            ]
+        server_sizes = (
+            [int(w) for w in self.server_weights] if self.server_weights else []
+        )
         print(f"[G] Batch Sizes: client={client_sizes}, server={server_sizes}")
 
         # Server G

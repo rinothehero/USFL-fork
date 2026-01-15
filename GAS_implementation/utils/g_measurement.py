@@ -511,7 +511,21 @@ class GMeasurementManager:
         self.collector = GradientCollector(device)
         self.oracle_computed = False
         self.oracle_grads = None
-        self.g_history = {"client_g": [], "server_g": [], "split_g": []}
+        self.g_history = {
+            "client_g": [],
+            "client_g_rel": [],
+            "client_d": [],
+            "server_g": [],
+            "server_g_rel": [],
+            "server_d": [],
+            "split_g": [],
+            "variance_client_g": [],
+            "variance_client_g_rel": [],
+            "variance_server_g": [],
+            "variance_server_g_rel": [],
+            "per_client_g": [],
+            "per_server_g": [],
+        }
 
     def should_measure(self, epoch):
         """Check if this epoch is a diagnostic round."""

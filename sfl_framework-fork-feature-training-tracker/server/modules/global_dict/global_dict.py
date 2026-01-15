@@ -76,7 +76,11 @@ class GlobalDict:
         ]
 
         # Add dirichlet_alpha if using dirichlet
-        if self.config.distributer in ["dirichlet", "label_dirichlet", "shard_dirichlet"]:
+        if self.config.distributer in [
+            "dirichlet",
+            "label_dirichlet",
+            "shard_dirichlet",
+        ]:
             parts.append(f"alpha-{self.config.dirichlet_alpha}")
 
         # Add selector and aggregator
@@ -96,7 +100,9 @@ class GlobalDict:
             # Gradient Shuffle
             if getattr(self.config, "gradient_shuffle", False):
                 parts.append("gradshuf")
-                gradient_shuffle_strategy = getattr(self.config, "gradient_shuffle_strategy", "default")
+                gradient_shuffle_strategy = getattr(
+                    self.config, "gradient_shuffle_strategy", "default"
+                )
                 parts.append(f"gradshuf-{gradient_shuffle_strategy}")
             # Dynamic batch scheduler
             if getattr(self.config, "use_dynamic_batch_scheduler", False):
@@ -121,9 +127,22 @@ class GlobalDict:
         filename = "-".join(parts) + ".json"
 
         with open(filename, "w") as f:
+            g_measurements = []
+            for round_idx, events in self.global_dict["metric"].items():
+                for event in events:
+                    if event.get("event") == "G_MEASUREMENT":
+                        g_measurements.append(
+                            {
+                                "round": round_idx,
+                                "timestamp": event.get("timestamp"),
+                                "params": event.get("params"),
+                            }
+                        )
+
             result = {
                 "config": self.global_dict["config"],
                 "metric": self.global_dict["metric"],
+                "g_measurements": g_measurements,
             }
 
             json.dump(result, f, indent=4)
