@@ -33,7 +33,7 @@ def _per_channel_count(tensor: torch.Tensor) -> int:
 
 
 def _needs_bn_eval(tensor: torch.Tensor) -> bool:
-    return _per_channel_count(tensor) <= 1
+    return tensor.shape[0] <= 1 or _per_channel_count(tensor) <= 1
 
 
 def _freeze_batchnorm(module: nn.Module) -> Dict[str, bool]:
