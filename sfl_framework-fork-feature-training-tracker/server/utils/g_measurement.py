@@ -561,22 +561,6 @@ class OracleGradientCalculator:
 
         Note: Split grad는 batch dimension에서 평균화된 형태 [C, H, W]
         """
-
-    def compute_oracle_split_gradient(
-        self, client_model: nn.Module, server_model: nn.Module
-    ) -> Tuple[
-        Dict[str, torch.Tensor],
-        Dict[str, torch.Tensor],
-        Optional[Union[torch.Tensor, Tuple[torch.Tensor, ...]]],
-    ]:
-        """
-        Split 모델로 Oracle 계산 + Split Layer Gradient 수집
-
-        Returns:
-            (oracle_client_grad, oracle_server_grad, oracle_split_grad)
-
-        Note: Split grad는 batch dimension에서 평균화된 형태 [C, H, W]
-        """
         client_model = client_model.to(self.device)
         server_model = server_model.to(self.device)
 
@@ -907,6 +891,41 @@ class GMeasurementSystem:
                 n: g for n, g in full_oracle.items() if n not in client_param_names
             }
             self.oracle_split_grad = None
+
+        def _client_split_output_is_tuple() -> bool:
+            if self.oracle_calculator is None:
+                return False
+            dataloader = self.oracle_calculator.full_dataloader
+            device = self.oracle_calculator.device
+            data = None
+            for batch in dataloader:
+                if len(batch) >= 2:
+                    data = batch[0]
+                    break
+            if data is None:
+                return False
+
+            data = data.to(device)
+            was_training = client_model.training
+            client_model.eval()
+            with torch.no_grad():
+                output = client_model(data)
+            if was_training:
+                client_model.train()
+            return isinstance(output, tuple)
+
+        if _client_split_output_is_tuple() and not isinstance(
+            self.oracle_split_grad, tuple
+        ):
+            (
+                _,
+                _,
+                split_grad,
+            ) = self.oracle_calculator.compute_oracle_split_gradient(
+                client_model, server_model
+            )
+            if split_grad is not None:
+                self.oracle_split_grad = split_grad
 
         # DEBUG: Oracle norm 확인
         if self.oracle_client_grad:
