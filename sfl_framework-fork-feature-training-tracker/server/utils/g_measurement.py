@@ -20,7 +20,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from typing import Dict, List, Optional, Tuple, Set
+from typing import Dict, List, Optional, Tuple, Set, Union
 from dataclasses import dataclass, field
 
 
@@ -391,7 +391,9 @@ class OracleGradientCalculator:
         client_param_names: Set[str],
         split_layer_name: str = None,
     ) -> Tuple[
-        Dict[str, torch.Tensor], Dict[str, torch.Tensor], Optional[torch.Tensor]
+        Dict[str, torch.Tensor],
+        Dict[str, torch.Tensor],
+        Optional[Union[torch.Tensor, Tuple[torch.Tensor, ...]]],
     ]:
         full_model = full_model.to(self.device)
 
@@ -405,17 +407,23 @@ class OracleGradientCalculator:
         split_activation_storage = {"activations": []}
         hook_handle = None
 
+        def _clone_output(tensor: torch.Tensor) -> torch.Tensor:
+            out_clone = tensor.clone()
+            out_clone.requires_grad_(True)
+            out_clone.retain_grad()
+            return out_clone
+
         def forward_hook(_module, _input, output):
             if isinstance(output, tuple):
-                out = output[0]
-                out_clone = out.clone()
-                out_clone.requires_grad_(True)
-                out_clone.retain_grad()
-                split_activation_storage["activations"].append(out_clone)
-                return (out_clone, *output[1:])
-            output_clone = output.clone()
-            output_clone.requires_grad_(True)
-            output_clone.retain_grad()
+                cloned = []
+                for item in output:
+                    if isinstance(item, torch.Tensor):
+                        cloned.append(_clone_output(item))
+                    else:
+                        cloned.append(item)
+                split_activation_storage["activations"].append(tuple(cloned))
+                return tuple(cloned)
+            output_clone = _clone_output(output)
             split_activation_storage["activations"].append(output_clone)
             return output_clone
 
@@ -493,20 +501,39 @@ class OracleGradientCalculator:
 
         oracle_split_grad = None
         if split_activation_storage["activations"]:
-            split_grad_sum = None
+            split_grad_sum: Optional[Union[torch.Tensor, List[torch.Tensor]]] = None
             for activation in split_activation_storage["activations"]:
-                if activation.grad is not None:
-                    batch_grad_sum = activation.grad.detach().sum(dim=0)
+                if isinstance(activation, tuple):
+                    grads = []
+                    missing_grad = False
+                    for item in activation:
+                        if not isinstance(item, torch.Tensor) or item.grad is None:
+                            missing_grad = True
+                            break
+                        grads.append(item.grad.detach().sum(dim=0).cpu())
+                    if missing_grad:
+                        continue
                     if split_grad_sum is None:
-                        split_grad_sum = batch_grad_sum.cpu()
+                        split_grad_sum = grads
                     else:
-                        split_grad_sum = split_grad_sum + batch_grad_sum.cpu()
+                        for idx, grad_item in enumerate(grads):
+                            split_grad_sum[idx] = split_grad_sum[idx] + grad_item
+                else:
+                    if activation.grad is not None:
+                        batch_grad_sum = activation.grad.detach().sum(dim=0)
+                        if split_grad_sum is None:
+                            split_grad_sum = batch_grad_sum.cpu()
+                        else:
+                            split_grad_sum = split_grad_sum + batch_grad_sum.cpu()
 
             if split_grad_sum is not None:
-                oracle_split_grad = split_grad_sum / divisor
-                print(
-                    f"[Oracle Split Hook] Split layer grad shape: {oracle_split_grad.shape}"
-                )
+                if isinstance(split_grad_sum, list):
+                    oracle_split_grad = tuple(g / divisor for g in split_grad_sum)
+                    split_shapes = [g.shape for g in oracle_split_grad]
+                else:
+                    oracle_split_grad = split_grad_sum / divisor
+                    split_shapes = [oracle_split_grad.shape]
+                print(f"[Oracle Split Hook] Split layer grad shape: {split_shapes}")
 
         print(
             f"[Oracle Split Hook] Split: client={len(oracle_client_grad)}, "
@@ -521,7 +548,11 @@ class OracleGradientCalculator:
 
     def compute_oracle_split_gradient(
         self, client_model: nn.Module, server_model: nn.Module
-    ) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor], torch.Tensor]:
+    ) -> Tuple[
+        Dict[str, torch.Tensor],
+        Dict[str, torch.Tensor],
+        Optional[Union[torch.Tensor, Tuple[torch.Tensor, ...]]],
+    ]:
         """
         Split 모델로 Oracle 계산 + Split Layer Gradient 수집
 
@@ -533,7 +564,11 @@ class OracleGradientCalculator:
 
     def compute_oracle_split_gradient(
         self, client_model: nn.Module, server_model: nn.Module
-    ) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor], torch.Tensor]:
+    ) -> Tuple[
+        Dict[str, torch.Tensor],
+        Dict[str, torch.Tensor],
+        Optional[Union[torch.Tensor, Tuple[torch.Tensor, ...]]],
+    ]:
         """
         Split 모델로 Oracle 계산 + Split Layer Gradient 수집
 
@@ -574,12 +609,30 @@ class OracleGradientCalculator:
 
             # Client forward
             activation = client_model(data)
-            activation.requires_grad_(True)
-            activation.retain_grad()  # Activation gradient 유지
+            act_detached = None
+            id_detached = None
 
-            logits = server_model(activation)
-            loss = F.cross_entropy(logits, labels, reduction="sum")
-            loss.backward()
+            if isinstance(activation, tuple):
+                act, identity = activation
+                act_detached = act.detach().requires_grad_(True)
+                id_detached = identity.detach().requires_grad_(True)
+                logits = server_model((act_detached, id_detached))
+                loss = F.cross_entropy(logits, labels, reduction="sum")
+                loss.backward()
+
+                if act_detached.grad is None or id_detached.grad is None:
+                    raise RuntimeError("Missing gradients for tuple split output")
+
+                torch.autograd.backward(
+                    [act, identity], [act_detached.grad, id_detached.grad]
+                )
+            else:
+                activation.requires_grad_(True)
+                activation.retain_grad()  # Activation gradient 유지
+
+                logits = server_model(activation)
+                loss = F.cross_entropy(logits, labels, reduction="sum")
+                loss.backward()
 
             # Accumulate client gradients
             for name, param in client_model.named_parameters():
@@ -597,12 +650,27 @@ class OracleGradientCalculator:
                     else:
                         server_grad_accum[name] += param.grad.clone().detach().cpu()
 
-            if activation.grad is not None:
-                batch_split_grad = activation.grad.detach().sum(dim=0)
-                if split_grad_sum is None:
-                    split_grad_sum = batch_split_grad.cpu()
-                else:
-                    split_grad_sum = split_grad_sum + batch_split_grad.cpu()
+            if isinstance(activation, tuple):
+                if act_detached is None or id_detached is None:
+                    raise RuntimeError("Missing tuple activations for split grad")
+                assert act_detached is not None and id_detached is not None
+                if act_detached.grad is not None and id_detached.grad is not None:
+                    batch_split_grad = (
+                        act_detached.grad.detach().sum(dim=0).cpu(),
+                        id_detached.grad.detach().sum(dim=0).cpu(),
+                    )
+                    if split_grad_sum is None:
+                        split_grad_sum = [batch_split_grad[0], batch_split_grad[1]]
+                    else:
+                        split_grad_sum[0] = split_grad_sum[0] + batch_split_grad[0]
+                        split_grad_sum[1] = split_grad_sum[1] + batch_split_grad[1]
+            else:
+                if activation.grad is not None:
+                    batch_split_grad = activation.grad.detach().sum(dim=0)
+                    if split_grad_sum is None:
+                        split_grad_sum = batch_split_grad.cpu()
+                    else:
+                        split_grad_sum = split_grad_sum + batch_split_grad.cpu()
 
             total_samples += batch_size
 
@@ -623,9 +691,12 @@ class OracleGradientCalculator:
         for name, grad in server_grad_accum.items():
             oracle_server_grad[name] = grad / divisor
 
-        oracle_split_grad = (
-            split_grad_sum / divisor if split_grad_sum is not None else None
-        )
+        if split_grad_sum is None:
+            oracle_split_grad = None
+        elif isinstance(split_grad_sum, list):
+            oracle_split_grad = tuple(g / divisor for g in split_grad_sum)
+        else:
+            oracle_split_grad = split_grad_sum / divisor
 
         client_model.zero_grad(set_to_none=True)
         server_model.zero_grad(set_to_none=True)
@@ -634,7 +705,11 @@ class OracleGradientCalculator:
 
         print(f"[Oracle Split] Computed from {total_samples} samples")
         if oracle_split_grad is not None:
-            print(f"[Oracle Split] Split grad shape: {oracle_split_grad.shape}")
+            if isinstance(oracle_split_grad, tuple):
+                split_shapes = [g.shape for g in oracle_split_grad]
+            else:
+                split_shapes = [oracle_split_grad.shape]
+            print(f"[Oracle Split] Split grad shape: {split_shapes}")
 
         return oracle_client_grad, oracle_server_grad, oracle_split_grad
 
@@ -724,8 +799,12 @@ class GMeasurementSystem:
         self.client_g_tildes: Dict[int, Dict[str, torch.Tensor]] = {}
 
         # Split layer gradient (activation gradient at split point)
-        self.oracle_split_grad: Optional[torch.Tensor] = None
-        self.split_g_tilde: Optional[torch.Tensor] = None
+        self.oracle_split_grad: Optional[
+            Union[torch.Tensor, Tuple[torch.Tensor, ...]]
+        ] = None
+        self.split_g_tilde: Optional[Union[torch.Tensor, Tuple[torch.Tensor, ...]]] = (
+            None
+        )
         self.split_g_tildes: Dict[int, torch.Tensor] = {}  # Per-client split gradients
 
         # Results
@@ -899,7 +978,10 @@ class GMeasurementSystem:
         self.server_weights.append(weight)
 
     def _compute_split_g_metrics(
-        self, g_tilde: torch.Tensor, g_oracle: torch.Tensor, epsilon: float = 1e-8
+        self,
+        g_tilde: Union[torch.Tensor, Tuple[torch.Tensor, ...]],
+        g_oracle: Union[torch.Tensor, Tuple[torch.Tensor, ...]],
+        epsilon: float = 1e-8,
     ) -> GMetrics:
         """
         Split layer (activation) gradient에 대한 G 계산
@@ -908,9 +990,18 @@ class GMeasurementSystem:
             g_tilde: 실제 측정된 split gradient [평균화된 형태]
             g_oracle: Oracle split gradient [평균화된 형태]
         """
+
+        def _flatten_split_grad(
+            grad: Union[torch.Tensor, Tuple[torch.Tensor, ...]],
+        ) -> torch.Tensor:
+            if isinstance(grad, tuple):
+                flats = [g.flatten().float() for g in grad]
+                return torch.cat(flats) if flats else torch.tensor([])
+            return grad.flatten().float()
+
         # Flatten to 1D
-        g_tilde_flat = g_tilde.flatten().float()
-        g_oracle_flat = g_oracle.flatten().float()
+        g_tilde_flat = _flatten_split_grad(g_tilde)
+        g_oracle_flat = _flatten_split_grad(g_oracle)
 
         G = torch.dot(g_tilde_flat - g_oracle_flat, g_tilde_flat - g_oracle_flat).item()
 

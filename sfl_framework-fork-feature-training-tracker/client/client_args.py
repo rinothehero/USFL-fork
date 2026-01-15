@@ -53,6 +53,7 @@ class ServerConfig:
     delete_fraction_of_data: bool
     gradient_shuffle: bool
     gradient_shuffle_strategy: str
+    gradient_shuffle_target: str
     gradient_average_weight: float
     adaptive_alpha_beta: float  # Sensitivity coefficient for adaptive alpha strategy
     use_additional_epoch: bool

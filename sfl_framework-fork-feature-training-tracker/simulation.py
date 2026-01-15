@@ -155,7 +155,7 @@ if __name__ == "__main__":
             "balancing_target": "mean",
             "split_layer": "layer1.1.bn2",
         },
-        "A": {
+        "O": {
             "dataset": "cifar10",
             "model": "resnet18",
             "batch_size": "500",
@@ -163,6 +163,7 @@ if __name__ == "__main__":
             "dirichlet_alpha": "0.3",
             "gradient_shuffle": "true",
             "gradient_shuffle_strategy": "random",
+            "gradient_shuffle_target": "activation_only",
             "use_dynamic_batch_scheduler": "true",
             "use_variance_g": "true",
             "balancing_strategy": "target",
@@ -316,6 +317,7 @@ if __name__ == "__main__":
         AGGREGATOR = workload.get("aggregator", None)
         GRADIENT_SHUFFLE = workload.get("gradient_shuffle", None)
         GRADIENT_SHUFFLE_STRATEGY = workload.get("gradient_shuffle_strategy", None)
+        GRADIENT_SHUFFLE_TARGET = workload.get("gradient_shuffle_target", None)
         GRADIENT_AVERAGE_WEIGHT = workload.get("gradient_average_weight", None)
         ADAPTIVE_ALPHA_BETA = workload.get("adaptive_alpha_beta", None)
         USE_ADDITIONAL_EPOCH = workload.get("use_additional_epoch", None)
@@ -389,6 +391,8 @@ if __name__ == "__main__":
             server_command.extend(["-gs"])
         if GRADIENT_SHUFFLE_STRATEGY:
             server_command.extend(["-gss", GRADIENT_SHUFFLE_STRATEGY])
+        if GRADIENT_SHUFFLE_TARGET:
+            server_command.extend(["-gst", GRADIENT_SHUFFLE_TARGET])
         if GRADIENT_AVERAGE_WEIGHT:
             server_command.extend(["-gaw", GRADIENT_AVERAGE_WEIGHT])
         if ADAPTIVE_ALPHA_BETA:

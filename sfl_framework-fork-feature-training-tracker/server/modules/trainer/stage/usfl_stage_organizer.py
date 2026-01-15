@@ -307,8 +307,10 @@ class USFLStageOrganizer(BaseStageOrganizer):
 
     def _shuffle_gradients(self, activations, grads):
         C = self.num_classes
-        grad = grads.clone()
-        device = grad.device
+        is_tuple = isinstance(grads, tuple)
+        grad_list = list(grads) if is_tuple else [grads]
+        grad_list = [g.clone() for g in grad_list]
+        device = grad_list[0].device
 
         # ---------- 1) 메타 수집 ----------
         all_labels, pos2cid = [], {}
@@ -350,7 +352,9 @@ class USFLStageOrganizer(BaseStageOrganizer):
 
                 # 초과분 → donor_queue
                 for p in plist[keep_cnt:]:
-                    donor_queue[lbl].append((grad[p].clone(), cid))
+                    donor_queue[lbl].append(
+                        (tuple(g[p].clone() for g in grad_list), cid)
+                    )
                     cid_donor_lbls[cid].add(lbl)
 
         # 각 클라이언트가 현재 가진(고정) per-class 카운트
@@ -397,7 +401,8 @@ class USFLStageOrganizer(BaseStageOrganizer):
 
                     # 빈 슬롯 하나 꺼내 채움
                     pos = empty_pos[cid].pop()
-                    grad[pos] = tensor.to(device)
+                    for idx, grad_item in enumerate(grad_list):
+                        grad_item[pos] = tensor[idx].to(device)
                     cid_class_cnt[cid][lbl] += 1
                     need -= 1
                     tries = 0  # 성공했으면 다시 0으로
@@ -418,9 +423,10 @@ class USFLStageOrganizer(BaseStageOrganizer):
                 tensor, donor_id = leftovers.pop()
                 # donor == cid 면 그냥 넣을지 말지 선택. 여기선 허용(필요에 따라 skip 가능).
                 pos = empty_pos[cid].pop()
-                grad[pos] = tensor.to(device)
+                for idx, grad_item in enumerate(grad_list):
+                    grad_item[pos] = tensor[idx].to(device)
 
-        return grad
+        return tuple(grad_list) if is_tuple else grad_list[0]
 
     async def _pre_round(self, round_number: int):
         # 클라이언트 정보 및 준비 대기
@@ -983,34 +989,86 @@ class USFLStageOrganizer(BaseStageOrganizer):
                         and grad is not None
                         and self.g_measurement_system.split_g_tilde is None
                     ):
-                        split_grad = grad.clone().detach().cpu()
-                        if split_grad.dim() >= 1:
-                            self.g_measurement_system.split_g_tilde = split_grad.mean(
-                                dim=0
+                        if isinstance(grad, tuple):
+                            split_grad = tuple(
+                                g.clone().detach().cpu() for g in grad if g is not None
                             )
-                        else:
+                            split_grad = tuple(
+                                g.mean(dim=0) if g.dim() >= 1 else g for g in split_grad
+                            )
                             self.g_measurement_system.split_g_tilde = split_grad
+                            split_shapes = [g.shape for g in split_grad]
+                        else:
+                            split_grad = grad.clone().detach().cpu()
+                            if split_grad.dim() >= 1:
+                                self.g_measurement_system.split_g_tilde = (
+                                    split_grad.mean(dim=0)
+                                )
+                            else:
+                                self.g_measurement_system.split_g_tilde = split_grad
+                            split_shapes = [
+                                self.g_measurement_system.split_g_tilde.shape
+                            ]
                         print(
-                            f"[G Measurement] Split layer gradient collected, shape: {self.g_measurement_system.split_g_tilde.shape}"
+                            f"[G Measurement] Split layer gradient collected, shape: {split_shapes}"
                         )
 
                     if self.config.gradient_shuffle:
                         # print(f"[Gradient Shuffle] Applying strategy: {self.config.gradient_shuffle_strategy}")
+                        target = getattr(self.config, "gradient_shuffle_target", "all")
 
                         if self.config.gradient_shuffle_strategy == "inplace":
                             # print(f"  → Class-balanced shuffle applied")
-                            grad = self._shuffle_gradients(non_empty_activations, grad)
+                            if isinstance(grad, tuple):
+                                if target == "activation_only":
+                                    grad = (
+                                        self._shuffle_gradients(
+                                            non_empty_activations, grad[0]
+                                        ),
+                                        *grad[1:],
+                                    )
+                                else:
+                                    grad = self._shuffle_gradients(
+                                        non_empty_activations, grad
+                                    )
+                            else:
+                                grad = self._shuffle_gradients(
+                                    non_empty_activations, grad
+                                )
                         elif self.config.gradient_shuffle_strategy == "random":
-                            # print(f"  → Random permutation applied (grad shape: {grad.shape})")
-                            perm = torch.randperm(grad.size(0))
-                            grad = grad[perm]
+                            if isinstance(grad, tuple):
+                                perm = torch.randperm(grad[0].size(0))
+                                if target == "activation_only":
+                                    grad = (grad[0][perm], *grad[1:])
+                                else:
+                                    grad = tuple(g[perm] for g in grad)
+                            else:
+                                # print(f"  → Random permutation applied (grad shape: {grad.shape})")
+                                perm = torch.randperm(grad.size(0))
+                                grad = grad[perm]
                         elif self.config.gradient_shuffle_strategy == "average":
                             weight = getattr(
                                 self.config, "gradient_average_weight", 0.5
                             )
-                            # print(f"  → Average mixing: {(1-weight)*100:.0f}% original + {weight*100:.0f}% global mean")
-                            mean_grad = grad.mean(dim=0, keepdim=True)
-                            grad = (1 - weight) * grad + weight * mean_grad
+                            if isinstance(grad, tuple):
+                                if target == "activation_only":
+                                    mean_grad = grad[0].mean(dim=0, keepdim=True)
+                                    grad = (
+                                        (1 - weight) * grad[0] + weight * mean_grad,
+                                        *grad[1:],
+                                    )
+                                else:
+                                    mixed = []
+                                    for g in grad:
+                                        mean_grad = g.mean(dim=0, keepdim=True)
+                                        mixed.append(
+                                            (1 - weight) * g + weight * mean_grad
+                                        )
+                                    grad = tuple(mixed)
+                            else:
+                                # print(f"  → Average mixing: {(1-weight)*100:.0f}% original + {weight*100:.0f}% global mean")
+                                mean_grad = grad.mean(dim=0, keepdim=True)
+                                grad = (1 - weight) * grad + weight * mean_grad
                         elif (
                             self.config.gradient_shuffle_strategy
                             == "average_adaptive_alpha"
@@ -1018,14 +1076,15 @@ class USFLStageOrganizer(BaseStageOrganizer):
                             # Adaptive mixing based on cosine similarity
                             # High similarity → keep local, Low similarity → use global
                             beta = getattr(self.config, "adaptive_alpha_beta", 2.0)
-                            mean_grad = grad.mean(
+                            base_grad = grad[0] if isinstance(grad, tuple) else grad
+                            mean_grad = base_grad.mean(
                                 dim=0, keepdim=True
                             )  # [1, feature_dim]
 
                             # Compute cosine similarity for each sample
                             # grad: [num_samples, feature_dim], mean_grad: [1, feature_dim]
                             grad_norm = torch.norm(
-                                grad, dim=1, keepdim=True
+                                base_grad, dim=1, keepdim=True
                             )  # [num_samples, 1]
                             mean_norm = torch.norm(
                                 mean_grad, dim=1, keepdim=True
@@ -1036,7 +1095,7 @@ class USFLStageOrganizer(BaseStageOrganizer):
                             mean_norm = torch.clamp(mean_norm, min=1e-8)
 
                             # Cosine similarity: (grad · mean_grad) / (||grad|| * ||mean_grad||)
-                            dot_product = (grad * mean_grad).sum(
+                            dot_product = (base_grad * mean_grad).sum(
                                 dim=1, keepdim=True
                             )  # [num_samples, 1]
                             cos_sim = dot_product / (
@@ -1060,9 +1119,28 @@ class USFLStageOrganizer(BaseStageOrganizer):
                             )
 
                             # Mix: alpha * local + (1 - alpha) * global
-                            grad = (
-                                alpha_dynamic * grad + (1 - alpha_dynamic) * mean_grad
-                            )
+                            if isinstance(grad, tuple):
+                                if target == "activation_only":
+                                    mean_grad = grad[0].mean(dim=0, keepdim=True)
+                                    grad = (
+                                        alpha_dynamic * grad[0]
+                                        + (1 - alpha_dynamic) * mean_grad,
+                                        *grad[1:],
+                                    )
+                                else:
+                                    mixed = []
+                                    for g in grad:
+                                        mean_g = g.mean(dim=0, keepdim=True)
+                                        mixed.append(
+                                            alpha_dynamic * g
+                                            + (1 - alpha_dynamic) * mean_g
+                                        )
+                                    grad = tuple(mixed)
+                            else:
+                                grad = (
+                                    alpha_dynamic * grad
+                                    + (1 - alpha_dynamic) * mean_grad
+                                )
                         else:
                             raise ValueError(
                                 f"Unknown gradient shuffle strategy: {self.config.gradient_shuffle_strategy}"
@@ -1075,7 +1153,10 @@ class USFLStageOrganizer(BaseStageOrganizer):
                         length = activation_length_per_client[cid]
                         end = start + length
 
-                        g_slice = grad[start:end].clone()
+                        if isinstance(grad, tuple):
+                            g_slice = tuple(g[start:end].clone() for g in grad)
+                        else:
+                            g_slice = grad[start:end].clone()
                         await self.in_round.send_gradients(
                             self.connection, g_slice, cid, 0
                         )

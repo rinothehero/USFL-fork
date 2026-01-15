@@ -43,9 +43,8 @@ class DistilbertPropagator(BasePropagator):
     def forward(
         self,
         input: Union[torch.Tensor, Tuple],
-        params: dict = None,
+        params: Optional[dict] = None,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-
         for layer_name, layer in self.model.items():
             layer_name = layer_name.split("-")[-1]
             mapped_forward = self.forward_mapper.get(layer_name)
@@ -72,7 +71,7 @@ class DistilbertPropagator(BasePropagator):
         return outputs
 
     # Except for client, which contains the last part of the model.
-    def backward(self, grads: torch.Tensor):
+    def backward(self, grads: Union[torch.Tensor, Tuple[torch.Tensor, ...]]):
         if isinstance(self.outputs, Tuple):
             self.outputs = self.outputs[0]
 
@@ -98,7 +97,6 @@ class DistilbertPropagator(BasePropagator):
         layer: torch.nn.Embedding,
         input_info: Tuple[torch.Tensor, torch.Tensor, int],
     ) -> torch.Tensor:
-
         input_embeds, input_ids, seq_length = input_info
 
         if hasattr(self, "position_ids"):

@@ -162,8 +162,9 @@ class InRound:
         inputs = activation["outputs"]
 
         if isinstance(inputs, tuple):
-            if inputs[0].requires_grad:
-                inputs[0].retain_grad()
+            for item in inputs:
+                if isinstance(item, Tensor) and item.requires_grad:
+                    item.retain_grad()
         else:
             if inputs.requires_grad:
                 inputs.retain_grad()
@@ -191,11 +192,14 @@ class InRound:
         loss.backward()
         optimizer.step()
 
-        grad = (
-            inputs[0].grad.clone().detach()
-            if isinstance(inputs, tuple)
-            else inputs.grad.clone().detach()
-        )
+        if isinstance(inputs, tuple):
+            grad = tuple(
+                item.grad.clone().detach()
+                for item in inputs
+                if isinstance(item, Tensor)
+            )
+        else:
+            grad = inputs.grad.clone().detach()
 
         if isinstance(inputs, tuple):
             for i in range(len(inputs)):
@@ -207,8 +211,12 @@ class InRound:
         return grad, loss.item()
 
     async def backward_from_label(
-        self, torch_model: "ModuleDict", outputs, activation,
-        collect_server_grad: bool = False, skip_optimizer: bool = False
+        self,
+        torch_model: "ModuleDict",
+        outputs,
+        activation,
+        collect_server_grad: bool = False,
+        skip_optimizer: bool = False,
     ):
         torch_model = torch_model.to(self.config.device)
         outputs = outputs.to(self.config.device)
@@ -216,8 +224,9 @@ class InRound:
         inputs = activation["outputs"]
 
         if isinstance(inputs, tuple):
-            if inputs[0].requires_grad:
-                inputs[0].retain_grad()
+            for item in inputs:
+                if isinstance(item, Tensor) and item.requires_grad:
+                    item.retain_grad()
         else:
             if inputs.requires_grad:
                 inputs.retain_grad()
@@ -239,7 +248,7 @@ class InRound:
 
         loss = criterion(outputs, labels)
         loss.backward()
-        
+
         # G Measurement: Collect server model gradients BEFORE optimizer.step()
         server_model_grad = None
         if collect_server_grad:
@@ -248,16 +257,19 @@ class InRound:
                 for name, param in torch_model.named_parameters()
                 if param.grad is not None
             }
-        
+
         # Measurement mode: skip optimizer step
         if not skip_optimizer:
             optimizer.step()
 
-        grad = (
-            inputs[0].grad.clone().detach()
-            if isinstance(inputs, tuple)
-            else inputs.grad.clone().detach()
-        )
+        if isinstance(inputs, tuple):
+            grad = tuple(
+                item.grad.clone().detach()
+                for item in inputs
+                if isinstance(item, Tensor)
+            )
+        else:
+            grad = inputs.grad.clone().detach()
 
         if isinstance(inputs, tuple):
             for i in range(len(inputs)):

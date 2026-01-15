@@ -123,6 +123,7 @@ class Config:
     # USFL
     gradient_shuffle: bool
     gradient_shuffle_strategy: str
+    gradient_shuffle_target: str
     gradient_average_weight: float
     adaptive_alpha_beta: float  # Sensitivity coefficient for adaptive alpha strategy
     use_additional_epoch: bool
@@ -805,6 +806,18 @@ def parse_args(custom_args=None):
         type=str,
         dest="gradient_shuffle_strategy",
         choices=["random", "inplace", "average", "average_adaptive_alpha"],
+        required=False,
+    )
+
+    parser.add_argument(
+        "-gst",
+        "--gradient-shuffle-target",
+        help="Defines shuffle target for tuple gradients (default: all)",
+        action="store",
+        type=str,
+        dest="gradient_shuffle_target",
+        choices=["all", "activation_only"],
+        default="all",
         required=False,
     )
 

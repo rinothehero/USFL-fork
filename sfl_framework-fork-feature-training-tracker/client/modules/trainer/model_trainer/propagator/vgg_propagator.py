@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional, Tuple, Union
 
 import torch
 from modules.trainer.model_trainer.propagator.base_propagator import BasePropagator
@@ -19,20 +19,20 @@ class VGGPropagator(BasePropagator):
             "avgpool": self.avgpool_forward,
         }
 
-    def forward(self, x: torch.Tensor, params: dict = None) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, params: Optional[dict] = None) -> torch.Tensor:
         for layer_name, layer in self.model.items():
             layer_name = layer_name.split("-")[-1]
             mapped_forward = self.forward_mapper.get(layer_name)
             x = layer(x) if (mapped_forward is None) else mapped_forward(layer, x)
 
         self.outputs = x
-        
+
         outputs = self.outputs.clone().detach().requires_grad_(True)
 
         return outputs
 
     # Except for client, which contains the last part of the model.
-    def backward(self, grads: torch.Tensor):
+    def backward(self, grads: Union[torch.Tensor, Tuple[torch.Tensor, ...]]):
         grads = grads.to(self.config.device)
         self.outputs.requires_grad_(True)
         self.outputs.backward(grads)

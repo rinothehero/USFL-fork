@@ -1,5 +1,5 @@
 import copy
-from typing import TYPE_CHECKING, Tuple, Union
+from typing import TYPE_CHECKING, Tuple, Union, Optional
 
 import torch
 from modules.trainer.model_trainer.propagator.base_propagator import BasePropagator
@@ -13,7 +13,9 @@ class ResnetPropagator(BasePropagator):
     def __init__(self, model: torch.nn.ModuleDict, config: "Config"):
         super().__init__()
         self.model = model
-        self.outputs: torch.Tensor = None
+        self.outputs: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor], None] = (
+            None
+        )
         self.config = config
 
         self.forward_mapper = {
@@ -28,9 +30,8 @@ class ResnetPropagator(BasePropagator):
         }
 
     def forward(
-        self, x: torch.Tensor, params: dict = None
+        self, x: torch.Tensor, params: Optional[dict] = None
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-
         for layer_name, layer in self.model.items():
             split_name = (
                 layer_name.split("-")[-2] + layer_name.split("-")[-1]
@@ -56,8 +57,12 @@ class ResnetPropagator(BasePropagator):
         self.outputs = x
 
         if isinstance(self.outputs, Tuple):
-            outputs = list(self.outputs)
-            outputs[0] = outputs[0].clone().detach().requires_grad_(True)
+            outputs = []
+            for item in self.outputs:
+                if isinstance(item, torch.Tensor):
+                    outputs.append(item.clone().detach().requires_grad_(True))
+                else:
+                    outputs.append(item)
             outputs = tuple(outputs)
         else:
             outputs = self.outputs.clone().detach().requires_grad_(True)
@@ -65,9 +70,22 @@ class ResnetPropagator(BasePropagator):
         return outputs
 
     # Except for client, which contains the last part of the model.
-    def backward(self, grads: torch.Tensor):
+    def backward(self, grads: Union[torch.Tensor, Tuple[torch.Tensor, ...]]):
+        if self.outputs is None:
+            raise RuntimeError("Propagator outputs not initialized")
+
         if isinstance(self.outputs, Tuple):
-            self.outputs = self.outputs[0]
+            if not isinstance(grads, Tuple):
+                raise ValueError("Expected tuple gradients for tuple outputs")
+            grads = tuple(g.to(self.config.device) for g in grads)
+            torch.autograd.backward(list(self.outputs), list(grads))
+            return
+
+        if isinstance(grads, Tuple):
+            raise ValueError("Expected tensor gradients for tensor outputs")
+
+        if not isinstance(self.outputs, torch.Tensor):
+            raise RuntimeError("Expected tensor outputs for backward")
 
         grads = grads.to(self.config.device)
 
