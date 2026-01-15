@@ -419,6 +419,12 @@ class GMeasurementSystem:
         self.oracle_calculator = OracleCalculator(full_dataloader, device)
         self.oracle_client_grad: Optional[Dict[str, torch.Tensor]] = None
         self.oracle_server_grad: Optional[Dict[str, torch.Tensor]] = None
+        self.oracle_client_grads_by_branch: Optional[
+            Dict[int, Dict[str, torch.Tensor]]
+        ] = None
+        self.oracle_server_grads_by_branch: Optional[
+            Dict[int, Dict[str, torch.Tensor]]
+        ] = None
 
         self.measurements: List[RoundGResult] = []
 
@@ -435,7 +441,7 @@ class GMeasurementSystem:
         self.oracle_client_grad = oracle_client_grad
         self.oracle_server_grad = oracle_server_grad
 
-        total_samples = len(self.oracle_calculator.full_dataloader.dataset)
+        total_samples = len(self.oracle_calculator.full_dataloader.dataset)  # type: ignore[arg-type]
         num_batches = len(self.oracle_calculator.full_dataloader)
         split_shape_display = split_shape if split_shape is not None else "none"
 
@@ -450,6 +456,14 @@ class GMeasurementSystem:
             f"(numel={client_vec.numel()}), server={torch.norm(server_vec).item():.4f} "
             f"(numel={server_vec.numel()})"
         )
+
+    def set_branch_oracle_grads(
+        self,
+        oracle_client_grads_by_branch: Dict[int, Dict[str, torch.Tensor]],
+        oracle_server_grads_by_branch: Dict[int, Dict[str, torch.Tensor]],
+    ) -> None:
+        self.oracle_client_grads_by_branch = oracle_client_grads_by_branch
+        self.oracle_server_grads_by_branch = oracle_server_grads_by_branch
 
     def compute_oracle(
         self,
@@ -477,7 +491,10 @@ class GMeasurementSystem:
                 )
             )
 
-        total_samples = len(self.oracle_calculator.full_dataloader.dataset)
+        self.oracle_client_grads_by_branch = None
+        self.oracle_server_grads_by_branch = None
+
+        total_samples = len(self.oracle_calculator.full_dataloader.dataset)  # type: ignore[arg-type]
         num_batches = len(self.oracle_calculator.full_dataloader)
         split_shape = "none"
         if split_grad is not None:
@@ -503,6 +520,7 @@ class GMeasurementSystem:
         y_list: List[torch.Tensor],
         client_ids: List[int],
         client_weights: Optional[List[int]] = None,
+        branch_ids: Optional[List[int]] = None,
     ) -> Tuple[GMetrics, Dict[int, GMetrics], float, float]:
         """
         Measure Client G using ONLY THE FIRST BATCH for each client.
@@ -530,7 +548,9 @@ class GMeasurementSystem:
             client_weights = [1 for _ in client_ids]
         client_weight_map: Dict[int, float] = {}
 
-        oracle_keys = sorted(self.oracle_client_grad.keys())
+        default_oracle = self.oracle_client_grad
+        oracle_keys = sorted(default_oracle.keys())
+        oracle_vecs_by_client: Dict[int, torch.Tensor] = {}
 
         # Track which clients have been measured
         measured_clients = set()
@@ -584,7 +604,22 @@ class GMeasurementSystem:
                 if param.grad is not None
             }
 
-            metrics = compute_g_metrics(current_client_grad, self.oracle_client_grad)
+            oracle_grad = default_oracle
+            if (
+                branch_ids is not None
+                and self.oracle_client_grads_by_branch is not None
+                and idx < len(branch_ids)
+            ):
+                branch_id = branch_ids[idx]
+                oracle_grad = self.oracle_client_grads_by_branch.get(
+                    branch_id, default_oracle
+                )
+
+            oracle_keys = sorted(oracle_grad.keys())
+            oracle_vec = gradient_to_vector(oracle_grad, oracle_keys)
+            oracle_vecs_by_client[client_id] = oracle_vec
+
+            metrics = compute_g_metrics(current_client_grad, oracle_grad)
             per_client_g[client_id] = metrics
             all_g_values.append(metrics.G)
             all_g_rel_values.append(metrics.G_rel)
@@ -616,14 +651,17 @@ class GMeasurementSystem:
         if self.use_variance_g and per_client_vecs:
             total_weight = sum(client_weight_map.values())
             if total_weight > 0:
-                oracle_vec = gradient_to_vector(self.oracle_client_grad, oracle_keys)
                 Vc = 0.0
+                oracle_norm_sq = 0.0
                 for client_id, vec in per_client_vecs.items():
                     weight = client_weight_map.get(client_id, 1.0) / total_weight
+                    oracle_vec = oracle_vecs_by_client.get(client_id)
+                    if oracle_vec is None:
+                        oracle_vec = gradient_to_vector(default_oracle, oracle_keys)
                     diff = vec - oracle_vec
                     Vc += weight * torch.dot(diff, diff).item()
+                    oracle_norm_sq += weight * torch.dot(oracle_vec, oracle_vec).item()
                 variance_client_g = Vc
-                oracle_norm_sq = torch.dot(oracle_vec, oracle_vec).item()
                 variance_client_g_rel = (
                     Vc / oracle_norm_sq if oracle_norm_sq > 0 else float("nan")
                 )
@@ -639,6 +677,7 @@ class GMeasurementSystem:
         f_list: List[Any],
         y_list: List[torch.Tensor],
         server_weights: Optional[List[int]] = None,
+        branch_ids: Optional[List[int]] = None,
     ) -> Tuple[GMetrics, Dict[int, GMetrics], float, float]:
         """
         Measure Server G using each collected batch.
@@ -655,9 +694,11 @@ class GMeasurementSystem:
         if server_weights is None:
             server_weights = [1 for _ in f_list]
 
-        oracle_keys = sorted(self.oracle_server_grad.keys())
+        default_oracle = self.oracle_server_grad
+        oracle_keys = sorted(default_oracle.keys())
         per_batch_metrics: List[GMetrics] = []
         per_batch_vecs: List[torch.Tensor] = []
+        per_batch_oracle_vecs: List[torch.Tensor] = []
         per_batch_weights: List[float] = []
 
         for idx, (f_batch, y_batch) in enumerate(zip(f_list, y_list)):
@@ -683,18 +724,40 @@ class GMeasurementSystem:
                 if param.grad is not None
             }
 
-            metrics = compute_g_metrics(current_server_grad, self.oracle_server_grad)
+            oracle_grad = default_oracle
+            if (
+                branch_ids is not None
+                and self.oracle_server_grads_by_branch is not None
+                and idx < len(branch_ids)
+            ):
+                branch_id = branch_ids[idx]
+                oracle_grad = self.oracle_server_grads_by_branch.get(
+                    branch_id, default_oracle
+                )
+
+            oracle_keys = sorted(oracle_grad.keys())
+            oracle_vec = gradient_to_vector(oracle_grad, oracle_keys)
+
+            metrics = compute_g_metrics(current_server_grad, oracle_grad)
             per_batch_metrics.append(metrics)
             per_batch_vecs.append(gradient_to_vector(current_server_grad, oracle_keys))
+            per_batch_oracle_vecs.append(oracle_vec)
             per_batch_weights.append(
                 float(server_weights[idx]) if idx < len(server_weights) else 1.0
             )
 
             del f_batch, y_batch, logits, loss, current_server_grad
 
-        per_branch_metrics = {
-            idx: metrics for idx, metrics in enumerate(per_batch_metrics)
-        }
+        if branch_ids is not None:
+            per_branch_metrics = {
+                branch_ids[idx]: metrics
+                for idx, metrics in enumerate(per_batch_metrics)
+                if idx < len(branch_ids)
+            }
+        else:
+            per_branch_metrics = {
+                idx: metrics for idx, metrics in enumerate(per_batch_metrics)
+            }
 
         if per_batch_metrics:
             avg_g = sum(m.G for m in per_batch_metrics) / len(per_batch_metrics)
@@ -711,14 +774,18 @@ class GMeasurementSystem:
         if self.use_variance_g and per_batch_vecs:
             total_weight = sum(per_batch_weights)
             if total_weight > 0:
-                oracle_vec = gradient_to_vector(self.oracle_server_grad, oracle_keys)
                 Vs = 0.0
-                for vec, weight in zip(per_batch_vecs, per_batch_weights):
-                    w = weight / total_weight
+                oracle_norm_sq = 0.0
+                for vec, oracle_vec, weight in zip(
+                    per_batch_vecs, per_batch_oracle_vecs, per_batch_weights
+                ):
+                    scaled_weight = weight / total_weight
                     diff = vec - oracle_vec
-                    Vs += w * torch.dot(diff, diff).item()
+                    Vs += scaled_weight * torch.dot(diff, diff).item()
+                    oracle_norm_sq += (
+                        scaled_weight * torch.dot(oracle_vec, oracle_vec).item()
+                    )
                 variance_server_g = Vs
-                oracle_norm_sq = torch.dot(oracle_vec, oracle_vec).item()
                 variance_server_g_rel = (
                     Vs / oracle_norm_sq if oracle_norm_sq > 0 else float("nan")
                 )
@@ -744,10 +811,12 @@ class GMeasurementSystem:
         client_ids: List[int],
         x_all: List[torch.Tensor],
         y_all_client: List[torch.Tensor],
-        f_all: List[torch.Tensor],
+        f_all: List[Any],
         y_all_server: List[torch.Tensor],
         client_weights: Optional[List[int]] = None,
         server_weights: Optional[List[int]] = None,
+        client_branch_ids: Optional[List[int]] = None,
+        server_branch_ids: Optional[List[int]] = None,
     ) -> RoundGResult:
         """
         Full G measurement for a diagnostic round.
@@ -765,16 +834,20 @@ class GMeasurementSystem:
                 y_all_client,
                 client_ids,
                 client_weights=client_weights,
+                branch_ids=client_branch_ids,
             )
         )
-
         (
             server_g,
             per_branch_server_g,
             variance_server_g,
             variance_server_g_rel,
         ) = self.measure_server_g(
-            server_model, f_all, y_all_server, server_weights=server_weights
+            server_model,
+            f_all,
+            y_all_server,
+            server_weights=server_weights,
+            branch_ids=server_branch_ids,
         )
 
         result = RoundGResult(
@@ -793,48 +866,9 @@ class GMeasurementSystem:
 
         self.oracle_client_grad = None
         self.oracle_server_grad = None
+        self.oracle_client_grads_by_branch = None
+        self.oracle_server_grads_by_branch = None
 
-        client_batch_sizes = [int(y.size(0)) for y in y_all_client]
-        server_batch_sizes = [int(y.size(0)) for y in y_all_server]
-        print(
-            f"[G] Batch Sizes: client={client_batch_sizes}, server={server_batch_sizes}"
-        )
-        for client_id in sorted(per_client_g.keys()):
-            metrics = per_client_g[client_id]
-            print(
-                f"[G] Client {client_id}: G={metrics.G:.6f}, "
-                f"G_rel={metrics.G_rel:.4f}, D={metrics.D_cosine:.4f}"
-            )
-        print(
-            f"[G] Client Summary: G={client_g.G:.6f}, G_rel={client_g.G_rel:.4f}, "
-            f"D={client_g.D_cosine:.4f}"
-        )
-        print(
-            f"[G] Server Summary: G={server_g.G:.6f}, G_rel={server_g.G_rel:.4f}, "
-            f"D={server_g.D_cosine:.4f}"
-        )
-        if per_branch_server_g:
-            for branch_idx in sorted(per_branch_server_g.keys()):
-                branch_metrics = per_branch_server_g[branch_idx]
-                print(
-                    f"[G] Server {branch_idx}: G={branch_metrics.G:.6f}, "
-                    f"G_rel={branch_metrics.G_rel:.4f}, D={branch_metrics.D_cosine:.4f}"
-                )
-        if self.use_variance_g:
-            print(
-                f"[G] Variance Client: G={variance_client_g:.6f}, "
-                f"G_rel={variance_client_g_rel:.6f}"
-            )
-            print(
-                f"[G] Variance Server: G={variance_server_g:.6f}, "
-                f"G_rel={variance_server_g_rel:.6f}"
-            )
-
-        return result
-
-    def clear(self):
-        self.oracle_client_grad = None
-        self.oracle_server_grad = None
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 

@@ -262,6 +262,10 @@ class MultiSFLTrainer:
                     split_shape = self._infer_split_shape(
                         full_model, self.cfg.split_layer
                     )
+                    self.g_system.set_branch_oracle_grads(
+                        {idx: grad for idx, grad in enumerate(branch_client_grads)},
+                        {idx: grad for idx, grad in enumerate(branch_server_grads)},
+                    )
                     self.g_system.set_oracle_grads(
                         avg_client,
                         avg_server,
@@ -292,6 +296,8 @@ class MultiSFLTrainer:
             g_y_client_list: List[torch.Tensor] = []
             g_client_ids: List[int] = []
             g_client_weights: List[int] = []
+            g_client_branch_ids: List[int] = []
+            g_server_branch_ids: List[int] = []
 
             for b in range(self.B):
                 client_id = mapping[b]
@@ -419,6 +425,7 @@ class MultiSFLTrainer:
                                 g_y_server_list.append(y_main_cpu)
 
                         g_server_weights.append(int(g_y_server_list[-1].size(0)))
+                        g_server_branch_ids.append(b)
 
                         # Client G data (per client)
                         if main_client.last_batch_x is not None:
@@ -426,6 +433,7 @@ class MultiSFLTrainer:
                             g_y_client_list.append(y_main_cpu)
                             g_client_ids.append(client_id)
                             g_client_weights.append(int(y_main_cpu.size(0)))
+                            g_client_branch_ids.append(b)
 
                     train_result: ServerTrainResult = (
                         self.main.train_branch_with_replay(
@@ -520,6 +528,8 @@ class MultiSFLTrainer:
                         y_all_server=g_y_server_list,
                         client_weights=g_client_weights,
                         server_weights=g_server_weights,
+                        client_branch_ids=g_client_branch_ids,
+                        server_branch_ids=g_server_branch_ids,
                     )
 
             acc = self.evaluate_master()
