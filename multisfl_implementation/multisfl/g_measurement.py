@@ -425,6 +425,32 @@ class GMeasurementSystem:
     def is_diagnostic_round(self, round_idx: int) -> bool:
         return (round_idx + 1) % self.diagnostic_frequency == 0
 
+    def set_oracle_grads(
+        self,
+        oracle_client_grad: Dict[str, torch.Tensor],
+        oracle_server_grad: Dict[str, torch.Tensor],
+        split_layer_name: Optional[str] = None,
+        split_shape: Optional[List[torch.Size]] = None,
+    ) -> None:
+        self.oracle_client_grad = oracle_client_grad
+        self.oracle_server_grad = oracle_server_grad
+
+        total_samples = len(self.oracle_calculator.full_dataloader.dataset)
+        num_batches = len(self.oracle_calculator.full_dataloader)
+        split_shape_display = split_shape if split_shape is not None else "none"
+
+        client_vec = gradient_to_vector(self.oracle_client_grad)
+        server_vec = gradient_to_vector(self.oracle_server_grad)
+        print(
+            f"[G] Oracle: samples={total_samples}, batches={num_batches}, "
+            f"split_layer={split_layer_name or 'none'}, split_shape={split_shape_display}"
+        )
+        print(
+            f"[G] Oracle Norms: client={torch.norm(client_vec).item():.4f} "
+            f"(numel={client_vec.numel()}), server={torch.norm(server_vec).item():.4f} "
+            f"(numel={server_vec.numel()})"
+        )
+
     def compute_oracle(
         self,
         client_model: nn.Module,

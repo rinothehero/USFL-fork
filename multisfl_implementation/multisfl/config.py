@@ -53,6 +53,7 @@ class MultiSFLConfig:
     g_measure_frequency: int = 10
     use_variance_g: bool = False
     use_sfl_transform: bool = False
+    oracle_mode: Literal["master", "branch"] = "master"
 
     def __post_init__(self):
         if self.p_min <= 0:

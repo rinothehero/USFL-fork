@@ -156,6 +156,13 @@ def parse_args() -> argparse.Namespace:
         choices=["true", "false"],
         help="Use torchvision ResNet18 initialization (for image_style models)",
     )
+    parser.add_argument(
+        "--oracle_mode",
+        type=str,
+        default="master",
+        choices=["master", "branch"],
+        help="Oracle computation mode (master or branch average)",
+    )
 
     return parser.parse_args()
 
@@ -204,6 +211,7 @@ def main():
         g_measure_frequency=args.g_measure_frequency,
         use_variance_g=args.use_variance_g,
         use_sfl_transform=args.use_sfl_transform,
+        oracle_mode=args.oracle_mode,
         min_samples_per_client=args.min_samples_per_client,
         max_assistant_trials_per_branch=args.max_assistant_trials,
     )

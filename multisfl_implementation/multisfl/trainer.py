@@ -64,7 +64,7 @@ class MultiSFLTrainer:
             # Use the same batch size as training for fair Oracle averaging.
             full_loader = DataLoader(
                 full_dataset,
-                batch_size=cfg.batch_size* cfg.n_main_clients_per_round,
+                batch_size=cfg.batch_size * cfg.n_main_clients_per_round,
                 shuffle=False,
                 drop_last=False,
                 num_workers=2,
@@ -80,6 +80,49 @@ class MultiSFLTrainer:
         assert self.B == len(self.fed.branches) == len(self.main.branches)
 
         self.stats: List[RoundStats] = []
+
+    def _average_grad_dicts(
+        self, grad_dicts: List[Dict[str, torch.Tensor]]
+    ) -> Dict[str, torch.Tensor]:
+        if not grad_dicts:
+            return {}
+        avg = {name: grad.clone() for name, grad in grad_dicts[0].items()}
+        for grad_dict in grad_dicts[1:]:
+            for name, grad in grad_dict.items():
+                avg[name] += grad
+        divisor = float(len(grad_dicts))
+        for name in avg:
+            avg[name] /= divisor
+        return avg
+
+    def _infer_split_shape(
+        self, full_model: nn.Module, split_layer_name: Optional[str]
+    ) -> Optional[List[torch.Size]]:
+        if full_model is None or split_layer_name is None:
+            return None
+        modules = dict(full_model.named_modules())
+        target = modules.get(split_layer_name)
+        if target is None:
+            return None
+
+        split_shape: Optional[List[torch.Size]] = None
+
+        def hook(_module, _input, output):
+            nonlocal split_shape
+            if isinstance(output, tuple):
+                split_shape = [item.shape for item in output if hasattr(item, "shape")]
+            elif hasattr(output, "shape"):
+                split_shape = [output.shape]
+
+        handle = target.register_forward_hook(hook)
+        full_model.eval()
+        with torch.no_grad():
+            for batch in self.g_system.oracle_calculator.full_dataloader:
+                data = batch[0].to(self.cfg.device)
+                full_model(data)
+                break
+        handle.remove()
+        return split_shape
 
     def sample_main_clients(self) -> List[int]:
         ids = np.random.choice(
@@ -200,13 +243,39 @@ class MultiSFLTrainer:
                             full_sd[k] = v
                     full_model.load_state_dict(full_sd)
 
-                self.g_system.compute_oracle(
-                    wc_measure,
-                    ws_measure,
-                    full_model=full_model,
-                    split_layer_name=self.cfg.split_layer,
-                    use_sfl_oracle=True,
-                )
+                if self.cfg.oracle_mode == "branch":
+                    branch_client_grads = []
+                    branch_server_grads = []
+                    for b in range(self.B):
+                        bc = self.fed.get_client_branch(b).model
+                        bs = self.main.get_server_branch(b).model
+                        oracle_client, oracle_server = (
+                            self.g_system.oracle_calculator.compute_oracle_gradient(
+                                bc, bs
+                            )
+                        )
+                        branch_client_grads.append(oracle_client)
+                        branch_server_grads.append(oracle_server)
+
+                    avg_client = self._average_grad_dicts(branch_client_grads)
+                    avg_server = self._average_grad_dicts(branch_server_grads)
+                    split_shape = self._infer_split_shape(
+                        full_model, self.cfg.split_layer
+                    )
+                    self.g_system.set_oracle_grads(
+                        avg_client,
+                        avg_server,
+                        split_layer_name=self.cfg.split_layer,
+                        split_shape=split_shape,
+                    )
+                else:
+                    self.g_system.compute_oracle(
+                        wc_measure,
+                        ws_measure,
+                        full_model=full_model,
+                        split_layer_name=self.cfg.split_layer,
+                        use_sfl_oracle=True,
+                    )
 
             grad_norm_sq_list: List[float] = []
             grad_f_main_norm_list: List[float] = []
