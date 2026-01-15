@@ -180,47 +180,40 @@ def partition_dirichlet(
     rng = np.random.default_rng(seed)
     all_targets = np.array(_get_targets_from_dataset(dataset))
 
-    class_indices = {c: np.where(all_targets == c)[0] for c in range(num_classes)}
+    min_size = 0
     client_indices: List[List[int]] = [[] for _ in range(num_clients)]
+    while min_size < min_samples_per_client:
+        class_indices = {c: np.where(all_targets == c)[0] for c in range(num_classes)}
+        client_indices = [[] for _ in range(num_clients)]
 
-    for c in range(num_classes):
-        c_idxs = class_indices[c].copy()
-        rng.shuffle(c_idxs)
+        for c in range(num_classes):
+            c_idxs = class_indices[c].copy()
+            rng.shuffle(c_idxs)
 
-        proportions = rng.dirichlet([alpha] * num_clients)
-        n_samples = len(c_idxs)
-        counts = (proportions * n_samples).astype(int)
+            proportions = rng.dirichlet([alpha] * num_clients)
+            n_samples = len(c_idxs)
+            counts = (proportions * n_samples).astype(int)
 
-        diff = n_samples - counts.sum()
-        if diff > 0:
-            top_clients = np.argsort(-proportions)[:diff]
-            for tc in top_clients:
-                counts[tc] += 1
-        elif diff < 0:
-            for _ in range(-diff):
-                for tc in np.argsort(proportions):
-                    if counts[tc] > 0:
-                        counts[tc] -= 1
-                        break
+            diff = n_samples - counts.sum()
+            if diff > 0:
+                top_clients = np.argsort(-proportions)[:diff]
+                for tc in top_clients:
+                    counts[tc] += 1
+            elif diff < 0:
+                for _ in range(-diff):
+                    for tc in np.argsort(proportions):
+                        if counts[tc] > 0:
+                            counts[tc] -= 1
+                            break
 
-        start = 0
-        for client_id, count in enumerate(counts):
-            end = start + count
-            client_indices[client_id].extend(c_idxs[start:end].tolist())
-            start = end
+            start = 0
+            for client_id, count in enumerate(counts):
+                end = start + count
+                client_indices[client_id].extend(c_idxs[start:end].tolist())
+                start = end
 
-    for _ in range(num_clients):
         sizes = [len(ci) for ci in client_indices]
-        min_idx = int(np.argmin(sizes))
-        max_idx = int(np.argmax(sizes))
-
-        if sizes[min_idx] >= min_samples_per_client:
-            break
-        if sizes[max_idx] <= min_samples_per_client + 1:
-            break
-
-        sample = client_indices[max_idx].pop()
-        client_indices[min_idx].append(sample)
+        min_size = min(sizes)
 
     clients = []
     for cid, idxs in enumerate(client_indices):
@@ -253,78 +246,73 @@ def partition_shard_dirichlet(
     rng = np.random.default_rng(seed)
     all_targets = np.array(_get_targets_from_dataset(dataset))
 
-    # 1. Assign classes to clients (ensure every class is covered at least once)
-    client_classes = [set() for _ in range(num_clients)]
-
-    # Basic coverage: assign each class to at least one random client (or more)
-    # Actually, with 100 clients and 10 classes, random assignment usually covers all.
-    # We'll just assign random shards to each client.
-    for cid in range(num_clients):
-        # Sample 'shards' unique classes for this client
-        chosen = rng.choice(num_classes, size=shards, replace=False)
-        client_classes[cid].update(chosen)
-
-    # Check coverage (optional, but good for robustness)
-    # If a class is missing (unlikely), force assign it to a random client
-    class_owners = {c: [] for c in range(num_classes)}
-    for cid, classes in enumerate(client_classes):
-        for c in classes:
-            class_owners[c].append(cid)
-
-    for c in range(num_classes):
-        if not class_owners[c]:
-            # Force assign to a random client
-            cid = rng.integers(0, num_clients)
-            client_classes[cid].add(c)
-            class_owners[c].append(cid)
-
-    # 2. Distribute samples
-    class_indices = {c: np.where(all_targets == c)[0] for c in range(num_classes)}
+    min_size = 0
     client_indices: List[List[int]] = [[] for _ in range(num_clients)]
+    while min_size < min_samples_per_client:
+        # 1. Assign classes to clients (ensure every class is covered at least once)
+        client_classes = [set() for _ in range(num_clients)]
 
-    for c in range(num_classes):
-        owners = class_owners[c]
-        if not owners:
-            continue  # Should be covered by step 1
+        for cid in range(num_clients):
+            chosen = rng.choice(num_classes, size=shards, replace=False)
+            client_classes[cid].update(chosen)
 
-        c_idxs = class_indices[c].copy()
-        rng.shuffle(c_idxs)
+        class_owners = {c: [] for c in range(num_classes)}
+        for cid, classes in enumerate(client_classes):
+            for c in classes:
+                class_owners[c].append(cid)
 
-        n_samples = len(c_idxs)
-        n_owners = len(owners)
+        for c in range(num_classes):
+            if not class_owners[c]:
+                cid = rng.integers(0, num_clients)
+                client_classes[cid].add(c)
+                class_owners[c].append(cid)
 
-        # Dirichlet distribution among owners
-        proportions = rng.dirichlet([alpha] * n_owners)
-        counts = (proportions * n_samples).astype(int)
+        # 2. Distribute samples
+        class_indices = {c: np.where(all_targets == c)[0] for c in range(num_classes)}
+        client_indices = [[] for _ in range(num_clients)]
 
-        # Adjust rounding errors
-        diff = n_samples - counts.sum()
-        if diff > 0:
-            top_owners = np.argsort(-proportions)[:diff]
-            for i in top_owners:
-                counts[i] += 1
-        elif diff < 0:
-            for _ in range(-diff):
-                for i in np.argsort(proportions):
-                    if counts[i] > 0:
-                        counts[i] -= 1
-                        break
+        for c in range(num_classes):
+            owners = class_owners[c]
+            if not owners:
+                continue
 
-        start = 0
-        for i, count in enumerate(counts):
-            owner_id = owners[i]
-            end = start + count
-            client_indices[owner_id].extend(c_idxs[start:end].tolist())
-            start = end
+            c_idxs = class_indices[c].copy()
+            rng.shuffle(c_idxs)
 
-    # 3. Create ClientData objects
+            n_samples = len(c_idxs)
+            n_owners = len(owners)
+
+            proportions = rng.dirichlet([alpha] * n_owners)
+            counts = (proportions * n_samples).astype(int)
+
+            diff = n_samples - counts.sum()
+            if diff > 0:
+                top_owners = np.argsort(-proportions)[:diff]
+                for i in top_owners:
+                    counts[i] += 1
+            elif diff < 0:
+                for _ in range(-diff):
+                    for i in np.argsort(proportions):
+                        if counts[i] > 0:
+                            counts[i] -= 1
+                            break
+
+            start = 0
+            for i, count in enumerate(counts):
+                owner_id = owners[i]
+                end = start + count
+                client_indices[owner_id].extend(c_idxs[start:end].tolist())
+                start = end
+
+        sizes = [len(ci) for ci in client_indices]
+        min_size = min(sizes)
+
     clients = []
     for cid, idxs in enumerate(client_indices):
         if len(idxs) == 0:
-            # Fallback if client got 0 samples (unlikely with sufficient data)
             idxs = [0]
 
-        rng.shuffle(idxs)  # Shuffle for randomness
+        rng.shuffle(idxs)
 
         subset_targets = [int(all_targets[i]) for i in idxs]
         subset = SubsetWithTargets(dataset, idxs, subset_targets)

@@ -163,6 +163,9 @@ def main():
         print(f"  {k}: {v}")
     print("=" * 70)
 
+    num_classes = args.num_classes
+    device = args.device
+
     cfg = MultiSFLConfig(
         num_rounds=args.rounds,
         num_clients_total=args.num_clients,
