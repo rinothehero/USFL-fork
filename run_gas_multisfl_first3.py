@@ -102,7 +102,7 @@ def multisfl_command(
         "--use_variance_g",
         "true",
         "--oracle_mode",
-        "master",
+        "branch",
         "--seed",
         "42",
         "--device",
@@ -123,7 +123,12 @@ def main() -> None:
                 dirichlet_alpha=0.3,
                 split_layer="layer1.1.bn2",
             ),
-            command=["python", "GAS_implementation/GAS_main.py", "true"],
+            command=[
+                "python",
+                "GAS_implementation/GAS_main.py",
+                "true",
+                "--sfl-transform",
+            ],
         ),
         Experiment(
             name="GAS-O (cifar10, resnet18, layer1.0.bn1)",
@@ -136,7 +141,12 @@ def main() -> None:
                 dirichlet_alpha=0.3,
                 split_layer="layer1.0.bn1",
             ),
-            command=["python", "GAS_implementation/GAS_main.py", "true"],
+            command=[
+                "python",
+                "GAS_implementation/GAS_main.py",
+                "true",
+                "--sfl-transform",
+            ],
         ),
         Experiment(
             name="GAS-B (fmnist, resnet18, layer2.1.bn2)",
@@ -149,7 +159,12 @@ def main() -> None:
                 dirichlet_alpha=0.3,
                 split_layer="layer2.1.bn2",
             ),
-            command=["python", "GAS_implementation/GAS_main.py", "true"],
+            command=[
+                "python",
+                "GAS_implementation/GAS_main.py",
+                "true",
+                "--sfl-transform",
+            ],
         ),
         Experiment(
             name="MultiSFL-A (cifar10, resnet18_image_style, layer1.1.bn2)",

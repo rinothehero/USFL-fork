@@ -74,6 +74,64 @@ use_resnet_image_style = True  # True to match torchvision ResNet18 stem
 split_ratio = "quarter"  # Legacy: 'half' or 'quarter' (only if split_layer is None)
 split_layer = "layer1.1.bn2"  # Fine-grained: 'layer1', 'layer1.0.bn1', 'layer2', etc.
 split_alexnet = "default"
+
+# Optional env overrides for experiment runner
+
+
+def _env_str(name: str, default: str) -> str:
+    value = os.environ.get(name)
+    return value if value not in (None, "") else default
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    return int(value) if value not in (None, "") else default
+
+
+def _env_float(name: str, default: float) -> float:
+    value = os.environ.get(name)
+    return float(value) if value not in (None, "") else default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value in (None, ""):
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y"}
+
+
+dataset_override = _env_str("GAS_DATASET", "")
+if dataset_override:
+    cifar = dataset_override == "cifar10"
+    mnist = dataset_override == "mnist"
+    fmnist = dataset_override == "fmnist"
+    cinic = dataset_override == "cinic"
+    cifar100 = dataset_override == "cifar100"
+    SVHN = dataset_override == "svhn"
+
+model_override = _env_str("GAS_MODEL", "")
+if model_override:
+    if model_override == "resnet18":
+        use_resnet = True
+        use_resnet_image_style = _env_bool(
+            "GAS_USE_RESNET_IMAGE_STYLE", use_resnet_image_style
+        )
+    elif model_override == "alexnet":
+        use_resnet = False
+        use_resnet_image_style = False
+
+batchSize = _env_int("GAS_BATCH_SIZE", batchSize)
+shard = _env_int("GAS_LABELS_PER_CLIENT", shard)
+alpha = _env_float("GAS_DIRICHLET_ALPHA", alpha)
+min_require_size = _env_int("GAS_MIN_REQUIRE_SIZE", min_require_size)
+epochs = _env_int("GAS_GLOBAL_EPOCHS", epochs)
+localEpoch = _env_int("GAS_LOCAL_EPOCHS", localEpoch)
+user_num = _env_int("GAS_TOTAL_CLIENTS", user_num)
+user_parti_num = _env_int("GAS_CLIENTS_PER_ROUND", user_parti_num)
+lr = _env_float("GAS_LR", lr)
+momentum = _env_float("GAS_MOMENTUM", momentum)
+split_layer = _env_str("GAS_SPLIT_LAYER", split_layer)
+
 # Random seeds selection
 seed_value = 2023
 torch.manual_seed(seed_value)
