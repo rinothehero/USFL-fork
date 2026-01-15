@@ -118,7 +118,7 @@ def main() -> None:
             env=gas_env(
                 dataset="cifar10",
                 model="resnet18",
-                batch_size=500,
+                batch_size=50,
                 labels_per_client=2,
                 dirichlet_alpha=0.3,
                 split_layer="layer1.1.bn2",
@@ -136,7 +136,7 @@ def main() -> None:
             env=gas_env(
                 dataset="cifar10",
                 model="resnet18",
-                batch_size=500,
+                batch_size=50,
                 labels_per_client=2,
                 dirichlet_alpha=0.3,
                 split_layer="layer1.0.bn1",
@@ -154,7 +154,7 @@ def main() -> None:
             env=gas_env(
                 dataset="cifar10",
                 model="resnet18",
-                batch_size=500,
+                batch_size=50,
                 labels_per_client=2,
                 dirichlet_alpha=0.3,
                 split_layer="layer2.1.bn2",
@@ -173,7 +173,7 @@ def main() -> None:
             command=multisfl_command(
                 dataset="cifar10",
                 model_type="resnet18_image_style",
-                batch_size=500,
+                batch_size=50,
                 split_layer="layer1.1.bn2",
                 labels_per_client=2,
                 dirichlet_alpha=0.3,
@@ -186,7 +186,7 @@ def main() -> None:
             command=multisfl_command(
                 dataset="cifar10",
                 model_type="resnet18_image_style",
-                batch_size=500,
+                batch_size=50,
                 split_layer="layer1.0.bn1",
                 labels_per_client=2,
                 dirichlet_alpha=0.3,
@@ -199,7 +199,7 @@ def main() -> None:
             command=multisfl_command(
                 dataset="cifar10",
                 model_type="resnet18_image_style",
-                batch_size=500,
+                batch_size=50,
                 split_layer="layer2.1.bn2",
                 labels_per_client=2,
                 dirichlet_alpha=0.3,
