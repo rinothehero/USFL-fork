@@ -63,7 +63,7 @@ weight_decay = 0.0
 # Training data selection
 cifar = True
 mnist = False
-fmnist = True
+fmnist = False
 cinic = False
 cifar100 = False
 SVHN = False
