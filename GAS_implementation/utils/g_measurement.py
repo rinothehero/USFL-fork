@@ -199,6 +199,8 @@ def compute_oracle_gradients(
     # Clear GPU cache
     torch.cuda.empty_cache()
 
+    print(f"[Oracle] Computed from {total_samples} samples over {batch_count} batches")
+
     return {
         "client": client_grad_accum,
         "server": server_grad_accum,

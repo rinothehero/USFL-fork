@@ -269,6 +269,10 @@ class OracleCalculator:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+        print(
+            f"[Oracle] Computed from {total_samples} samples over {num_batches} batches"
+        )
+
         return client_grad_accum, server_grad_accum
 
     def compute_oracle_with_split_hook(
@@ -366,6 +370,10 @@ class OracleCalculator:
 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+        print(
+            f"[Oracle] Computed from {total_samples} samples over {num_batches} batches"
+        )
 
         divisor = total_samples if total_samples > 0 else 1
         oracle_full = {name: grad / divisor for name, grad in grad_accum.items()}

@@ -1024,46 +1024,52 @@ class ResNet18ImageStyleFlexibleServer(nn.Module):
         return nn.Sequential(*layers)
 
     def _build_partial_block_completer(self):
-        self.partial_block = None
-        split_layer = self.split_config["layer"]
-        split_block = self.split_config["block"]
-
-        if split_block is None:
+        split_sublayer = self.split_config["sublayer"]
+        if split_sublayer is None:
+            self.partial_block = None
             return
 
-        if split_layer == 1 and split_block < 2:
-            self.partial_block = BasicBlock(64, 64)
-        elif split_layer == 2 and split_block < 2:
-            self.partial_block = BasicBlock(128, 128)
-        elif split_layer == 3 and split_block < 2:
-            self.partial_block = BasicBlock(256, 256)
+        split_layer_num = self.split_config["layer"]
+        channel_map = {1: 64, 2: 128, 3: 256, 4: 512}
+        out_channels = channel_map[split_layer_num]
+
+        self.partial_block = nn.ModuleDict()
+        if split_sublayer in ["conv1", "bn1", "relu1"]:
+            if split_sublayer == "conv1":
+                self.partial_block["bn1"] = nn.BatchNorm2d(out_channels)
+            self.partial_block["relu"] = nn.ReLU(inplace=True)
+            self.partial_block["conv2"] = nn.Conv2d(
+                out_channels,
+                out_channels,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                bias=False,
+            )
+            self.partial_block["bn2"] = nn.BatchNorm2d(out_channels)
+            self.partial_block["final_relu"] = nn.ReLU(inplace=True)
+        elif split_sublayer == "conv2":
+            self.partial_block["bn2"] = nn.BatchNorm2d(out_channels)
+            self.partial_block["final_relu"] = nn.ReLU(inplace=True)
+        elif split_sublayer == "bn2":
+            self.partial_block["final_relu"] = nn.ReLU(inplace=True)
 
     def _complete_partial_block(self, out, identity, stop_at):
         if self.partial_block is None:
             raise ValueError("Partial block is not initialized")
 
         partial_block = self.partial_block
-        if stop_at == "conv1":
-            out = partial_block.bn1(out)
-            out = partial_block.relu(out)
-            out = partial_block.conv2(out)
-            out = partial_block.bn2(out)
-        elif stop_at == "bn1":
-            out = partial_block.relu(out)
-            out = partial_block.conv2(out)
-            out = partial_block.bn2(out)
-        elif stop_at == "relu1":
-            out = partial_block.conv2(out)
-            out = partial_block.bn2(out)
-        elif stop_at == "conv2":
-            out = partial_block.bn2(out)
-        elif stop_at == "bn2":
-            pass
-        else:
-            raise ValueError(f"Unknown stop_at: {stop_at}")
+        if "bn1" in partial_block:
+            out = partial_block["bn1"](out)
+        if "relu" in partial_block and stop_at in ["conv1", "bn1"]:
+            out = partial_block["relu"](out)
+        if "conv2" in partial_block:
+            out = partial_block["conv2"](out)
+        if "bn2" in partial_block and stop_at != "bn2":
+            out = partial_block["bn2"](out)
 
         out += identity
-        out = partial_block.relu(out)
+        out = partial_block["final_relu"](out)
         return out
 
     def forward(self, x):
