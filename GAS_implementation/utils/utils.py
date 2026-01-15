@@ -43,6 +43,17 @@ def try_multivariate_normal(loc, covariance_matrix, device):
             raise
 
 
+def _sample_diagonal_features(mean, variance, samples_needed, device):
+    if variance.dim() >= 2:
+        diag_var = torch.diagonal(variance, dim1=-2, dim2=-1)
+    else:
+        diag_var = variance
+    std = torch.sqrt(diag_var + 1e-5)
+    mean_expanded = mean.unsqueeze(0).expand(samples_needed, -1)
+    std_expanded = std.unsqueeze(0).expand(samples_needed, -1)
+    return torch.normal(mean=mean_expanded, std=std_expanded).to(device)
+
+
 def calculate_v_value(
     server_model,
     user_model,
@@ -147,8 +158,15 @@ def sample_or_generate_features(
                     ).to(device)
                 else:
                     # Full covariance (AlexNet)
-                    mvn = try_multivariate_normal(mean, variance, device)
-                    generated_features = mvn.sample((samples_needed,)).to(device)
+                    try:
+                        mvn = try_multivariate_normal(mean, variance, device)
+                        generated_features = mvn.sample(
+                            torch.Size([samples_needed])
+                        ).to(device)
+                    except ValueError:
+                        generated_features = _sample_diagonal_features(
+                            mean, variance, samples_needed, device
+                        )
                 # Restore the sampled features back to original dimensions
                 restored_features = generated_features.reshape(
                     samples_needed, *original_shape
@@ -167,8 +185,15 @@ def sample_or_generate_features(
                 ).to(device)
             else:
                 # Full covariance (AlexNet)
-                mvn = try_multivariate_normal(mean, variance, device)
-                generated_features = mvn.sample((samples_needed,)).to(device)
+                try:
+                    mvn = try_multivariate_normal(mean, variance, device)
+                    generated_features = mvn.sample(torch.Size([samples_needed])).to(
+                        device
+                    )
+                except ValueError:
+                    generated_features = _sample_diagonal_features(
+                        mean, variance, samples_needed, device
+                    )
             sampled_features = generated_features.reshape(
                 samples_needed, *original_shape
             )
