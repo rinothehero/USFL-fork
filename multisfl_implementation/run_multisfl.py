@@ -77,6 +77,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--p0", type=float, default=0.01)
     parser.add_argument("--p_min", type=float, default=0.01)
     parser.add_argument("--p_max", type=float, default=0.5)
+    parser.add_argument("--eps", type=float, default=1e-12)
     parser.add_argument(
         "--p_update",
         type=str,
@@ -197,6 +198,7 @@ def main():
         use_variance_g=args.use_variance_g,
         use_sfl_transform=args.use_sfl_transform,
         min_samples_per_client=args.min_samples_per_client,
+        max_assistant_trials_per_branch=args.max_assistant_trials,
     )
 
     print(f"\nLoading dataset: {args.dataset}")
