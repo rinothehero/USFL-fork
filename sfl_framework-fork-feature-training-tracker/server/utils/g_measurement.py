@@ -954,30 +954,50 @@ class GMeasurementSystem:
             if split_grad is not None:
                 self.oracle_split_grad = split_grad
 
-        # DEBUG: Oracle norm 확인
+        client_oracle_norm = None
+        server_oracle_norm = None
+        client_numel = None
+        server_numel = None
+
         if self.oracle_client_grad:
             client_oracle_vec = gradient_to_vector(
                 normalize_grad_keys(self.oracle_client_grad)
             )
             client_oracle_norm = torch.norm(client_oracle_vec).item()
             client_numel = client_oracle_vec.numel()
-            print(
-                f"[DEBUG Oracle] Client: ||g*||={client_oracle_norm:.4f}, numel={client_numel}"
-            )
         if self.oracle_server_grad:
             server_oracle_vec = gradient_to_vector(
                 normalize_grad_keys(self.oracle_server_grad)
             )
             server_oracle_norm = torch.norm(server_oracle_vec).item()
             server_numel = server_oracle_vec.numel()
-            print(
-                f"[DEBUG Oracle] Server: ||g*||={server_oracle_norm:.4f}, numel={server_numel}"
-            )
+
+        split_shape = "none"
+        if self.oracle_split_grad is not None:
+            if isinstance(self.oracle_split_grad, tuple):
+                split_shape = [g.shape for g in self.oracle_split_grad]
+            else:
+                split_shape = [self.oracle_split_grad.shape]
+
+        if self.oracle_calculator is not None:
+            full_loader = self.oracle_calculator.full_dataloader
+            total_samples = len(full_loader.dataset)
+            num_batches = len(full_loader)
+        else:
+            total_samples = 0
+            num_batches = 0
 
         print(
-            f"[G Measurement] Oracle computed: client={len(self.oracle_client_grad)}, "
-            f"server={len(self.oracle_server_grad)}, "
-            f"split_layer={'yes' if self.oracle_split_grad is not None else 'no'}"
+            f"[G] Oracle: samples={total_samples}, batches={num_batches}, "
+            f"split_layer={split_layer_name or 'none'}, split_shape={split_shape}"
+        )
+        client_oracle_norm = client_oracle_norm or 0.0
+        server_oracle_norm = server_oracle_norm or 0.0
+        client_numel = client_numel or 0
+        server_numel = server_numel or 0
+        print(
+            f"[G] Oracle Norms: client={client_oracle_norm:.4f} (numel={client_numel}), "
+            f"server={server_oracle_norm:.4f} (numel={server_numel})"
         )
 
     def store_measurement_gradient(
@@ -1082,6 +1102,12 @@ class GMeasurementSystem:
         if not result.is_diagnostic:
             return result
 
+        client_sizes = []
+        if client_weights:
+            client_sizes = [int(client_weights[cid]) for cid in sorted(client_weights.keys())]
+        server_sizes = [int(w) for w in self.server_weights] if self.server_weights else []
+        print(f"[G] Batch Sizes: client={client_sizes}, server={server_sizes}")
+
         # Server G
         if self.server_g_tildes and self.oracle_server_grad:
             server_metrics = []
@@ -1100,46 +1126,32 @@ class GMeasurementSystem:
                     / len(server_metrics),
                 )
                 print(
-                    f"[G] Server Average: G={result.server.G:.6f}, G_rel={result.server.G_rel:.4f}, D={result.server.D_cosine:.4f}"
+                    f"[G] Server Summary: G={result.server.G:.6f}, G_rel={result.server.G_rel:.4f}, D={result.server.D_cosine:.4f}"
                 )
-
-        # Split Layer G (aggregated)
-        if self.split_g_tilde is not None and self.oracle_split_grad is not None:
-            split_metrics = self._compute_split_g_metrics(
-                self.split_g_tilde, self.oracle_split_grad
-            )
-            result.split_layer = split_metrics
-            print(
-                f"[G] Split Layer: G={split_metrics.G:.6f}, G_rel={split_metrics.G_rel:.4f}, D={split_metrics.D_cosine:.4f}"
-            )
 
         # Client G
         client_Gs = []
+        client_G_rel = []
         client_Ds = []
 
         for client_id, g_tilde in self.client_g_tildes.items():
             if self.oracle_client_grad:
-                # DEBUG: Print first few values to verify gradients are unique
-                first_key = next(iter(g_tilde.keys())) if g_tilde else None
-                if first_key and first_key in g_tilde:
-                    grad_sample = g_tilde[first_key].flatten()[:5].tolist()
-                    print(f"[DEBUG] Client {client_id} grad sample: {grad_sample}")
-
                 metrics = compute_g_metrics(g_tilde, self.oracle_client_grad)
                 result.clients[client_id] = metrics
                 client_Gs.append(metrics.G)
+                client_G_rel.append(metrics.G_rel)
                 client_Ds.append(metrics.D_cosine)
                 print(
-                    f"[G] Client {client_id}: G={metrics.G:.6f}, D={metrics.D_cosine:.4f}"
+                    f"[G] Client {client_id}: G={metrics.G:.6f}, G_rel={metrics.G_rel:.4f}, D={metrics.D_cosine:.4f}"
                 )
 
-        # Summary
         if client_Gs:
             result.client_G_mean = sum(client_Gs) / len(client_Gs)
             result.client_G_max = max(client_Gs)
             result.client_D_mean = sum(client_Ds) / len(client_Ds)
+            client_G_rel_mean = sum(client_G_rel) / len(client_G_rel)
             print(
-                f"[G] Summary: G_mean={result.client_G_mean:.6f}, G_max={result.client_G_max:.6f}"
+                f"[G] Client Summary: G={result.client_G_mean:.6f}, G_rel={client_G_rel_mean:.4f}, D={result.client_D_mean:.4f}"
             )
 
         if self.use_variance_g:
@@ -1203,8 +1215,10 @@ class GMeasurementSystem:
             result.variance_server_g_rel = variance_server_g_rel
 
             print(
-                f"[G] Variance: client={variance_client_g:.6f} (rel={variance_client_g_rel:.6f}), "
-                f"server={variance_server_g:.6f} (rel={variance_server_g_rel:.6f})"
+                f"[G] Variance Client: G={variance_client_g:.6f}, G_rel={variance_client_g_rel:.6f}"
+            )
+            print(
+                f"[G] Variance Server: G={variance_server_g:.6f}, G_rel={variance_server_g_rel:.6f}"
             )
 
         self.measurements.append(result)

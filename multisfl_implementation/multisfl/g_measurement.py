@@ -434,12 +434,13 @@ class GMeasurementSystem:
         use_sfl_oracle: bool = False,
     ):
         print(f"[G Measurement] Computing Oracle gradient...")
+        split_grad = None
         if use_sfl_oracle and full_model is not None:
             client_param_names = {name for name, _ in client_model.named_parameters()}
             (
                 self.oracle_client_grad,
                 self.oracle_server_grad,
-                _,
+                split_grad,
             ) = self.oracle_calculator.compute_oracle_with_split_hook(
                 full_model, client_param_names, split_layer_name=split_layer_name
             )
@@ -449,10 +450,23 @@ class GMeasurementSystem:
                     client_model, server_model
                 )
             )
+
+        total_samples = len(self.oracle_calculator.full_dataloader.dataset)
+        num_batches = len(self.oracle_calculator.full_dataloader)
+        split_shape = "none"
+        if split_grad is not None:
+            split_shape = [split_grad.shape]
+
+        client_vec = gradient_to_vector(self.oracle_client_grad)
+        server_vec = gradient_to_vector(self.oracle_server_grad)
         print(
-            f"[G Measurement] Oracle computed: "
-            f"client={len(self.oracle_client_grad)} params, "
-            f"server={len(self.oracle_server_grad)} params"
+            f"[G] Oracle: samples={total_samples}, batches={num_batches}, "
+            f"split_layer={split_layer_name or 'none'}, split_shape={split_shape}"
+        )
+        print(
+            f"[G] Oracle Norms: client={torch.norm(client_vec).item():.4f} "
+            f"(numel={client_vec.numel()}), server={torch.norm(server_vec).item():.4f} "
+            f"(numel={server_vec.numel()})"
         )
 
     def measure_client_g(
@@ -757,25 +771,37 @@ class GMeasurementSystem:
         client_batch_sizes = [int(y.size(0)) for y in y_all_client]
         server_batch_sizes = [int(y.size(0)) for y in y_all_server]
         print(
-            f"[G Measurement] Round {round_idx + 1}: "
-            f"Client G={client_g.G:.6f} (G_rel={client_g.G_rel:.4f}), "
-            f"Server G={server_g.G:.6f} (G_rel={server_g.G_rel:.4f}) "
-            f"(client_batch_sizes={client_batch_sizes}, "
-            f"server_batch_sizes={server_batch_sizes})"
+            f"[G] Batch Sizes: client={client_batch_sizes}, server={server_batch_sizes}"
+        )
+        for client_id in sorted(per_client_g.keys()):
+            metrics = per_client_g[client_id]
+            print(
+                f"[G] Client {client_id}: G={metrics.G:.6f}, "
+                f"G_rel={metrics.G_rel:.4f}, D={metrics.D_cosine:.4f}"
+            )
+        print(
+            f"[G] Client Summary: G={client_g.G:.6f}, G_rel={client_g.G_rel:.4f}, "
+            f"D={client_g.D_cosine:.4f}"
+        )
+        print(
+            f"[G] Server Summary: G={server_g.G:.6f}, G_rel={server_g.G_rel:.4f}, "
+            f"D={server_g.D_cosine:.4f}"
         )
         if per_branch_server_g:
             for branch_idx in sorted(per_branch_server_g.keys()):
                 branch_metrics = per_branch_server_g[branch_idx]
                 print(
-                    f"[G Measurement] Round {round_idx + 1} Branch {branch_idx}: "
-                    f"G={branch_metrics.G:.6f} (G_rel={branch_metrics.G_rel:.4f})"
+                    f"[G] Server {branch_idx}: G={branch_metrics.G:.6f}, "
+                    f"G_rel={branch_metrics.G_rel:.4f}, D={branch_metrics.D_cosine:.4f}"
                 )
         if self.use_variance_g:
             print(
-                f"[G Measurement] Variance Client G={variance_client_g:.6f} "
-                f"(G_rel={variance_client_g_rel:.6f}), "
-                f"Variance Server G={variance_server_g:.6f} "
-                f"(G_rel={variance_server_g_rel:.6f})"
+                f"[G] Variance Client: G={variance_client_g:.6f}, "
+                f"G_rel={variance_client_g_rel:.6f}"
+            )
+            print(
+                f"[G] Variance Server: G={variance_server_g:.6f}, "
+                f"G_rel={variance_server_g_rel:.6f}"
             )
 
         return result

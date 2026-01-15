@@ -458,21 +458,30 @@ def finalize_g_measurement(g_measure_state, g_manager, user_parti_num):
     if per_client_g:
         avg_client_g = sum(gd["G"] for gd in per_client_g.values()) / len(per_client_g)
         avg_g_rel = sum(gd["G_rel"] for gd in per_client_g.values()) / len(per_client_g)
+        avg_d_cosine = sum(gd["D_cosine"] for gd in per_client_g.values()) / len(per_client_g)
     else:
         avg_client_g = float("nan")
         avg_g_rel = float("nan")
+        avg_d_cosine = float("nan")
 
     server_g_list = []
     server_vecs = []
     for server_grad in g_measure_state["server_grads"]:
-        server_g_list.append(
-            compute_g_score(g_manager.oracle_grads["server"], server_grad)
+        g_details = compute_g_score(
+            g_manager.oracle_grads["server"],
+            server_grad,
+            return_details=True,
         )
+        server_g_list.append(g_details)
         server_vecs.append(flatten_grad_list(server_grad))
     if server_g_list:
-        avg_server_g = sum(server_g_list) / len(server_g_list)
+        avg_server_g = sum(gd["G"] for gd in server_g_list) / len(server_g_list)
+        avg_server_g_rel = sum(gd["G_rel"] for gd in server_g_list) / len(server_g_list)
+        avg_server_d = sum(gd["D_cosine"] for gd in server_g_list) / len(server_g_list)
     else:
         avg_server_g = float("nan")
+        avg_server_g_rel = float("nan")
+        avg_server_d = float("nan")
 
     variance_client_g = float("nan")
     variance_client_g_rel = float("nan")
@@ -530,44 +539,44 @@ def finalize_g_measurement(g_measure_state, g_manager, user_parti_num):
         split_avg = split_stack.mean(dim=0)
         split_g = compute_g_score(g_manager.oracle_grads["split"], split_avg)
 
-    if g_measure_state["client_batch_sizes"]:
-        client_sizes = [
-            g_measure_state["client_batch_sizes"].get(cid, 0)
-            for cid in g_measure_state["client_order"]
-        ]
-        print(
-            f"[G Measurement] Epoch {g_measure_state['epoch']} - Per-Client G "
-            f"(batch_sizes={client_sizes}):"
-        )
-    else:
-        print(f"[G Measurement] Epoch {g_measure_state['epoch']} - Per-Client G:")
+    client_sizes = [
+        g_measure_state["client_batch_sizes"].get(cid, 0)
+        for cid in g_measure_state["client_order"]
+    ]
+    server_sizes = list(g_measure_state["server_batch_sizes"])
+    print(f"[G] Batch Sizes: client={client_sizes}, server={server_sizes}")
+
     for cid, gd in per_client_g.items():
         print(
-            f"  Client {cid}: ||oracle||={gd['oracle_norm']:.4f}, ||current||={gd['current_norm']:.4f}, "
-            f"G={gd['G']:.4f}, G_rel={gd['G_rel']:.6f}"
+            f"[G] Client {cid}: G={gd['G']:.6f}, G_rel={gd['G_rel']:.4f}, "
+            f"D={gd['D_cosine']:.4f}"
         )
-    print(f"  Average: G={avg_client_g:.4f}, G_rel={avg_g_rel:.6f}")
-
-    for idx, g_val in enumerate(server_g_list):
-        batch_size = (
-            g_measure_state["server_batch_sizes"][idx]
-            if idx < len(g_measure_state["server_batch_sizes"])
-            else 0
-        )
+    if per_client_g:
         print(
-            f"[G Measurement] Server update {idx}: G={g_val:.6f} "
-            f"(batch_size={batch_size})"
+            f"[G] Client Summary: G={avg_client_g:.6f}, G_rel={avg_g_rel:.4f}, "
+            f"D={avg_d_cosine:.4f}"
         )
-    print(f"[G Measurement] Server Average G = {avg_server_g:.6f}")
+
+    for idx, gd in enumerate(server_g_list):
+        batch_size = server_sizes[idx] if idx < len(server_sizes) else 0
+        print(
+            f"[G] Server {idx}: G={gd['G']:.6f}, G_rel={gd['G_rel']:.4f}, "
+            f"D={gd['D_cosine']:.4f} (batch_size={batch_size})"
+        )
+    if server_g_list:
+        print(
+            f"[G] Server Summary: G={avg_server_g:.6f}, G_rel={avg_server_g_rel:.4f}, "
+            f"D={avg_server_d:.4f}"
+        )
 
     if USE_VARIANCE_G:
         print(
-            f"[G Measurement] Variance Client G = {variance_client_g:.6f}, "
-            f"G_rel = {variance_client_g_rel:.6f}"
+            f"[G] Variance Client: G={variance_client_g:.6f}, "
+            f"G_rel={variance_client_g_rel:.6f}"
         )
         print(
-            f"[G Measurement] Variance Server G = {variance_server_g:.6f}, "
-            f"G_rel = {variance_server_g_rel:.6f}"
+            f"[G] Variance Server: G={variance_server_g:.6f}, "
+            f"G_rel={variance_server_g_rel:.6f}"
         )
 
     if USE_VARIANCE_G:
@@ -920,6 +929,27 @@ while epoch != epochs:
                         g_manager.oracle_grads["server_names"],
                         server_model,
                         "server",
+                    )
+
+                if g_manager.oracle_grads is not None:
+                    oracle_client = g_manager.oracle_grads["client"]
+                    oracle_server = g_manager.oracle_grads["server"]
+                    split_grad = g_manager.oracle_grads.get("split")
+                    client_vec = torch.cat([g.flatten().float() for g in oracle_client])
+                    server_vec = torch.cat([g.flatten().float() for g in oracle_server])
+                    split_shape = "none"
+                    if split_grad is not None:
+                        split_shape = [split_grad.shape]
+                    total_samples = len(full_train_loader.dataset)
+                    num_batches = len(full_train_loader)
+                    print(
+                        f"[G] Oracle: samples={total_samples}, batches={num_batches}, "
+                        f"split_layer={split_layer}, split_shape={split_shape}"
+                    )
+                    print(
+                        f"[G] Oracle Norms: client={torch.norm(client_vec).item():.4f} "
+                        f"(numel={client_vec.numel()}), server={torch.norm(server_vec).item():.4f} "
+                        f"(numel={server_vec.numel()})"
                     )
 
                 g_measure_state["active"] = True
