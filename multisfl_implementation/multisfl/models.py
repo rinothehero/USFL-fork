@@ -1,3 +1,4 @@
+import copy
 import torch
 import torch.nn as nn
 import numpy as np
@@ -295,6 +296,74 @@ class AlexNetUp(nn.Module):
         x = x.view(-1, 256 * 3 * 3)
         x = self.classifier(x)
         return x
+
+
+class AlexNetSplitClient(nn.Module):
+    def __init__(self, conv_layers: List[nn.Module]):
+        super().__init__()
+        self.conv = nn.Sequential(*conv_layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.conv(x)
+
+
+class AlexNetSplitServer(nn.Module):
+    def __init__(self, conv_layers: List[nn.Module], fc_layers: List[nn.Module]):
+        super().__init__()
+        self.conv = nn.Sequential(*conv_layers) if conv_layers else nn.Identity()
+        self.fc = nn.Sequential(*fc_layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.conv(x)
+        x = x.view(x.size(0), -1)
+        return self.fc(x)
+
+
+def _resolve_alexnet_split_index(
+    split_layer: Optional[str], default_index: int, total_layers: int
+) -> int:
+    if not split_layer:
+        return default_index
+
+    normalized = split_layer.strip().lower()
+    if normalized in {"default", "conv2"}:
+        return default_index
+    if normalized in {"light", "conv1"}:
+        return min(2, total_layers - 1)
+    if normalized.startswith("conv."):
+        idx_str = normalized.split(".", 1)[1]
+        if idx_str.isdigit():
+            idx = int(idx_str)
+            if 0 <= idx < total_layers:
+                return idx
+            raise ValueError(f"AlexNet split_layer index out of range: {split_layer}")
+    if normalized.startswith("conv") and normalized[4:].isdigit():
+        idx = int(normalized[4:])
+        if 0 <= idx < total_layers:
+            return idx
+        raise ValueError(f"AlexNet split_layer index out of range: {split_layer}")
+    if normalized.startswith("layer"):
+        return default_index
+
+    raise ValueError(f"Unsupported AlexNet split_layer: {split_layer}")
+
+
+def _build_alexnet_split_models(
+    full_model: nn.Module, split_index: int
+) -> Tuple[nn.Module, nn.Module]:
+    conv_layers = list(full_model.conv.children())
+    if not (0 <= split_index < len(conv_layers)):
+        raise ValueError(
+            f"AlexNet split index must be within [0, {len(conv_layers) - 1}]"
+        )
+
+    client_layers = [copy.deepcopy(layer) for layer in conv_layers[: split_index + 1]]
+    server_layers = [copy.deepcopy(layer) for layer in conv_layers[split_index + 1 :]]
+    fc_layers = [copy.deepcopy(layer) for layer in full_model.fc.children()]
+
+    return AlexNetSplitClient(client_layers), AlexNetSplitServer(
+        server_layers, fc_layers
+    )
 
 
 # =============================================================================
@@ -1154,14 +1223,14 @@ def get_split_models(
     Args:
         model_type: Type of model architecture
             - 'simple': Legacy simple CNN (ClientNet/ServerNet)
-            - 'alexnet': AlexNet split after Conv2
-            - 'alexnet_light': AlexNet split after Conv1 (lighter client)
+            - 'alexnet': AlexNet split after Conv2 (default) or split_layer override
+            - 'alexnet_light': AlexNet split after Conv1 (lighter client, default for CIFAR)
             - 'resnet18': ResNet-18 split after layer2 (half)
             - 'resnet18_light': ResNet-18 split after layer1 (quarter)
             - 'resnet18_flex': ResNet-18 with flexible split point
         dataset: Target dataset (affects input channels)
         num_classes: Number of output classes
-        split_layer: For resnet18_flex, specifies split point (e.g., 'layer1', 'layer2.0.bn1')
+        split_layer: For AlexNet (e.g., 'conv.2', 'conv.5') or ResNet flex (e.g., 'layer1', 'layer2.0.bn1')
 
     Returns:
         Tuple of (client_model, server_model)
@@ -1171,17 +1240,21 @@ def get_split_models(
     if model_type == "simple":
         return ClientNet(), ServerNet(num_classes=num_classes)
 
-    elif model_type == "alexnet":
-        if is_grayscale:
-            return AlexNetDown(), AlexNetUp(num_classes=num_classes)
+    elif model_type in ["alexnet", "alexnet_light"]:
+        base_model = (
+            AlexNet(num_classes=num_classes)
+            if is_grayscale
+            else AlexNetCifar(num_classes=num_classes)
+        )
+        conv_layers = list(base_model.conv.children())
+        if model_type == "alexnet":
+            default_index = 5
         else:
-            return AlexNetDownCifar(), AlexNetUpCifar(num_classes=num_classes)
-
-    elif model_type == "alexnet_light":
-        if is_grayscale:
-            return AlexNetDown(), AlexNetUp(num_classes=num_classes)
-        else:
-            return AlexNetDownCifarLight(), AlexNetUpCifarHeavy(num_classes=num_classes)
+            default_index = 5 if is_grayscale else 2
+        split_index = _resolve_alexnet_split_index(
+            split_layer, default_index, len(conv_layers)
+        )
+        return _build_alexnet_split_models(base_model, split_index)
 
     elif model_type == "resnet18":
         return ResNet18DownCifar(), ResNet18UpCifar(num_classes=num_classes)

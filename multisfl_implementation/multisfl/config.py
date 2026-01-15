@@ -62,3 +62,9 @@ class MultiSFLConfig:
             )
         if self.num_branches is None:
             self.num_branches = self.n_main_clients_per_round
+        if self.split_layer is None and self.model_type in ["alexnet", "alexnet_light"]:
+            is_grayscale = self.dataset in ["mnist", "fmnist"]
+            if self.model_type == "alexnet_light" and not is_grayscale:
+                self.split_layer = "conv.2"
+            else:
+                self.split_layer = "conv.5"

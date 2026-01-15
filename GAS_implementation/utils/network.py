@@ -1,3 +1,4 @@
+import copy
 import torch
 import torch.nn as nn
 import numpy as np
@@ -13,6 +14,70 @@ def disable_inplace(module: nn.Module) -> None:
             setattr(module, name, nn.ReLU6(inplace=False))
         else:
             disable_inplace(child)
+
+
+class AlexNetSplitClient(nn.Module):
+    def __init__(self, conv_layers):
+        super().__init__()
+        self.conv = nn.Sequential(*conv_layers)
+
+    def forward(self, x):
+        return self.conv(x)
+
+
+class AlexNetSplitServer(nn.Module):
+    def __init__(self, conv_layers, fc_layers):
+        super().__init__()
+        self.conv = nn.Sequential(*conv_layers) if conv_layers else nn.Identity()
+        self.fc = nn.Sequential(*fc_layers)
+
+    def forward(self, x):
+        x = self.conv(x)
+        x = x.view(x.size(0), -1)
+        return self.fc(x)
+
+
+def _resolve_alexnet_split_index(split_layer, default_index, total_layers):
+    if not split_layer:
+        return default_index
+
+    normalized = str(split_layer).strip().lower()
+    if normalized in {"default", "conv2"}:
+        return default_index
+    if normalized in {"light", "conv1"}:
+        return min(2, total_layers - 1)
+    if normalized.startswith("conv."):
+        idx_str = normalized.split(".", 1)[1]
+        if idx_str.isdigit():
+            idx = int(idx_str)
+            if 0 <= idx < total_layers:
+                return idx
+            raise ValueError(f"AlexNet split_layer index out of range: {split_layer}")
+    if normalized.startswith("conv") and normalized[4:].isdigit():
+        idx = int(normalized[4:])
+        if 0 <= idx < total_layers:
+            return idx
+        raise ValueError(f"AlexNet split_layer index out of range: {split_layer}")
+    if normalized.startswith("layer"):
+        return default_index
+
+    raise ValueError(f"Unsupported AlexNet split_layer: {split_layer}")
+
+
+def _build_alexnet_split_models(full_model, split_index):
+    conv_layers = list(full_model.conv.children())
+    if not (0 <= split_index < len(conv_layers)):
+        raise ValueError(
+            f"AlexNet split index must be within [0, {len(conv_layers) - 1}]"
+        )
+
+    client_layers = [copy.deepcopy(layer) for layer in conv_layers[: split_index + 1]]
+    server_layers = [copy.deepcopy(layer) for layer in conv_layers[split_index + 1 :]]
+    fc_layers = [copy.deepcopy(layer) for layer in full_model.fc.children()]
+
+    return AlexNetSplitClient(client_layers), AlexNetSplitServer(
+        server_layers, fc_layers
+    )
 
 
 def model_selection(
@@ -37,7 +102,7 @@ def model_selection(
         split_ratio: Legacy ResNet split point ('half', 'quarter')
         split_layer: Fine-grained split point (e.g., 'layer1', 'layer1.0.bn1', 'layer2')
                      If specified, overrides split_ratio
-        split_alexnet: AlexNet split point ('default': Conv2 후, 'light': Conv1 후)
+        split_alexnet: AlexNet split point ('default', 'light', or 'conv.N')
     """
     num_classes = 10
     if cifar100:
@@ -90,25 +155,31 @@ def model_selection(
                         server_local_model = ResNet18UpCifar(num_classes=num_classes)
             else:
                 # Use AlexNet for Split Learning with configurable split point
-                if split_alexnet == "light":
-                    # Option A: Conv1 이후 (lighter client, more communication)
-                    user_model = AlexNetDownCifarLight()
-                    server_model = AlexNetUpCifarHeavy(num_classes=num_classes)
-                    if twoLogit:
-                        server_local_model = AlexNetUpCifarHeavy(
-                            num_classes=num_classes
-                        )
-                else:  # 'default'
-                    # Option B: Conv2 이후 (default, balanced)
-                    user_model = AlexNetDownCifar()
-                    server_model = AlexNetUpCifar(num_classes=num_classes)
-                    if twoLogit:
-                        server_local_model = AlexNetUpCifar(num_classes=num_classes)
+                base_model = AlexNetCifar(num_classes=num_classes)
+                default_index = 2 if split_alexnet == "light" else 5
+                split_index = _resolve_alexnet_split_index(
+                    split_layer, default_index, len(list(base_model.conv.children()))
+                )
+                user_model, server_model = _build_alexnet_split_models(
+                    base_model, split_index
+                )
+                if twoLogit:
+                    server_local_model = _build_alexnet_split_models(
+                        AlexNetCifar(num_classes=num_classes), split_index
+                    )[1]
         elif mnist or fmnist:
-            user_model = AlexNetDown()
-            server_model = AlexNetUp()
+            base_model = AlexNet()
+            default_index = 2 if split_alexnet == "light" else 5
+            split_index = _resolve_alexnet_split_index(
+                split_layer, default_index, len(list(base_model.conv.children()))
+            )
+            user_model, server_model = _build_alexnet_split_models(
+                base_model, split_index
+            )
             if twoLogit:
-                server_local_model = AlexNetUp()
+                server_local_model = _build_alexnet_split_models(
+                    AlexNet(), split_index
+                )[1]
         else:
             user_model = None
             server_model = None
