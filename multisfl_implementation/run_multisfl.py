@@ -54,6 +54,12 @@ def parse_args() -> argparse.Namespace:
         default=2,
         help="Number of classes per client for shard_dirichlet",
     )
+    parser.add_argument(
+        "--min_samples_per_client",
+        type=int,
+        default=10,
+        help="Minimum samples per client for partitioning",
+    )
     parser.add_argument("--data_root", type=str, default="./data")
 
     parser.add_argument("--rounds", type=int, default=50)
@@ -161,10 +167,10 @@ def main():
         num_rounds=args.rounds,
         num_clients_total=args.num_clients,
         n_main_clients_per_round=args.n_main,
-        num_branches=args.branches if args.branches else args.n_main,
+        num_branches=args.branches,
         dataset=args.dataset,
-        num_classes=args.num_classes,
-        device=args.device,
+        num_classes=num_classes,
+        device=device,
         seed=args.seed,
         batch_size=args.batch_size,
         local_steps=args.local_steps,
@@ -176,17 +182,18 @@ def main():
         p0=args.p0,
         p_min=args.p_min,
         p_max=args.p_max,
-        p_update=args.p_update,
-        delta_clip=args.delta_clip,
-        max_assistant_trials_per_branch=args.max_assistant_trials,
+        eps=args.eps,
         replay_budget_mode=args.replay_budget_mode,
         replay_min_total=args.replay_min_total,
+        p_update=args.p_update,
+        delta_clip=args.delta_clip,
         model_type=args.model_type,
         split_layer=args.split_layer,
-        enable_g_measurement=(args.enable_g_measurement.lower() == "true"),
+        enable_g_measurement=args.enable_g_measurement,
         g_measure_frequency=args.g_measure_frequency,
-        use_variance_g=(args.use_variance_g.lower() == "true"),
-        use_sfl_transform=(args.use_sfl_transform.lower() == "true"),
+        use_variance_g=args.use_variance_g,
+        use_sfl_transform=args.use_sfl_transform,
+        min_samples_per_client=args.min_samples_per_client,
     )
 
     print(f"\nLoading dataset: {args.dataset}")
@@ -225,6 +232,7 @@ def main():
             num_classes=cfg.num_classes,
             alpha=args.alpha_dirichlet,
             seed=cfg.seed,
+            min_samples_per_client=cfg.min_samples_per_client,
         )
     elif args.partition == "shard_dirichlet":
         client_datas = partition_shard_dirichlet(
@@ -234,6 +242,7 @@ def main():
             shards=args.shards,
             alpha=args.alpha_dirichlet,
             seed=cfg.seed,
+            min_samples_per_client=cfg.min_samples_per_client,
         )
     else:
         client_datas = partition_iid(

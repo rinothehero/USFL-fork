@@ -14,6 +14,7 @@ class MultiSFLConfig:
     seed: int = 42
 
     batch_size: int = 64
+    min_samples_per_client: int = 10
     local_steps: int = 5
     lr_client: float = 0.01
     lr_server: float = 0.01
