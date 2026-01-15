@@ -23,6 +23,8 @@ from torch.utils.data import DataLoader
 from typing import Dict, List, Optional, Tuple, Set, Union
 from dataclasses import dataclass, field
 
+from server.modules.trainer.propagator.propagator import get_propagator
+
 
 @dataclass
 class GMetrics:
@@ -547,7 +549,10 @@ class OracleGradientCalculator:
         return oracle_client_grad, oracle_server_grad, oracle_split_grad
 
     def compute_oracle_split_gradient(
-        self, client_model: nn.Module, server_model: nn.Module
+        self,
+        client_model: nn.Module,
+        server_model: nn.Module,
+        config,
     ) -> Tuple[
         Dict[str, torch.Tensor],
         Dict[str, torch.Tensor],
@@ -591,8 +596,18 @@ class OracleGradientCalculator:
             batch_size = data.size(0)
             num_batches += 1
 
-            # Client forward
-            activation = client_model(data)
+            attention_mask = batch[2] if len(batch) >= 3 else None
+            params = {
+                "attention_mask": attention_mask.to(self.device)
+                if attention_mask is not None
+                else None
+            }
+
+            client_propagator = get_propagator(config, client_model)
+            server_propagator = get_propagator(config, server_model)
+
+            client_propagator.forward(data, params)
+            activation = client_propagator.outputs
             act_detached = None
             id_detached = None
 
@@ -600,7 +615,7 @@ class OracleGradientCalculator:
                 act, identity = activation
                 act_detached = act.detach().requires_grad_(True)
                 id_detached = identity.detach().requires_grad_(True)
-                logits = server_model((act_detached, id_detached))
+                logits = server_propagator.forward((act_detached, id_detached), params)
                 loss = F.cross_entropy(logits, labels, reduction="sum")
                 loss.backward()
 
@@ -614,7 +629,7 @@ class OracleGradientCalculator:
                 activation.requires_grad_(True)
                 activation.retain_grad()  # Activation gradient 유지
 
-                logits = server_model(activation)
+                logits = server_propagator.forward(activation, params)
                 loss = F.cross_entropy(logits, labels, reduction="sum")
                 loss.backward()
 
@@ -845,6 +860,7 @@ class GMeasurementSystem:
         server_model: nn.Module,
         full_model: nn.Module = None,
         split_layer_name: str = None,
+        config=None,
     ):
         """
         Oracle gradient 계산 with split layer gradient
@@ -893,36 +909,47 @@ class GMeasurementSystem:
             self.oracle_split_grad = None
 
         def _client_split_output_is_tuple() -> bool:
-            if self.oracle_calculator is None:
+            if self.oracle_calculator is None or config is None:
                 return False
             dataloader = self.oracle_calculator.full_dataloader
             device = self.oracle_calculator.device
             data = None
+            attention_mask = None
             for batch in dataloader:
                 if len(batch) >= 2:
                     data = batch[0]
+                    attention_mask = batch[2] if len(batch) >= 3 else None
                     break
             if data is None:
                 return False
 
             data = data.to(device)
+            params = {
+                "attention_mask": attention_mask.to(device)
+                if attention_mask is not None
+                else None
+            }
+
+            client_propagator = get_propagator(config, client_model)
             was_training = client_model.training
             client_model.eval()
             with torch.no_grad():
-                output = client_model(data)
+                client_propagator.forward(data, params)
             if was_training:
                 client_model.train()
-            return isinstance(output, tuple)
+            return isinstance(client_propagator.outputs, tuple)
 
-        if _client_split_output_is_tuple() and not isinstance(
-            self.oracle_split_grad, tuple
+        if (
+            config is not None
+            and _client_split_output_is_tuple()
+            and not isinstance(self.oracle_split_grad, tuple)
         ):
             (
                 _,
                 _,
                 split_grad,
             ) = self.oracle_calculator.compute_oracle_split_gradient(
-                client_model, server_model
+                client_model, server_model, config
             )
             if split_grad is not None:
                 self.oracle_split_grad = split_grad

@@ -878,6 +878,7 @@ class USFLStageOrganizer(BaseStageOrganizer):
                 self.split_models[1],  # server model
                 full_model,  # full model for split layer gradient
                 split_layer_name=self.config.split_layer,
+                config=self.config,
             )
 
             mem_after_oracle = process.memory_info().rss / (1024**3)
