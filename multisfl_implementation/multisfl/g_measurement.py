@@ -864,6 +864,42 @@ class GMeasurementSystem:
 
         self.measurements.append(result)
 
+        client_batch_sizes = [int(y.size(0)) for y in y_all_client]
+        server_batch_sizes = [int(y.size(0)) for y in y_all_server]
+        print(
+            f"[G] Batch Sizes: client={client_batch_sizes}, server={server_batch_sizes}"
+        )
+        for client_id in sorted(per_client_g.keys()):
+            metrics = per_client_g[client_id]
+            print(
+                f"[G] Client {client_id}: G={metrics.G:.6f}, "
+                f"G_rel={metrics.G_rel:.4f}, D={metrics.D_cosine:.4f}"
+            )
+        print(
+            f"[G] Client Summary: G={client_g.G:.6f}, G_rel={client_g.G_rel:.4f}, "
+            f"D={client_g.D_cosine:.4f}"
+        )
+        print(
+            f"[G] Server Summary: G={server_g.G:.6f}, G_rel={server_g.G_rel:.4f}, "
+            f"D={server_g.D_cosine:.4f}"
+        )
+        if per_branch_server_g:
+            for branch_idx in sorted(per_branch_server_g.keys()):
+                branch_metrics = per_branch_server_g[branch_idx]
+                print(
+                    f"[G] Server {branch_idx}: G={branch_metrics.G:.6f}, "
+                    f"G_rel={branch_metrics.G_rel:.4f}, D={branch_metrics.D_cosine:.4f}"
+                )
+        if self.use_variance_g:
+            print(
+                f"[G] Variance Client: G={variance_client_g:.6f}, "
+                f"G_rel={variance_client_g_rel:.6f}"
+            )
+            print(
+                f"[G] Variance Server: G={variance_server_g:.6f}, "
+                f"G_rel={variance_server_g_rel:.6f}"
+            )
+
         self.oracle_client_grad = None
         self.oracle_server_grad = None
         self.oracle_client_grads_by_branch = None
@@ -871,6 +907,8 @@ class GMeasurementSystem:
 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+        return result
 
     def get_all_measurements(self) -> List[dict]:
         return [m.to_dict() for m in self.measurements]

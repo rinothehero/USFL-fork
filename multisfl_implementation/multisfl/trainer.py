@@ -512,32 +512,25 @@ class MultiSFLTrainer:
                 and wc_measure is not None
                 and ws_measure is not None
             ):
-                print(
-                    f"[G Measurement] Collected data sizes: clients={len(g_x_client_list)}, "
-                    f"servers={len(g_f_all_list)}"
-                )
                 if not g_f_all_list:
                     print(
-                        f"[G Measurement] No server data collected for round {r + 1}; client-only G will be computed."
+                        f"[G Measurement] No data collected for round {r + 1}, skipping."
                     )
-                if not g_x_client_list:
-                    print(
-                        f"[G Measurement] No client data collected for round {r + 1}; server-only G will be computed."
+                else:
+                    self.g_system.measure_round(
+                        round_idx=r,
+                        client_model=wc_measure,
+                        server_model=ws_measure,
+                        client_ids=g_client_ids,
+                        x_all=g_x_client_list,
+                        y_all_client=g_y_client_list,
+                        f_all=g_f_all_list,
+                        y_all_server=g_y_server_list,
+                        client_weights=g_client_weights,
+                        server_weights=g_server_weights,
+                        client_branch_ids=g_client_branch_ids,
+                        server_branch_ids=g_server_branch_ids,
                     )
-                self.g_system.measure_round(
-                    round_idx=r,
-                    client_model=wc_measure,
-                    server_model=ws_measure,
-                    client_ids=g_client_ids,
-                    x_all=g_x_client_list,
-                    y_all_client=g_y_client_list,
-                    f_all=g_f_all_list,
-                    y_all_server=g_y_server_list,
-                    client_weights=g_client_weights,
-                    server_weights=g_server_weights,
-                    client_branch_ids=g_client_branch_ids,
-                    server_branch_ids=g_server_branch_ids,
-                )
 
             acc = self.evaluate_master()
             print(f"[Round {r + 1}] Accuracy: {acc:.4f}")
