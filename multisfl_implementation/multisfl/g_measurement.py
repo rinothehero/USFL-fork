@@ -243,14 +243,11 @@ class OracleCalculator:
                 act, identity = activation
                 act_detached = act.detach().requires_grad_(True)
                 id_detached = identity.detach().requires_grad_(True)
-                bn_states = None
-                if _needs_bn_eval(act_detached):
-                    bn_states = _freeze_batchnorm(server_model)
+                bn_states = _freeze_batchnorm(server_model)
                 logits = server_model((act_detached, id_detached))
                 loss = F.cross_entropy(logits, labels, reduction="sum")
                 loss.backward()
-                if bn_states is not None:
-                    _restore_batchnorm(server_model, bn_states)
+                _restore_batchnorm(server_model, bn_states)
 
                 if act_detached.grad is None or id_detached.grad is None:
                     raise RuntimeError("Missing gradients for tuple split output")
@@ -259,15 +256,12 @@ class OracleCalculator:
                 )
             else:
                 activation_detached = activation.detach().requires_grad_(True)
-                bn_states = None
-                if _needs_bn_eval(activation_detached):
-                    bn_states = _freeze_batchnorm(server_model)
+                bn_states = _freeze_batchnorm(server_model)
                 logits = server_model(activation_detached)
 
                 loss = F.cross_entropy(logits, labels, reduction="sum")
                 loss.backward()
-                if bn_states is not None:
-                    _restore_batchnorm(server_model, bn_states)
+                _restore_batchnorm(server_model, bn_states)
 
                 activation.backward(activation_detached.grad)
 
@@ -372,7 +366,7 @@ class OracleCalculator:
             total_samples += labels.size(0)
 
             bn_states = None
-            if labels.size(0) == 1:
+            if _needs_bn_eval(data):
                 bn_states = _freeze_batchnorm(full_model)
 
             outputs = full_model(data)
@@ -561,15 +555,12 @@ class GMeasurementSystem:
                 act, identity = activation
                 act_detached = act.detach().requires_grad_(True)
                 id_detached = identity.detach().requires_grad_(True)
-                bn_states = None
-                if _needs_bn_eval(act_detached):
-                    bn_states = _freeze_batchnorm(server_model)
+                bn_states = _freeze_batchnorm(server_model)
                 logits = server_model((act_detached, id_detached))
                 loss = F.cross_entropy(logits, y, reduction="mean")
                 loss.backward()
 
-                if bn_states is not None:
-                    _restore_batchnorm(server_model, bn_states)
+                _restore_batchnorm(server_model, bn_states)
 
                 if act_detached.grad is None or id_detached.grad is None:
                     raise RuntimeError("Missing gradients for tuple split output")
@@ -578,16 +569,13 @@ class GMeasurementSystem:
                 )
             else:
                 activation_detached = activation.detach().requires_grad_(True)
-                bn_states = None
-                if _needs_bn_eval(activation_detached):
-                    bn_states = _freeze_batchnorm(server_model)
+                bn_states = _freeze_batchnorm(server_model)
                 logits = server_model(activation_detached)
 
                 loss = F.cross_entropy(logits, y, reduction="mean")
                 loss.backward()
 
-                if bn_states is not None:
-                    _restore_batchnorm(server_model, bn_states)
+                _restore_batchnorm(server_model, bn_states)
 
                 activation.backward(activation_detached.grad)
 
@@ -678,25 +666,19 @@ class GMeasurementSystem:
 
             y_batch = y_batch.to(self.device)
 
-            bn_states = None
+            bn_states = _freeze_batchnorm(server_model)
             if isinstance(f_batch, tuple):
                 f_act, f_id = f_batch
                 f_act = f_act.to(self.device).detach().requires_grad_(True)
                 f_id = f_id.to(self.device).detach().requires_grad_(True)
-                if _needs_bn_eval(f_act):
-                    bn_states = _freeze_batchnorm(server_model)
                 logits = server_model((f_act, f_id))
             else:
                 f_batch = f_batch.to(self.device).detach().requires_grad_(True)
-                if _needs_bn_eval(f_batch):
-                    bn_states = _freeze_batchnorm(server_model)
                 logits = server_model(f_batch)
 
             loss = F.cross_entropy(logits, y_batch, reduction="mean")
             loss.backward()
-
-            if bn_states is not None:
-                _restore_batchnorm(server_model, bn_states)
+            _restore_batchnorm(server_model, bn_states)
 
             current_server_grad = {
                 name: param.grad.clone().detach().cpu()
