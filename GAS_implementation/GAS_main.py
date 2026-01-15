@@ -42,7 +42,7 @@ def _restore_batchnorm(module: nn.Module, states: Dict[str, bool]) -> None:
             child.train(states[name])
 
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Experimental parameter settings
@@ -63,13 +63,13 @@ weight_decay = 0.0
 # Training data selection
 cifar = True
 mnist = False
-fmnist = True
+fmnist = False
 cinic = False
 cifar100 = False
 SVHN = False
 # Model selection
 use_resnet = True
-use_resnet_image_style = False  # True to match torchvision ResNet18 stem
+use_resnet_image_style = True  # True to match torchvision ResNet18 stem
 split_ratio = "quarter"  # Legacy: 'half' or 'quarter' (only if split_layer is None)
 split_layer = "layer1.1.bn2"  # Fine-grained: 'layer1', 'layer1.0.bn1', 'layer2', etc.
 split_alexnet = "default"

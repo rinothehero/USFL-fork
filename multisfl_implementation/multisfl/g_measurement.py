@@ -19,7 +19,24 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 
-def _set_batchnorm_eval(module: nn.Module) -> Dict[str, bool]:
+def _per_channel_count(tensor: torch.Tensor) -> int:
+    if tensor.dim() == 0:
+        return 1
+    if tensor.dim() == 1:
+        return tensor.shape[0]
+    if tensor.dim() == 2:
+        return tensor.shape[0]
+    spatial = 1
+    for dim in tensor.shape[2:]:
+        spatial *= dim
+    return tensor.shape[0] * spatial
+
+
+def _needs_bn_eval(tensor: torch.Tensor) -> bool:
+    return _per_channel_count(tensor) <= 1
+
+
+def _freeze_batchnorm(module: nn.Module) -> Dict[str, bool]:
     states: Dict[str, bool] = {}
     for name, child in module.named_modules():
         if isinstance(child, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
@@ -226,9 +243,14 @@ class OracleCalculator:
                 act, identity = activation
                 act_detached = act.detach().requires_grad_(True)
                 id_detached = identity.detach().requires_grad_(True)
+                bn_states = None
+                if _needs_bn_eval(act_detached):
+                    bn_states = _freeze_batchnorm(server_model)
                 logits = server_model((act_detached, id_detached))
                 loss = F.cross_entropy(logits, labels, reduction="sum")
                 loss.backward()
+                if bn_states is not None:
+                    _restore_batchnorm(server_model, bn_states)
 
                 if act_detached.grad is None or id_detached.grad is None:
                     raise RuntimeError("Missing gradients for tuple split output")
@@ -237,10 +259,15 @@ class OracleCalculator:
                 )
             else:
                 activation_detached = activation.detach().requires_grad_(True)
+                bn_states = None
+                if _needs_bn_eval(activation_detached):
+                    bn_states = _freeze_batchnorm(server_model)
                 logits = server_model(activation_detached)
 
                 loss = F.cross_entropy(logits, labels, reduction="sum")
                 loss.backward()
+                if bn_states is not None:
+                    _restore_batchnorm(server_model, bn_states)
 
                 activation.backward(activation_detached.grad)
 
@@ -344,6 +371,10 @@ class OracleCalculator:
             num_batches += 1
             total_samples += labels.size(0)
 
+            bn_states = None
+            if labels.size(0) == 1:
+                bn_states = _freeze_batchnorm(full_model)
+
             outputs = full_model(data)
             if not debug_logged:
                 print(f"[DEBUG] Oracle Input shape: {data.shape}")
@@ -352,6 +383,9 @@ class OracleCalculator:
                 debug_logged = True
             loss = F.cross_entropy(outputs, labels, reduction="sum")
             loss.backward()
+
+            if bn_states is not None:
+                _restore_batchnorm(full_model, bn_states)
 
             for name, param in full_model.named_parameters():
                 if param.grad is not None:
@@ -527,11 +561,9 @@ class GMeasurementSystem:
                 act, identity = activation
                 act_detached = act.detach().requires_grad_(True)
                 id_detached = identity.detach().requires_grad_(True)
-
-                bn_states: Optional[Dict[str, bool]] = None
-                if y.size(0) == 1:
-                    bn_states = _set_batchnorm_eval(server_model)
-
+                bn_states = None
+                if _needs_bn_eval(act_detached):
+                    bn_states = _freeze_batchnorm(server_model)
                 logits = server_model((act_detached, id_detached))
                 loss = F.cross_entropy(logits, y, reduction="mean")
                 loss.backward()
@@ -546,11 +578,9 @@ class GMeasurementSystem:
                 )
             else:
                 activation_detached = activation.detach().requires_grad_(True)
-
-                bn_states: Optional[Dict[str, bool]] = None
-                if y.size(0) == 1:
-                    bn_states = _set_batchnorm_eval(server_model)
-
+                bn_states = None
+                if _needs_bn_eval(activation_detached):
+                    bn_states = _freeze_batchnorm(server_model)
                 logits = server_model(activation_detached)
 
                 loss = F.cross_entropy(logits, y, reduction="mean")
@@ -648,17 +678,18 @@ class GMeasurementSystem:
 
             y_batch = y_batch.to(self.device)
 
-            bn_states: Optional[Dict[str, bool]] = None
-            if y_batch.size(0) == 1:
-                bn_states = _set_batchnorm_eval(server_model)
-
+            bn_states = None
             if isinstance(f_batch, tuple):
                 f_act, f_id = f_batch
                 f_act = f_act.to(self.device).detach().requires_grad_(True)
                 f_id = f_id.to(self.device).detach().requires_grad_(True)
+                if _needs_bn_eval(f_act):
+                    bn_states = _freeze_batchnorm(server_model)
                 logits = server_model((f_act, f_id))
             else:
                 f_batch = f_batch.to(self.device).detach().requires_grad_(True)
+                if _needs_bn_eval(f_batch):
+                    bn_states = _freeze_batchnorm(server_model)
                 logits = server_model(f_batch)
 
             loss = F.cross_entropy(logits, y_batch, reduction="mean")
