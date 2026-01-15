@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 import numpy as np
-from typing import Optional, TypedDict
+from typing import Optional, TypedDict, Tuple
+import torchvision.models as tv_models
 
 
 def disable_inplace(module: nn.Module) -> None:
@@ -1404,3 +1405,196 @@ class ResNet18FlexibleServer(nn.Module):
         x = self.fc(x)
 
         return x
+
+
+# =============================================================================
+# Torchvision Initialization Helper
+# =============================================================================
+
+
+def load_torchvision_resnet18_init(
+    client_model: nn.Module,
+    server_model: nn.Module,
+    split_layer: str = "layer2",
+    image_style: bool = True,
+) -> Tuple[nn.Module, nn.Module]:
+    """
+    Load torchvision ResNet18 state_dict into split client/server models.
+
+    This ensures GAS/MultiSFL models start with the same Kaiming normal
+    initialization as SFL's torchvision-based ResNet18.
+
+    Args:
+        client_model: Client-side model (e.g., ResNet18ImageStyleFlexibleClient)
+        server_model: Server-side model (e.g., ResNet18ImageStyleFlexibleServer)
+        split_layer: Split point string (e.g., 'layer2', 'layer2.0.bn1')
+        image_style: If True, uses ImageNet-style ResNet (7x7 conv, maxpool).
+                     If False, uses CIFAR-style (3x3 conv, no maxpool).
+
+    Returns:
+        Tuple of (client_model, server_model) with loaded weights.
+
+    Note:
+        - Only works for ResNet18ImageStyle* models (image_style=True)
+        - CIFAR-style models have different architecture and cannot use
+          torchvision weights directly
+    """
+    if not image_style:
+        print(
+            "[Warning] Torchvision init only supports image_style=True. "
+            "CIFAR-style models have different architecture."
+        )
+        return client_model, server_model
+
+    # Load torchvision ResNet18 with random init (no pretrained weights)
+    tv_resnet = tv_models.resnet18(weights=None)
+    tv_state = tv_resnet.state_dict()
+
+    # Parse split configuration
+    split_config = parse_split_layer(split_layer)
+    split_layer_num = split_config["layer"]
+    split_block = split_config["block"]
+    split_sublayer = split_config["sublayer"]
+
+    # Define which layers go to client vs server
+    # Client gets: conv1, bn1, layer1, and layers up to split point
+    # Server gets: layers after split point, avgpool, fc
+
+    client_keys = set()
+    server_keys = set()
+
+    # conv1, bn1 always go to client
+    for key in tv_state.keys():
+        if key.startswith("conv1") or key.startswith("bn1"):
+            client_keys.add(key)
+
+    # Determine layer distribution based on split point
+    for layer_num in range(1, 5):  # layer1, layer2, layer3, layer4
+        layer_prefix = f"layer{layer_num}"
+        layer_keys = [k for k in tv_state.keys() if k.startswith(layer_prefix)]
+
+        if layer_num < split_layer_num:
+            # Entire layer goes to client
+            client_keys.update(layer_keys)
+        elif layer_num > split_layer_num:
+            # Entire layer goes to server
+            server_keys.update(layer_keys)
+        else:
+            # Split happens within this layer
+            if split_block is None:
+                # Split at end of layer → entire layer to client
+                client_keys.update(layer_keys)
+            else:
+                # Split within a specific block
+                for key in layer_keys:
+                    # Parse block number from key like "layer2.0.conv1.weight"
+                    parts = key.split(".")
+                    if len(parts) >= 2:
+                        try:
+                            block_num = int(parts[1])
+                        except ValueError:
+                            # Handle downsample keys like "layer2.0.downsample.0.weight"
+                            block_num = int(parts[1]) if parts[1].isdigit() else 0
+
+                        if block_num < split_block:
+                            client_keys.add(key)
+                        elif block_num > split_block:
+                            server_keys.add(key)
+                        else:
+                            # Within the split block
+                            if split_sublayer is None:
+                                # Full block to client
+                                client_keys.add(key)
+                            else:
+                                # Need to determine if sublayer is before or after split
+                                sublayer_order = ["conv1", "bn1", "conv2", "bn2"]
+                                key_sublayer = parts[2] if len(parts) > 2 else ""
+
+                                # Downsample goes to client (computed at start of block)
+                                if "downsample" in key:
+                                    client_keys.add(key)
+                                elif key_sublayer in sublayer_order:
+                                    key_idx = sublayer_order.index(key_sublayer)
+                                    split_idx = (
+                                        sublayer_order.index(split_sublayer)
+                                        if split_sublayer in sublayer_order
+                                        else -1
+                                    )
+
+                                    if key_idx <= split_idx:
+                                        client_keys.add(key)
+                                    else:
+                                        server_keys.add(key)
+                                else:
+                                    # Unknown sublayer, default to client
+                                    client_keys.add(key)
+                    else:
+                        client_keys.add(key)
+
+    # fc always goes to server
+    for key in tv_state.keys():
+        if key.startswith("fc"):
+            server_keys.add(key)
+
+    # Load client weights
+    client_state = client_model.state_dict()
+    loaded_client = 0
+    for key in client_keys:
+        if key in client_state and key in tv_state:
+            if client_state[key].shape == tv_state[key].shape:
+                client_state[key] = tv_state[key]
+                loaded_client += 1
+    client_model.load_state_dict(client_state)
+
+    # Load server weights
+    # Server model may have different key names for partial blocks
+    server_state = server_model.state_dict()
+    loaded_server = 0
+
+    for key in server_keys:
+        if key in server_state and key in tv_state:
+            if server_state[key].shape == tv_state[key].shape:
+                server_state[key] = tv_state[key]
+                loaded_server += 1
+
+    # Handle partial block weights mapping
+    # When split is mid-block, server's partial_block needs mapping
+    if (
+        split_sublayer is not None
+        and hasattr(server_model, "partial_block")
+        and server_model.partial_block is not None
+    ):
+        # Map remaining sublayers from torchvision to server's partial_block
+        block_prefix = f"layer{split_layer_num}.{split_block}"
+        sublayer_map = {
+            "bn1": f"{block_prefix}.bn1",
+            "conv2": f"{block_prefix}.conv2",
+            "bn2": f"{block_prefix}.bn2",
+        }
+
+        for pb_key, tv_key_prefix in sublayer_map.items():
+            if pb_key in server_model.partial_block:
+                # Find matching torchvision keys
+                for tv_key in tv_state.keys():
+                    if tv_key.startswith(tv_key_prefix):
+                        # Map to partial_block key
+                        param_type = tv_key.split(".")[
+                            -1
+                        ]  # weight, bias, running_mean, etc.
+                        pb_full_key = f"partial_block.{pb_key}.{param_type}"
+
+                        if pb_full_key in server_state and tv_key in tv_state:
+                            if (
+                                server_state[pb_full_key].shape
+                                == tv_state[tv_key].shape
+                            ):
+                                server_state[pb_full_key] = tv_state[tv_key]
+                                loaded_server += 1
+
+    server_model.load_state_dict(server_state)
+
+    print(
+        f"[TorchvisionInit] Loaded {loaded_client} client params, {loaded_server} server params from torchvision ResNet18"
+    )
+
+    return client_model, server_model

@@ -9,7 +9,7 @@ import os
 from datetime import datetime
 
 from multisfl.config import MultiSFLConfig
-from multisfl.models import get_split_models
+from multisfl.models import get_split_models, load_torchvision_resnet18_init
 from multisfl.data import (
     SyntheticImageDataset,
     CIFAR10Dataset,
@@ -149,6 +149,13 @@ def parse_args() -> argparse.Namespace:
         choices=["true", "false"],
         help="Use SFL-style ToTensor-only transforms",
     )
+    parser.add_argument(
+        "--use_torchvision_init",
+        type=str,
+        default="false",
+        choices=["true", "false"],
+        help="Use torchvision ResNet18 initialization (for image_style models)",
+    )
 
     return parser.parse_args()
 
@@ -273,15 +280,18 @@ def main():
     B = cfg.num_branches or cfg.n_main_clients_per_round
     print(f"\nInitializing {B} branch models ({cfg.model_type})...")
 
-    # [CRITICAL FIX] Initialize ONE base model pair, then deepcopy for each branch.
-    # If we initialize new models inside the loop, they start with DIFFERENT random weights.
-    # Averaging them (FedAvg) would destroy the features.
     wc_init, ws_init = get_split_models(
         model_type=cfg.model_type,
         dataset=args.dataset,
         num_classes=cfg.num_classes,
         split_layer=cfg.split_layer,
     )
+
+    use_torchvision_init = args.use_torchvision_init.lower() == "true"
+    if use_torchvision_init and cfg.model_type == "resnet18_image_style":
+        wc_init, ws_init = load_torchvision_resnet18_init(
+            wc_init, ws_init, split_layer=cfg.split_layer or "layer2", image_style=True
+        )
     # Ensure they are on CPU first to save GPU memory during copy if needed,
     # but typically fine to init on device if memory allows.
     # Let's move to device after copy to be safe? No, let's keep it simple.

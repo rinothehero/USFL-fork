@@ -15,7 +15,7 @@ import random
 import numpy as np
 import datetime
 from typing import Dict
-from network import model_selection
+from network import model_selection, load_torchvision_resnet18_init
 from dataset import Dataset, Data_Partition
 from utils import (
     calculate_v_value,
@@ -113,6 +113,8 @@ USE_SFL_TRANSFORM = "--sfl-transform" in sys.argv
 USE_SFL_ORACLE = True
 if "--legacy-oracle" in sys.argv:
     USE_SFL_ORACLE = False
+
+USE_TORCHVISION_INIT = "--torchvision-init" in sys.argv
 
 # Simulate real communication environments
 WRTT = True  # True for simulation, False for no simulation
@@ -349,6 +351,10 @@ user_model, server_model = model_selection(
     split_layer=split_layer,
     split_alexnet=split_alexnet,
 )
+if USE_TORCHVISION_INIT and use_resnet_image_style:
+    user_model, server_model = load_torchvision_resnet18_init(
+        user_model, server_model, split_layer=split_layer or "layer2", image_style=True
+    )
 user_model.to(device)
 server_model.to(device)
 full_model = None
