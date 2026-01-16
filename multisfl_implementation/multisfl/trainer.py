@@ -446,7 +446,12 @@ class MultiSFLTrainer:
                     )
 
                     client_stats: ClientUpdateStats = main_client.apply_feature_grad(
-                        bc.model, bc.optimizer, cache, train_result.grad_f_main
+                        bc.model,
+                        bc.optimizer,
+                        cache,
+                        train_result.grad_f_main,
+                        clip_grad=self.cfg.clip_grad,
+                        clip_grad_max_norm=self.cfg.clip_grad_max_norm,
                     )
 
                     branch_grad_norm_sq += train_result.grad_norm_sq

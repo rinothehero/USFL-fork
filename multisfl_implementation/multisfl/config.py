@@ -55,6 +55,9 @@ class MultiSFLConfig:
     use_sfl_transform: bool = False
     oracle_mode: Literal["master", "branch"] = "master"
 
+    clip_grad: bool = False
+    clip_grad_max_norm: float = 10.0
+
     def __post_init__(self):
         if self.p_min <= 0:
             raise ValueError(

@@ -79,10 +79,14 @@ class MainServer:
         branch_server_states: List[BranchServerState],
         alpha: float,
         device: str = "cpu",
+        clip_grad: bool = False,
+        clip_grad_max_norm: float = 10.0,
     ):
         self.branches = branch_server_states
         self.alpha = alpha
         self.device = device
+        self.clip_grad = clip_grad
+        self.clip_grad_max_norm = clip_grad_max_norm
         self.master_state_dict: Optional[dict] = None
         self.criterion = nn.CrossEntropyLoss()
 
@@ -195,6 +199,11 @@ class MainServer:
         for p in ws.parameters():
             if p.grad is not None:
                 grad_norm_sq += float((p.grad.detach() ** 2).sum().item())
+
+        if self.clip_grad:
+            torch.nn.utils.clip_grad_norm_(
+                ws.parameters(), max_norm=self.clip_grad_max_norm
+            )
 
         opt.step()
 

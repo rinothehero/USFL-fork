@@ -109,6 +109,8 @@ class Client:
         opt_c: Any,
         cache: ForwardCache,
         grad_f: SplitOutput,
+        clip_grad: bool = False,
+        clip_grad_max_norm: float = 10.0,
     ) -> ClientUpdateStats:
         params_before = {n: p.clone() for n, p in w_c.named_parameters()}
 
@@ -125,6 +127,12 @@ class Client:
             if isinstance(grad_f, tuple):
                 raise ValueError("grad_f must be a tensor for tensor split output")
             f.backward(grad_f)
+
+        if clip_grad:
+            torch.nn.utils.clip_grad_norm_(
+                w_c.parameters(), max_norm=clip_grad_max_norm
+            )
+
         opt_c.step()
 
         update_norm_sq = 0.0

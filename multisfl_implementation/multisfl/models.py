@@ -1,4 +1,5 @@
 import copy
+from collections import OrderedDict
 import torch
 import torch.nn as nn
 import numpy as np
@@ -308,9 +309,25 @@ class AlexNetSplitClient(nn.Module):
 
 
 class AlexNetSplitServer(nn.Module):
-    def __init__(self, conv_layers: List[nn.Module], fc_layers: List[nn.Module]):
+    def __init__(
+        self,
+        conv_layers: List[nn.Module],
+        fc_layers: List[nn.Module],
+        conv_offset: Optional[int] = None,
+    ):
         super().__init__()
-        self.conv = nn.Sequential(*conv_layers) if conv_layers else nn.Identity()
+        if conv_layers:
+            if conv_offset is None:
+                self.conv = nn.Sequential(*conv_layers)
+            else:
+                self.conv = nn.Sequential(
+                    OrderedDict(
+                        (str(i + conv_offset), layer)
+                        for i, layer in enumerate(conv_layers)
+                    )
+                )
+        else:
+            self.conv = nn.Identity()
         self.fc = nn.Sequential(*fc_layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -362,7 +379,7 @@ def _build_alexnet_split_models(
     fc_layers = [copy.deepcopy(layer) for layer in full_model.fc.children()]
 
     return AlexNetSplitClient(client_layers), AlexNetSplitServer(
-        server_layers, fc_layers
+        server_layers, fc_layers, conv_offset=split_index + 1
     )
 
 

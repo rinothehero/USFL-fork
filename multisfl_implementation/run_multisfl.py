@@ -30,6 +30,17 @@ from multisfl.trainer import MultiSFLTrainer
 from multisfl.utils import set_seed
 
 
+def str_to_bool(value: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    value = value.strip().lower()
+    if value in {"true", "1", "yes", "y"}:
+        return True
+    if value in {"false", "0", "no", "n"}:
+        return False
+    raise argparse.ArgumentTypeError(f"Boolean value expected, got '{value}'")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="MultiSFL: Multi-model Split Federated Learning"
@@ -164,6 +175,19 @@ def parse_args() -> argparse.Namespace:
         help="Oracle computation mode (master or branch average)",
     )
 
+    parser.add_argument(
+        "--clip_grad",
+        type=str_to_bool,
+        default=False,
+        help="Enable gradient clipping for client/server updates",
+    )
+    parser.add_argument(
+        "--clip_grad_max_norm",
+        type=float,
+        default=10.0,
+        help="Max norm for gradient clipping",
+    )
+
     return parser.parse_args()
 
 
@@ -212,6 +236,8 @@ def main():
         use_variance_g=args.use_variance_g,
         use_sfl_transform=args.use_sfl_transform,
         oracle_mode=args.oracle_mode,
+        clip_grad=args.clip_grad,
+        clip_grad_max_norm=args.clip_grad_max_norm,
         min_samples_per_client=args.min_samples_per_client,
         max_assistant_trials_per_branch=args.max_assistant_trials,
     )
@@ -322,7 +348,11 @@ def main():
         branch_client_states, alpha=cfg.alpha_master_pull, device=cfg.device
     )
     main_server = MainServer(
-        branch_server_states, alpha=cfg.alpha_master_pull, device=cfg.device
+        branch_server_states,
+        alpha=cfg.alpha_master_pull,
+        device=cfg.device,
+        clip_grad=cfg.clip_grad,
+        clip_grad_max_norm=cfg.clip_grad_max_norm,
     )
 
     score_tracker = ScoreVectorTracker(
