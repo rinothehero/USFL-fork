@@ -129,9 +129,10 @@ class Client:
             f.backward(grad_f)
 
         if clip_grad:
-            torch.nn.utils.clip_grad_norm_(
+            pre_clip_norm = torch.nn.utils.clip_grad_norm_(
                 w_c.parameters(), max_norm=clip_grad_max_norm
             )
+            print(f"[Clip][Client] pre_norm={float(pre_clip_norm):.6f}")
 
         opt_c.step()
 

@@ -603,9 +603,10 @@ class GMeasurementSystem:
                 activation.backward(activation_detached.grad)
 
             if self.clip_grad:
-                torch.nn.utils.clip_grad_norm_(
+                pre_clip_norm = torch.nn.utils.clip_grad_norm_(
                     client_model.parameters(), max_norm=self.clip_grad_max_norm
                 )
+                print(f"[Clip][G][Client] pre_norm={float(pre_clip_norm):.6f}")
 
             current_client_grad = {
                 name: param.grad.clone().detach().cpu()
@@ -728,9 +729,10 @@ class GMeasurementSystem:
             loss.backward()
 
             if self.clip_grad:
-                torch.nn.utils.clip_grad_norm_(
+                pre_clip_norm = torch.nn.utils.clip_grad_norm_(
                     server_model.parameters(), max_norm=self.clip_grad_max_norm
                 )
+                print(f"[Clip][G][Server] pre_norm={float(pre_clip_norm):.6f}")
 
             current_server_grad = {
                 name: param.grad.clone().detach().cpu()
