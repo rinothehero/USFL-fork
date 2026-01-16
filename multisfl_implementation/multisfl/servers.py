@@ -195,15 +195,15 @@ class MainServer:
         else:
             grad_f_main_norm = float(torch.norm(grad_f_main).item())
 
-        grad_norm_sq = 0.0
-        for p in ws.parameters():
-            if p.grad is not None:
-                grad_norm_sq += float((p.grad.detach() ** 2).sum().item())
-
         if self.clip_grad:
             torch.nn.utils.clip_grad_norm_(
                 ws.parameters(), max_norm=self.clip_grad_max_norm
             )
+
+        grad_norm_sq = 0.0
+        for p in ws.parameters():
+            if p.grad is not None:
+                grad_norm_sq += float((p.grad.detach() ** 2).sum().item())
 
         opt.step()
 

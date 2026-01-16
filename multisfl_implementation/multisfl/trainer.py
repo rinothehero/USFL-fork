@@ -74,6 +74,8 @@ class MultiSFLTrainer:
                 device=cfg.device,
                 diagnostic_frequency=cfg.g_measure_frequency,
                 use_variance_g=cfg.use_variance_g,
+                clip_grad=cfg.clip_grad,
+                clip_grad_max_norm=cfg.clip_grad_max_norm,
             )
 
         self.B = cfg.num_branches or cfg.n_main_clients_per_round

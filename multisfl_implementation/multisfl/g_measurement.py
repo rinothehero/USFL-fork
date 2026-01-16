@@ -410,11 +410,15 @@ class GMeasurementSystem:
         device: str = "cpu",
         diagnostic_frequency: int = 10,
         use_variance_g: bool = False,
+        clip_grad: bool = False,
+        clip_grad_max_norm: float = 10.0,
     ):
         self.full_dataloader = full_dataloader
         self.device = device
         self.diagnostic_frequency = diagnostic_frequency
         self.use_variance_g = use_variance_g
+        self.clip_grad = clip_grad
+        self.clip_grad_max_norm = clip_grad_max_norm
 
         self.oracle_calculator = OracleCalculator(full_dataloader, device)
         self.oracle_client_grad: Optional[Dict[str, torch.Tensor]] = None
@@ -598,6 +602,11 @@ class GMeasurementSystem:
 
                 activation.backward(activation_detached.grad)
 
+            if self.clip_grad:
+                torch.nn.utils.clip_grad_norm_(
+                    client_model.parameters(), max_norm=self.clip_grad_max_norm
+                )
+
             current_client_grad = {
                 name: param.grad.clone().detach().cpu()
                 for name, param in client_model.named_parameters()
@@ -717,6 +726,11 @@ class GMeasurementSystem:
 
             loss = F.cross_entropy(logits, y_batch, reduction="mean")
             loss.backward()
+
+            if self.clip_grad:
+                torch.nn.utils.clip_grad_norm_(
+                    server_model.parameters(), max_norm=self.clip_grad_max_norm
+                )
 
             current_server_grad = {
                 name: param.grad.clone().detach().cpu()
