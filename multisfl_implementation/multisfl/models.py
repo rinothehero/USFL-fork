@@ -336,31 +336,46 @@ class AlexNetSplitServer(nn.Module):
         return self.fc(x)
 
 
+def _resolve_alexnet_conv_end_index(
+    conv_layers: List[nn.Module], conv_layer_number: int
+) -> int:
+    conv_indices = [
+        idx for idx, layer in enumerate(conv_layers) if isinstance(layer, nn.Conv2d)
+    ]
+    if not conv_indices:
+        raise ValueError("AlexNet conv layers not found")
+    if conv_layer_number < 1 or conv_layer_number > len(conv_indices):
+        raise ValueError(f"AlexNet conv layer number out of range: {conv_layer_number}")
+    conv_idx = conv_indices[conv_layer_number - 1]
+    next_conv_pos = None
+    for idx in conv_indices:
+        if idx > conv_idx:
+            next_conv_pos = idx
+            break
+    if next_conv_pos is None:
+        return len(conv_layers) - 1
+    return next_conv_pos - 1
+
+
 def _resolve_alexnet_split_index(
-    split_layer: Optional[str], default_index: int, total_layers: int
+    split_layer: Optional[str], default_conv_layer: int, conv_layers: List[nn.Module]
 ) -> int:
     if not split_layer:
-        return default_index
+        return _resolve_alexnet_conv_end_index(conv_layers, default_conv_layer)
 
     normalized = split_layer.strip().lower()
     if normalized in {"default", "conv2"}:
-        return default_index
+        return _resolve_alexnet_conv_end_index(conv_layers, default_conv_layer)
     if normalized in {"light", "conv1"}:
-        return min(2, total_layers - 1)
+        return _resolve_alexnet_conv_end_index(conv_layers, 1)
     if normalized.startswith("conv."):
         idx_str = normalized.split(".", 1)[1]
         if idx_str.isdigit():
-            idx = int(idx_str)
-            if 0 <= idx < total_layers:
-                return idx
-            raise ValueError(f"AlexNet split_layer index out of range: {split_layer}")
+            return _resolve_alexnet_conv_end_index(conv_layers, int(idx_str))
     if normalized.startswith("conv") and normalized[4:].isdigit():
-        idx = int(normalized[4:])
-        if 0 <= idx < total_layers:
-            return idx
-        raise ValueError(f"AlexNet split_layer index out of range: {split_layer}")
+        return _resolve_alexnet_conv_end_index(conv_layers, int(normalized[4:]))
     if normalized.startswith("layer"):
-        return default_index
+        return _resolve_alexnet_conv_end_index(conv_layers, default_conv_layer)
 
     raise ValueError(f"Unsupported AlexNet split_layer: {split_layer}")
 
@@ -1265,11 +1280,11 @@ def get_split_models(
         )
         conv_layers = list(base_model.conv.children())
         if model_type == "alexnet":
-            default_index = 5
+            default_conv_layer = 2
         else:
-            default_index = 5 if is_grayscale else 2
+            default_conv_layer = 2 if is_grayscale else 1
         split_index = _resolve_alexnet_split_index(
-            split_layer, default_index, len(conv_layers)
+            split_layer, default_conv_layer, conv_layers
         )
         return _build_alexnet_split_models(base_model, split_index)
 
