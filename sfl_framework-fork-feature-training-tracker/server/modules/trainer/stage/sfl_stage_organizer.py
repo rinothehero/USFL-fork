@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import evaluate
 import torch
 import torch.nn.functional as F
+from torch.utils.data import DataLoader
 
 from .base_stage_organizer import BaseStageOrganizer
 from .in_round.in_round import InRound
@@ -68,6 +69,18 @@ class SFLStageOrganizer(BaseStageOrganizer):
 
         self.server_models = []
 
+        self._dataset = dataset
+        self.g_measurement_system = None
+        if getattr(config, "enable_g_measurement", False):
+            diagnostic_rounds = getattr(config, "diagnostic_rounds", "1,3,5")
+            if isinstance(diagnostic_rounds, str):
+                diagnostic_rounds = [int(x) for x in diagnostic_rounds.split(",")]
+            self.g_measurement_system = GMeasurementSystem(
+                diagnostic_rounds=diagnostic_rounds,
+                device=config.device,
+                use_variance_g=getattr(config, "use_variance_g", False),
+            )
+
     async def _pre_round(self, round_number: int):
         await self.pre_round.wait_for_client_informations()
         await self.pre_round.wait_for_clients()
@@ -111,6 +124,50 @@ class SFLStageOrganizer(BaseStageOrganizer):
                 "end_timestamp": self.round_end_time,
             },
         )
+
+        if (
+            self.g_measurement_system is not None
+            and self.g_measurement_system.is_diagnostic_round(round_number)
+        ):
+            import psutil, os
+
+            process = psutil.Process(os.getpid())
+            mem_before_oracle = process.memory_info().rss / (1024**3)
+            print(
+                f"\n[G Measurement] === Round {round_number}: Computing Oracle === (mem={mem_before_oracle:.2f}GB)"
+            )
+
+            if self.g_measurement_system.oracle_calculator is None:
+                full_trainset = self._dataset.get_trainset()
+                full_trainloader = DataLoader(
+                    dataset=full_trainset,
+                    batch_size=self.config.batch_size,
+                    shuffle=False,
+                    drop_last=False,
+                )
+                self.g_measurement_system.initialize(full_trainloader)
+                print(
+                    f"[G Measurement] Oracle calculator initialized with {len(full_trainloader.dataset)} samples"
+                )
+
+            self.g_measurement_system.set_param_names(
+                self.split_models[0],
+                self.split_models[1],
+            )
+
+            full_model = self.model.get_torch_model().to(self.config.device)
+            self.g_measurement_system.compute_oracle_split_for_round(
+                self.split_models[0],
+                self.split_models[1],
+                full_model,
+                split_layer_name=self.config.split_layer,
+                config=self.config,
+            )
+
+            mem_after_oracle = process.memory_info().rss / (1024**3)
+            print(
+                f"[G Measurement] Oracle computed (mem={mem_after_oracle:.2f}GB, Δ={mem_after_oracle - mem_before_oracle:+.2f}GB)"
+            )
 
         await self.pre_round.send_customized_global_model(
             self.selected_clients,
@@ -161,9 +218,49 @@ class SFLStageOrganizer(BaseStageOrganizer):
                 output = await self.in_round.forward(
                     server_model, {"outputs": act_tensor, **activation}
                 )
-                grad, loss, _ = await self.in_round.backward_from_label(
-                    server_model, output, activation
+                is_diagnostic = (
+                    self.g_measurement_system is not None
+                    and self.g_measurement_system.is_diagnostic_round(round_number)
                 )
+
+                grad, loss, server_grad = await self.in_round.backward_from_label(
+                    server_model,
+                    output,
+                    activation,
+                    collect_server_grad=is_diagnostic,
+                )
+
+                if is_diagnostic and server_grad:
+                    batch_weight = len(activation["labels"])
+                    self.g_measurement_system.store_server_gradient(
+                        server_grad, batch_weight
+                    )
+                    if (
+                        self.g_measurement_system.split_g_tilde is None
+                        and grad is not None
+                    ):
+                        if isinstance(grad, tuple):
+                            split_grad = tuple(
+                                g.clone().detach().cpu() for g in grad if g is not None
+                            )
+                            split_grad = tuple(
+                                g.mean(dim=0) if g.dim() >= 1 else g for g in split_grad
+                            )
+                            self.g_measurement_system.split_g_tilde = split_grad
+                        else:
+                            split_grad = grad.clone().detach().cpu()
+                            if split_grad.dim() >= 1:
+                                self.g_measurement_system.split_g_tilde = (
+                                    split_grad.mean(dim=0)
+                                )
+                            else:
+                                self.g_measurement_system.split_g_tilde = split_grad
+                        print(
+                            f"[G Measurement] Split layer gradient collected (client={client_id})"
+                        )
+                    print(
+                        f"[G Measurement] Server gradient collected (client={client_id}, batch_size={batch_weight})"
+                    )
 
                 # 6) metric 계산을 위한 로직 (기존과 동일)
                 predicted = (
@@ -213,6 +310,89 @@ class SFLStageOrganizer(BaseStageOrganizer):
     async def _post_round(self, round_number: int):
         model_queue = self.global_dict.get("model_queue")
         model_queue.end_insert_mode()
+
+        if self.g_measurement_system is not None:
+            import psutil, os, gc, pickle
+
+            process = psutil.Process(os.getpid())
+            mem_before = process.memory_info().rss / (1024**3)
+
+            if self.g_measurement_system.is_diagnostic_round(round_number):
+                client_grads = {}
+                client_weights = {}
+                for item in model_queue.queue:
+                    if len(item) >= 3:
+                        client_id, model, num_samples = item[0], item[1], item[2]
+                        if (
+                            isinstance(num_samples, dict)
+                            and "client_gradient" in num_samples
+                        ):
+                            grad_hex = num_samples["client_gradient"]
+                            if isinstance(grad_hex, str):
+                                client_grads[client_id] = pickle.loads(
+                                    bytes.fromhex(grad_hex)
+                                )
+                            else:
+                                client_grads[client_id] = grad_hex
+                            del num_samples["client_gradient"]
+
+                        weight = None
+                        if isinstance(num_samples, dict):
+                            measurement_weight = num_samples.get(
+                                "measurement_gradient_weight"
+                            )
+                            if measurement_weight is not None:
+                                weight = measurement_weight
+                            else:
+                                augmented_counts = num_samples.get(
+                                    "augmented_label_counts", {}
+                                )
+                                if augmented_counts:
+                                    weight = sum(augmented_counts.values())
+                                else:
+                                    weight = num_samples.get("dataset_size", 0)
+                        else:
+                            weight = num_samples
+
+                        if weight is not None:
+                            client_weights[client_id] = float(weight)
+
+                if client_grads:
+                    self.g_measurement_system.client_g_tildes = client_grads
+                    if client_weights:
+                        sorted_sizes = [
+                            int(client_weights[cid])
+                            for cid in sorted(client_weights.keys())
+                        ]
+                        print(
+                            "[G Measurement] Collected gradients from "
+                            f"{len(client_grads)} clients (batch_sizes={sorted_sizes})"
+                        )
+                    else:
+                        print(
+                            f"[G Measurement] Collected gradients from {len(client_grads)} clients"
+                        )
+
+                result = self.g_measurement_system.compute_g(
+                    round_number, client_weights=client_weights
+                )
+                if result:
+                    self.global_dict.add_event("G_MEASUREMENT", result.to_dict())
+                    print(f"[G Measurement] Round {round_number} G computed and logged")
+
+            self.g_measurement_system.clear_round_data()
+            gc.collect()
+
+            mem_after = process.memory_info().rss / (1024**3)
+            print(
+                f"[G Measurement] Memory: {mem_before:.2f}GB → {mem_after:.2f}GB (freed {mem_before - mem_after:.2f}GB)"
+            )
+
+        for item in model_queue.queue:
+            if len(item) >= 3:
+                num_samples = item[2]
+                if isinstance(num_samples, dict) and "client_gradient" in num_samples:
+                    del num_samples["client_gradient"]
 
         client_ids = [model[0] for model in model_queue.queue]
         self.global_dict.add_event(
