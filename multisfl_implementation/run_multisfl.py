@@ -296,7 +296,7 @@ def main():
             args.num_clients,
             args.num_classes,
             alpha=args.alpha_dirichlet,
-            shards_per_client=args.shards,
+            shards=args.shards,
             seed=args.seed,
             min_samples_per_client=args.min_samples_per_client,
         )
