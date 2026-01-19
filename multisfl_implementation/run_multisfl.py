@@ -247,6 +247,131 @@ def main():
         use_full_epochs=args.use_full_epochs,
     )
 
+    # Data Partitioning
+    if args.dataset == "synthetic":
+        train_data = SyntheticImageDataset(
+            args.synthetic_train_size, args.num_classes, seed=args.seed
+        )
+        test_data = SyntheticImageDataset(
+            args.synthetic_test_size, args.num_classes, seed=args.seed + 1
+        )
+        test_loader = get_synthetic_test_loader(test_data, args.batch_size)
+    elif args.dataset == "cifar10":
+        train_data = CIFAR10Dataset(
+            root=args.data_root,
+            train=True,
+            augment=True,
+            use_sfl_transform=args.use_sfl_transform,
+        )
+        test_loader = get_cifar10_test_loader(
+            root=args.data_root,
+            batch_size=args.batch_size,
+            use_sfl_transform=args.use_sfl_transform,
+        )
+    elif args.dataset == "fmnist":
+        train_data = FashionMNISTDataset(root=args.data_root, train=True, augment=True)
+        test_loader = get_fmnist_test_loader(
+            root=args.data_root, batch_size=args.batch_size
+        )
+    else:
+        raise ValueError(f"Unknown dataset: {args.dataset}")
+
+    print(f"Partitioning data: {args.partition}")
+    if args.partition == "iid":
+        client_data_list = partition_iid(
+            train_data, args.num_clients, args.num_classes, seed=args.seed
+        )
+    elif args.partition == "dirichlet":
+        client_data_list = partition_dirichlet(
+            train_data,
+            args.num_clients,
+            args.num_classes,
+            alpha=args.alpha_dirichlet,
+            seed=args.seed,
+            min_samples_per_client=args.min_samples_per_client,
+        )
+    elif args.partition == "shard_dirichlet":
+        client_data_list = partition_shard_dirichlet(
+            train_data,
+            args.num_clients,
+            args.num_classes,
+            alpha=args.alpha_dirichlet,
+            shards_per_client=args.shards,
+            seed=args.seed,
+            min_samples_per_client=args.min_samples_per_client,
+        )
+    else:
+        raise ValueError(f"Unknown partition method: {args.partition}")
+
+    print_partition_stats(client_data_list)
+
+    # Create Client instances
+    clients = []
+    for cid, client_data in enumerate(client_data_list):
+        client = Client(
+            client_id=cid,
+            dataset=client_data.dataset,
+            num_classes=num_classes,
+            class_to_indices=client_data.class_to_indices,
+            device=device,
+        )
+        clients.append(client)
+
+    # Initialize Replay Components
+    score_tracker = ScoreVectorTracker(
+        num_branches=cfg.num_branches,
+        num_classes=cfg.num_classes,
+        gamma=cfg.gamma,
+        device=cfg.device,
+    )
+
+    planner = KnowledgeRequestPlanner(
+        num_classes=cfg.num_classes,
+        min_samples=cfg.min_samples_per_client,
+    )
+
+    scheduler = SamplingProportionScheduler(
+        p0=cfg.p0,
+        p_min=cfg.p_min,
+        p_max=cfg.p_max,
+        mode=cfg.p_update,
+        delta_clip=cfg.delta_clip,
+        eps=cfg.eps,
+    )
+
+    # Initialize Models & Servers
+    wc_init, ws_init = get_split_models(
+        cfg.model_type, cfg.dataset, cfg.num_classes, cfg.split_layer
+    )
+
+    if cfg.use_torchvision_init and cfg.model_type == "resnet18_image_style":
+        print("[Init] Loading torchvision ResNet18 weights...")
+        wc_init, ws_init = load_torchvision_resnet18_init(
+            wc_init, ws_init, split_layer=cfg.split_layer or "layer1", image_style=True
+        )
+
+    branch_client_states = []
+    branch_server_states = []
+
+    for b in range(cfg.num_branches):
+        wc = copy.deepcopy(wc_init).to(device)
+        ws = copy.deepcopy(ws_init).to(device)
+
+        opt_c = optim.SGD(wc.parameters(), lr=cfg.lr_client, momentum=cfg.momentum)
+        opt_s = optim.SGD(ws.parameters(), lr=cfg.lr_server, momentum=cfg.momentum)
+
+        branch_client_states.append(BranchClientState(wc, opt_c))
+        branch_server_states.append(BranchServerState(ws, opt_s))
+
+    fed = FedServer(branch_client_states, cfg.alpha_master_pull, device=device)
+    main_server = MainServer(
+        branch_server_states,
+        cfg.alpha_master_pull,
+        device=device,
+        clip_grad=cfg.clip_grad,
+        clip_grad_max_norm=cfg.clip_grad_max_norm,
+    )
+
     trainer = MultiSFLTrainer(
         cfg=cfg,
         clients=clients,

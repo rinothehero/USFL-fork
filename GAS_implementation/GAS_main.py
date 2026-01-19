@@ -453,6 +453,10 @@ if WRTT is True:
         if use_full_epochs:
             # users_data[i] is a DataLoader, len() gives number of batches
             client_steps = len(users_data[i]) * localEpoch
+            if i == 0:  # Print log only for the first client
+                print(
+                    f"[GAS][Client {i}] Configured for full epochs: {localEpoch} epochs * {len(users_data[i])} batches = {client_steps} iterations"
+                )
         else:
             client_steps = localEpoch
 
@@ -471,10 +475,15 @@ else:
     for i in range(user_num):
         if use_full_epochs:
             client_steps = len(users_data[i]) * localEpoch
+            if i == 0:
+                print(
+                    f"[GAS][Client {i}] Configured for full epochs: {localEpoch} epochs * {len(users_data[i])} batches = {client_steps} iterations"
+                )
         else:
             client_steps = localEpoch
 
         clients.append(Client(users_data[i], client_steps))
+
 stats = IncrementalStats(
     device=device, diagonal=use_resnet
 )  # ResNet uses diagonal, AlexNet uses full covariance

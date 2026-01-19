@@ -325,6 +325,10 @@ class MultiSFLTrainer:
                     if n_batches < 1:
                         n_batches = 1
                     steps_to_run = n_batches * self.cfg.local_steps
+                    if local_step == 0:
+                        print(
+                            f"[MultiSFL][Client {client_id}] Running full epochs: {self.cfg.local_steps} epochs * {n_batches} batches = {steps_to_run} steps"
+                        )
 
                 for local_step in range(steps_to_run):
                     f_main, y_main, label_dist, cache, base_count_batch = (
