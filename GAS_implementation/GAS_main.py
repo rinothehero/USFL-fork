@@ -140,6 +140,11 @@ torch.cuda.manual_seed(seed_value)
 torch.cuda.manual_seed_all(seed_value)
 clip_grad = True
 
+# Feature: Use Full Epochs (like sfl-framework)
+use_full_epochs = _env_bool("GAS_USE_FULL_EPOCHS", False)
+if "--use-full-epochs" in sys.argv:
+    use_full_epochs = True
+
 # Hyperparameter Setting of GAS
 Generate = True  # Whether to generate activations
 Sample_Frequency = 1  # Sampling frequency
@@ -442,12 +447,34 @@ criterion = nn.CrossEntropyLoss()
 
 # Initialize clients
 if WRTT is True:
-    clients = [
-        Client(users_data[i], localEpoch, batchSize, clients_computing[i], rates[i], 0)
-        for i in range(user_num)
-    ]
+    clients = []
+    for i in range(user_num):
+        # Determine client steps: full epochs or fixed local iteration count
+        if use_full_epochs:
+            # users_data[i] is a DataLoader, len() gives number of batches
+            client_steps = len(users_data[i]) * localEpoch
+        else:
+            client_steps = localEpoch
+
+        clients.append(
+            Client(
+                users_data[i],
+                client_steps,
+                batchSize,
+                clients_computing[i],
+                rates[i],
+                0,
+            )
+        )
 else:
-    clients = [Client(users_data[i], localEpoch) for i in range(user_num)]
+    clients = []
+    for i in range(user_num):
+        if use_full_epochs:
+            client_steps = len(users_data[i]) * localEpoch
+        else:
+            client_steps = localEpoch
+
+        clients.append(Client(users_data[i], client_steps))
 stats = IncrementalStats(
     device=device, diagonal=use_resnet
 )  # ResNet uses diagonal, AlexNet uses full covariance

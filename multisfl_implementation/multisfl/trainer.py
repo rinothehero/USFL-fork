@@ -317,7 +317,16 @@ class MultiSFLTrainer:
                 branch_trials = 0
                 q_remaining: Optional[np.ndarray] = None
 
-                for local_step in range(self.cfg.local_steps):
+                # Determine actual steps to run (fixed steps vs full epochs)
+                steps_to_run = self.cfg.local_steps
+                if self.cfg.use_full_epochs:
+                    # Calculate steps per epoch = floor(dataset_size / batch_size)
+                    n_batches = len(main_client.dataset) // self.cfg.batch_size
+                    if n_batches < 1:
+                        n_batches = 1
+                    steps_to_run = n_batches * self.cfg.local_steps
+
+                for local_step in range(steps_to_run):
                     f_main, y_main, label_dist, cache, base_count_batch = (
                         main_client.forward_main(bc.model, self.cfg.batch_size)
                     )
@@ -461,16 +470,11 @@ class MultiSFLTrainer:
                     branch_server_update_norm += train_result.server_param_update_norm
                     branch_client_update_norm += client_stats.param_update_norm
 
-                grad_norm_sq_list.append(branch_grad_norm_sq / self.cfg.local_steps)
-                grad_f_main_norm_list.append(
-                    branch_grad_f_main_norm / self.cfg.local_steps
-                )
-                server_update_norm_list.append(
-                    branch_server_update_norm / self.cfg.local_steps
-                )
-                client_update_norm_list.append(
-                    branch_client_update_norm / self.cfg.local_steps
-                )
+                # Normalize by actual steps run
+                grad_norm_sq_list.append(branch_grad_norm_sq / steps_to_run)
+                grad_f_main_norm_list.append(branch_grad_f_main_norm / steps_to_run)
+                server_update_norm_list.append(branch_server_update_norm / steps_to_run)
+                client_update_norm_list.append(branch_client_update_norm / steps_to_run)
                 requested_total += branch_requested
                 collected_total += branch_collected
                 trials_total += branch_trials

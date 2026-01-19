@@ -15,6 +15,7 @@ class MultiSFLConfig:
 
     batch_size: int = 64
     min_samples_per_client: int = 10
+    use_full_epochs: bool = False
     local_steps: int = 5
     lr_client: float = 0.01
     lr_server: float = 0.01

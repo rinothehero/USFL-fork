@@ -71,6 +71,11 @@ def parse_args() -> argparse.Namespace:
         default=10,
         help="Minimum samples per client for partitioning",
     )
+    parser.add_argument(
+        "--use-full-epochs",
+        action="store_true",
+        help="Use full epochs (dataset iteration) instead of fixed steps for local training",
+    )
     parser.add_argument("--data_root", type=str, default="./data")
 
     parser.add_argument("--rounds", type=int, default=50)
@@ -239,134 +244,7 @@ def main():
         clip_grad=args.clip_grad,
         clip_grad_max_norm=args.clip_grad_max_norm,
         min_samples_per_client=args.min_samples_per_client,
-        max_assistant_trials_per_branch=args.max_assistant_trials,
-    )
-
-    print(f"\nLoading dataset: {args.dataset}")
-    if args.dataset == "cifar10":
-        train_dataset = CIFAR10Dataset(
-            root=args.data_root,
-            train=True,
-            augment=True,
-            download=True,
-            use_sfl_transform=cfg.use_sfl_transform,
-        )
-        test_loader = get_cifar10_test_loader(
-            batch_size=128, root=args.data_root, use_sfl_transform=cfg.use_sfl_transform
-        )
-    elif args.dataset == "fmnist":
-        train_dataset = FashionMNISTDataset(
-            root=args.data_root, train=True, augment=True, download=True
-        )
-        test_loader = get_fmnist_test_loader(batch_size=128, root=args.data_root)
-    else:
-        train_dataset = SyntheticImageDataset(
-            n=args.synthetic_train_size, num_classes=cfg.num_classes, seed=cfg.seed
-        )
-        test_loader = get_synthetic_test_loader(
-            n=args.synthetic_test_size,
-            num_classes=cfg.num_classes,
-            batch_size=128,
-            seed=cfg.seed + 1,
-        )
-
-    print(f"Partitioning data: {args.partition}")
-    if args.partition == "dirichlet":
-        client_datas = partition_dirichlet(
-            train_dataset,
-            num_clients=cfg.num_clients_total,
-            num_classes=cfg.num_classes,
-            alpha=args.alpha_dirichlet,
-            seed=cfg.seed,
-            min_samples_per_client=cfg.min_samples_per_client,
-        )
-    elif args.partition == "shard_dirichlet":
-        client_datas = partition_shard_dirichlet(
-            train_dataset,
-            num_clients=cfg.num_clients_total,
-            num_classes=cfg.num_classes,
-            shards=args.shards,
-            alpha=args.alpha_dirichlet,
-            seed=cfg.seed,
-            min_samples_per_client=cfg.min_samples_per_client,
-        )
-    else:
-        client_datas = partition_iid(
-            train_dataset,
-            num_clients=cfg.num_clients_total,
-            num_classes=cfg.num_classes,
-            seed=cfg.seed,
-        )
-
-    print_partition_stats(client_datas, num_classes=cfg.num_classes)
-
-    clients = [
-        Client(
-            cd.client_id,
-            cd.dataset,
-            cfg.num_classes,
-            class_to_indices=cd.class_to_indices,
-            device=cfg.device,
-        )
-        for cd in client_datas
-    ]
-
-    B = cfg.num_branches or cfg.n_main_clients_per_round
-    print(f"\nInitializing {B} branch models ({cfg.model_type})...")
-
-    wc_init, ws_init = get_split_models(
-        model_type=cfg.model_type,
-        dataset=args.dataset,
-        num_classes=cfg.num_classes,
-        split_layer=cfg.split_layer,
-    )
-
-    use_torchvision_init = args.use_torchvision_init.lower() == "true"
-    if use_torchvision_init and cfg.model_type == "resnet18_image_style":
-        wc_init, ws_init = load_torchvision_resnet18_init(
-            wc_init, ws_init, split_layer=cfg.split_layer or "layer2", image_style=True
-        )
-    # Ensure they are on CPU first to save GPU memory during copy if needed,
-    # but typically fine to init on device if memory allows.
-    # Let's move to device after copy to be safe? No, let's keep it simple.
-
-    branch_client_states = []
-    branch_server_states = []
-
-    for _ in range(B):
-        # Create deep copy of the initialized weights
-        wc = copy.deepcopy(wc_init).to(cfg.device)
-        ws = copy.deepcopy(ws_init).to(cfg.device)
-
-        opt_c = optim.SGD(wc.parameters(), lr=cfg.lr_client, momentum=cfg.momentum)
-        opt_s = optim.SGD(ws.parameters(), lr=cfg.lr_server, momentum=cfg.momentum)
-
-        branch_client_states.append(BranchClientState(model=wc, optimizer=opt_c))
-        branch_server_states.append(BranchServerState(model=ws, optimizer=opt_s))
-
-    fed = FedServer(
-        branch_client_states, alpha=cfg.alpha_master_pull, device=cfg.device
-    )
-    main_server = MainServer(
-        branch_server_states,
-        alpha=cfg.alpha_master_pull,
-        device=cfg.device,
-        clip_grad=cfg.clip_grad,
-        clip_grad_max_norm=cfg.clip_grad_max_norm,
-    )
-
-    score_tracker = ScoreVectorTracker(
-        num_branches=B, num_classes=cfg.num_classes, gamma=cfg.gamma
-    )
-    planner = KnowledgeRequestPlanner(num_classes=cfg.num_classes)
-    scheduler = SamplingProportionScheduler(
-        p0=cfg.p0,
-        p_min=cfg.p_min,
-        p_max=cfg.p_max,
-        eps=cfg.eps,
-        mode=cfg.p_update,
-        delta_clip=cfg.delta_clip,
-        verbose=True,
+        use_full_epochs=args.use_full_epochs,
     )
 
     trainer = MultiSFLTrainer(
