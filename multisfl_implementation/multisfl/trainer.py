@@ -321,12 +321,13 @@ class MultiSFLTrainer:
                 steps_to_run = self.cfg.local_steps
                 if self.cfg.use_full_epochs:
                     # Calculate steps per epoch = floor(dataset_size / batch_size)
-                    n_batches = len(main_client.dataset) // self.cfg.batch_size
+                    dataset_size = len(main_client.dataset)
+                    n_batches = dataset_size // self.cfg.batch_size
                     if n_batches < 1:
                         n_batches = 1
                     steps_to_run = n_batches * self.cfg.local_steps
                     print(
-                        f"[MultiSFL][Client {client_id}] Running full epochs: {self.cfg.local_steps} epochs * {n_batches} batches = {steps_to_run} steps"
+                        f"[MultiSFL][Client {client_id}] data={dataset_size}, batch={self.cfg.batch_size}, batches={n_batches}, epochs={self.cfg.local_steps}, steps={steps_to_run}"
                     )
 
                 for local_step in range(steps_to_run):
