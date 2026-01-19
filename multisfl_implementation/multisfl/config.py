@@ -54,6 +54,7 @@ class MultiSFLConfig:
     g_measure_frequency: int = 10
     use_variance_g: bool = False
     use_sfl_transform: bool = False
+    use_torchvision_init: bool = False
     oracle_mode: Literal["master", "branch"] = "master"
 
     clip_grad: bool = False

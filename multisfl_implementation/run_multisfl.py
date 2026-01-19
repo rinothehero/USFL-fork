@@ -232,14 +232,16 @@ def main():
         eps=args.eps,
         replay_budget_mode=args.replay_budget_mode,
         replay_min_total=args.replay_min_total,
+        max_assistant_trials_per_branch=args.max_assistant_trials,
         p_update=args.p_update,
         delta_clip=args.delta_clip,
         model_type=args.model_type,
         split_layer=args.split_layer,
-        enable_g_measurement=args.enable_g_measurement,
+        enable_g_measurement=str_to_bool(args.enable_g_measurement),
         g_measure_frequency=args.g_measure_frequency,
-        use_variance_g=args.use_variance_g,
-        use_sfl_transform=args.use_sfl_transform,
+        use_variance_g=str_to_bool(args.use_variance_g),
+        use_sfl_transform=str_to_bool(args.use_sfl_transform),
+        use_torchvision_init=str_to_bool(args.use_torchvision_init),
         oracle_mode=args.oracle_mode,
         clip_grad=args.clip_grad,
         clip_grad_max_norm=args.clip_grad_max_norm,
@@ -318,8 +320,9 @@ def main():
         clients.append(client)
 
     # Initialize Replay Components
+    num_branches = cfg.num_branches or cfg.n_main_clients_per_round
     score_tracker = ScoreVectorTracker(
-        num_branches=cfg.num_branches,
+        num_branches=num_branches,
         num_classes=cfg.num_classes,
         gamma=cfg.gamma,
     )
@@ -339,7 +342,7 @@ def main():
 
     # Initialize Models & Servers
     wc_init, ws_init = get_split_models(
-        cfg.model_type, cfg.dataset, cfg.num_classes, cfg.split_layer
+        cfg.model_type, args.dataset, cfg.num_classes, cfg.split_layer
     )
 
     if cfg.use_torchvision_init and cfg.model_type == "resnet18_image_style":
@@ -351,7 +354,7 @@ def main():
     branch_client_states = []
     branch_server_states = []
 
-    for b in range(cfg.num_branches):
+    for b in range(num_branches):
         wc = copy.deepcopy(wc_init).to(device)
         ws = copy.deepcopy(ws_init).to(device)
 
