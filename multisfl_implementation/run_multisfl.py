@@ -322,12 +322,10 @@ def main():
         num_branches=cfg.num_branches,
         num_classes=cfg.num_classes,
         gamma=cfg.gamma,
-        device=cfg.device,
     )
 
     planner = KnowledgeRequestPlanner(
         num_classes=cfg.num_classes,
-        min_samples=cfg.min_samples_per_client,
     )
 
     scheduler = SamplingProportionScheduler(
