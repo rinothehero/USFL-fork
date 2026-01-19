@@ -31,7 +31,6 @@ class ResnetPropagator(BasePropagator):
     def forward(
         self, x: torch.Tensor, params: dict = None
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-
         for layer_name, layer in self.model.items():
             split_name = (
                 layer_name.split("-")[-2] + layer_name.split("-")[-1]
@@ -81,7 +80,14 @@ class ResnetPropagator(BasePropagator):
         self, layer: torch.nn.BatchNorm2d, input_info: Tuple[torch.Tensor, torch.Tensor]
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         x, identity = input_info
-        output = layer(x)
+        if x.size(0) < 2:
+            was_training = layer.training
+            layer.eval()
+            output = layer(x)
+            if was_training:
+                layer.train()
+        else:
+            output = layer(x)
 
         return output, identity
 
@@ -108,7 +114,14 @@ class ResnetPropagator(BasePropagator):
         self, layer: torch.nn.BatchNorm2d, input_info: Tuple[torch.Tensor, torch.Tensor]
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         x, identity = input_info
-        output = layer(x)
+        if x.size(0) < 2:
+            was_training = layer.training
+            layer.eval()
+            output = layer(x)
+            if was_training:
+                layer.train()
+        else:
+            output = layer(x)
 
         return output, identity
 
