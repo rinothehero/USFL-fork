@@ -1,6 +1,7 @@
 import argparse
 import re
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass
@@ -90,6 +91,7 @@ class ServerConfig:
     enable_g_measurement: bool  # Enable gradient dissimilarity (G) measurement
     diagnostic_rounds: str  # Comma-separated list of rounds to run G measurement
     use_variance_g: bool
+    oracle_batch_size: Optional[int]
     # FitFL
     max_pruning_ratio: int  # Maximum pruning ratio.
     # FitFL
