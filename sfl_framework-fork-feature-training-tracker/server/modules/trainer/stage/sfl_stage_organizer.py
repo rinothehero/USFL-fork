@@ -230,7 +230,11 @@ class SFLStageOrganizer(BaseStageOrganizer):
                     collect_server_grad=is_diagnostic,
                 )
 
-                if is_diagnostic and server_grad:
+                if (
+                    is_diagnostic
+                    and server_grad
+                    and not self.g_measurement_system.server_g_tildes
+                ):
                     batch_weight = len(activation["labels"])
                     self.g_measurement_system.store_server_gradient(
                         server_grad, batch_weight
