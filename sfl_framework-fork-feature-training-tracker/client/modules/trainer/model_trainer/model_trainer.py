@@ -35,6 +35,10 @@ def get_model_trainer(
         return SFLModelTrainer(
             config, server_config, dataset, model, training_params, api
         )
+    elif server_config.method == "mix2sfl":
+        return USFLModelTrainer(
+            config, server_config, dataset, model, training_params, api
+        )
     elif server_config.method == "sflprox":
         return SFLProxModelTrainer(
             config, server_config, dataset, model, training_params, api

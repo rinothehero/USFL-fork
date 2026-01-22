@@ -1,6 +1,7 @@
 import argparse
 import re
 from dataclasses import dataclass
+from typing import Optional
 
 
 def validate_device(value):
@@ -57,6 +58,7 @@ class Config:
         - 'sfl'  : Split Federated Learning (Client -> Server training flow).
         - 'sfl-u': Split Federated Learning with label distribution privacy (Client -> Server -> Client training flow).
         - 'fitfl': FitFL-Accurate and Fast Federated Learning by Hybrid Scaling
+        - 'mix2sfl': Mix2SFL (SmashMix + GradMix on Parallel SL)
     """
     criterion: str  # Loss function (e.g., 'ce' for CrossEntropy, 'mse' for Mean Squared Error).
     optimizer: str  # Optimizer to use (e.g., 'sgd', 'adam').
@@ -134,6 +136,15 @@ class Config:
     )
     balancing_strategy: str  # "trimming" | "replication" | "target" (hybrid)
     balancing_target: str  # For target strategy: "mean" | "median" | fixed number
+    # Mix2SFL
+    mix2sfl_smashmix_enabled: bool
+    mix2sfl_smashmix_ns_ratio: float
+    mix2sfl_smashmix_lambda_dist: str
+    mix2sfl_smashmix_beta_alpha: float
+    mix2sfl_gradmix_enabled: bool
+    mix2sfl_gradmix_phi: float
+    mix2sfl_gradmix_reduce: str
+    mix2sfl_gradmix_cprime_selection: str
 
     # ==================
     #  GLUE DATASET OPTIONS
@@ -168,6 +179,7 @@ class Config:
         str  # Comma-separated list of rounds to run G measurement (e.g., "1,3,5")
     )
     use_variance_g: bool
+    oracle_batch_size: Optional[int]
 
     # ==================
     #  MISSING CLASS SELECTOR OPTIONS
@@ -290,6 +302,7 @@ def parse_args(custom_args=None):
             "fedcbs",
             "sflprox",
             "cl",
+            "mix2sfl",
         ],
         required=True,
     )
@@ -918,6 +931,86 @@ def parse_args(custom_args=None):
         required=False,
     )
 
+    parser.add_argument(
+        "--mix2sfl-smashmix-enabled",
+        help="Enable SmashMix for mix2sfl",
+        action="store",
+        type=str_to_bool,
+        dest="mix2sfl_smashmix_enabled",
+        default=True,
+        required=False,
+    )
+
+    parser.add_argument(
+        "--mix2sfl-smashmix-ns-ratio",
+        help="SmashMix partner ratio per step (ns = floor(|C| * ratio))",
+        action="store",
+        type=float,
+        dest="mix2sfl_smashmix_ns_ratio",
+        default=0.2,
+        required=False,
+    )
+
+    parser.add_argument(
+        "--mix2sfl-smashmix-lambda-dist",
+        help="Lambda distribution for SmashMix (uniform or beta)",
+        action="store",
+        type=str,
+        dest="mix2sfl_smashmix_lambda_dist",
+        default="uniform",
+        required=False,
+    )
+
+    parser.add_argument(
+        "--mix2sfl-smashmix-beta-alpha",
+        help="Alpha for beta distribution when SmashMix lambda_dist=beta",
+        action="store",
+        type=float,
+        dest="mix2sfl_smashmix_beta_alpha",
+        default=1.0,
+        required=False,
+    )
+
+    parser.add_argument(
+        "--mix2sfl-gradmix-enabled",
+        help="Enable GradMix for mix2sfl",
+        action="store",
+        type=str_to_bool,
+        dest="mix2sfl_gradmix_enabled",
+        default=True,
+        required=False,
+    )
+
+    parser.add_argument(
+        "--mix2sfl-gradmix-phi",
+        help="GradMix ratio phi (|C'|/|C|)",
+        action="store",
+        type=float,
+        dest="mix2sfl_gradmix_phi",
+        default=0.5,
+        required=False,
+    )
+
+    parser.add_argument(
+        "--mix2sfl-gradmix-reduce",
+        help="GradMix reduction for C' (sum or mean)",
+        action="store",
+        type=str,
+        dest="mix2sfl_gradmix_reduce",
+        default="sum",
+        required=False,
+    )
+
+    parser.add_argument(
+        "--mix2sfl-gradmix-cprime-selection",
+        help="GradMix C' selection strategy",
+        action="store",
+        type=str,
+        dest="mix2sfl_gradmix_cprime_selection",
+        default="random_each_step",
+        required=False,
+    )
+
     # G Measurement Options
     parser.add_argument(
         "--enable-g-measurement",
@@ -937,6 +1030,14 @@ def parse_args(custom_args=None):
         help="Use variance-based G measurement",
         action="store_true",
         dest="use_variance_g",
+    )
+    parser.add_argument(
+        "--oracle-batch-size",
+        help="Batch size for oracle gradient calculation (default: training batch size)",
+        action="store",
+        type=int,
+        dest="oracle_batch_size",
+        default=None,
     )
 
     parser.set_defaults(networking_fairness=True)

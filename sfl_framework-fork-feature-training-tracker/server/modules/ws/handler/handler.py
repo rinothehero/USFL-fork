@@ -31,6 +31,8 @@ def get_handler(
         return SFLHandler(config, global_dict)
     elif config.method == "sfl-u":
         return SFLHandler(config, global_dict)
+    elif config.method == "mix2sfl":
+        return SFLHandler(config, global_dict)
     elif config.method in ["scala", "usfl", "sflprox"]:
         return ScalaHandler(config, global_dict)
     else:

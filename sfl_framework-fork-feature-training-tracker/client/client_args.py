@@ -35,6 +35,7 @@ class ServerConfig:
         - 'sfl'  : Split Federated Learning (Client -> Server training flow).
         - 'sfl-u': Split Federated Learning with label distribution privacy (Client -> Server -> Client training flow).
         - 'fitfl': FitFL-Accurate and Fast Federated Learning by Hybrid Scaling
+        - 'mix2sfl': Mix2SFL (SmashMix + GradMix on Parallel SL)
     """
     criterion: str  # Loss function (e.g., 'ce' for CrossEntropy, 'mse' for Mean Squared Error).
     optimizer: str  # Optimizer to use (e.g., 'sgd', 'adam').
@@ -62,6 +63,14 @@ class ServerConfig:
     use_data_replication: bool
     balancing_strategy: str
     balancing_target: str
+    mix2sfl_smashmix_enabled: bool
+    mix2sfl_smashmix_ns_ratio: float
+    mix2sfl_smashmix_lambda_dist: str
+    mix2sfl_smashmix_beta_alpha: float
+    mix2sfl_gradmix_enabled: bool
+    mix2sfl_gradmix_phi: float
+    mix2sfl_gradmix_reduce: str
+    mix2sfl_gradmix_cprime_selection: str
 
     # ==================
     #       PATHS

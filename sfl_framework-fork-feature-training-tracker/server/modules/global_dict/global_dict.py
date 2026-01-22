@@ -88,7 +88,7 @@ class GlobalDict:
         parts.append(f"agg-{self.config.aggregator}")
 
         # Add split info for SFL methods
-        if self.config.method in ["sfl", "sfl-u", "usfl", "scala"]:
+        if self.config.method in ["sfl", "sfl-u", "usfl", "scala", "mix2sfl"]:
             split_ratio_str = "-".join(str(r) for r in self.config.split_ratio)
             parts.append(f"split-{split_ratio_str}")
 

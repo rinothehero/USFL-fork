@@ -115,6 +115,29 @@ def _validate_sfl_parameters(config: "Config"):
             )
 
 
+def _validate_mix2sfl_parameters(config: "Config"):
+    if config.method != "mix2sfl":
+        return
+
+    vision_datasets = ["cifar10", "cifar100", "mnist", "fmnist"]
+    if config.dataset not in vision_datasets:
+        raise ValueError("mix2sfl supports vision datasets only")
+
+    if config.use_dynamic_batch_scheduler:
+        raise ValueError("mix2sfl does not support the dynamic batch scheduler")
+
+    if config.server_model_aggregation:
+        raise ValueError("mix2sfl requires server_model_aggregation to be false")
+
+    if config.split_strategy is None:
+        raise ValueError("Split strategy is required when using the 'mix2sfl' method")
+
+    if len(config.split_ratio) != 1:
+        raise ValueError(
+            f"The 'mix2sfl' method requires a split_ratio with exactly 1 value (have {len(config.split_ratio)})"
+        )
+
+
 def _validate_fitfl_parameters(config: "Config"):
     if config.method == "fitfl":
         if config.max_pruning_ratio is None:
@@ -274,6 +297,7 @@ def validate_config(config: "Config"):
     _validate_distributer(config)
 
     _validate_sfl_parameters(config)
+    _validate_mix2sfl_parameters(config)
     _validate_fitfl_parameters(config)
     _validate_prunefl_parameters(config)
     _validate_fedsparsify_parameters(config)

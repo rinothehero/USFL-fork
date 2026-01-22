@@ -139,9 +139,12 @@ class SFLStageOrganizer(BaseStageOrganizer):
 
             if self.g_measurement_system.oracle_calculator is None:
                 full_trainset = self._dataset.get_trainset()
+                oracle_batch_size = self.config.oracle_batch_size
                 full_trainloader = DataLoader(
                     dataset=full_trainset,
-                    batch_size=self.config.batch_size,
+                    batch_size=oracle_batch_size
+                    if oracle_batch_size is not None
+                    else self.config.batch_size,
                     shuffle=False,
                     drop_last=False,
                 )

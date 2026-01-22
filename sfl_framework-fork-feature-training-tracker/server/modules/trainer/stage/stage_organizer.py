@@ -4,6 +4,7 @@ from .cl_stage_organizer import CLStageOrganizer
 from .fedsparsify_stage_organizer import FedSparsifyStageOrganizer
 from .fitfl_stage_organizer import FitFLStageOrganizer
 from .fl_stage_organizer import FLStageOrganizer
+from .mix2sfl_stage_organizer import Mix2SFLStageOrganizer
 from .nestfl_starge_organizer import NestFLStageOrganizer
 from .prunefl_stage_organizer import PruneFLStageOrganizer
 from .scala_stage_organizer import ScalaStageOrganizer
@@ -107,6 +108,17 @@ def get_stage_organizer(
         )
     elif config.method == "usfl":
         return USFLStageOrganizer(
+            config,
+            connection,
+            global_dict,
+            aggregator,
+            model,
+            dataset,
+            selector,
+            splitter,
+        )
+    elif config.method == "mix2sfl":
+        return Mix2SFLStageOrganizer(
             config,
             connection,
             global_dict,
