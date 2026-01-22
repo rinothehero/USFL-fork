@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING
 from .fedprox_model_trainer import FedProxModelTrainer
 from .fitfl_model_trainer import FitFLModelTrainer
 from .fl_model_trainer import FLModelTrainer
+from .mix2sfl_model_trainer import Mix2SFLModelTrainer
 from .scala_model_trainer import ScalaModelTrainer
 from .sfl_model_trainer import SFLModelTrainer
 from .sflprox_model_trainer import SFLProxModelTrainer
@@ -36,7 +37,7 @@ def get_model_trainer(
             config, server_config, dataset, model, training_params, api
         )
     elif server_config.method == "mix2sfl":
-        return USFLModelTrainer(
+        return Mix2SFLModelTrainer(
             config, server_config, dataset, model, training_params, api
         )
     elif server_config.method == "sflprox":

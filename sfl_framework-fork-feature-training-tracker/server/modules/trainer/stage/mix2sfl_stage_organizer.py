@@ -203,18 +203,14 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
             for client_information in client_informations.values()
             if client_information["client_id"] in self.selected_clients
         }
-        if dataset_sizes and min(dataset_sizes.values()) < self.config.batch_size:
-            raise ValueError(
-                "mix2sfl requires batch_size <= min client dataset size for step sync"
-            )
         iterations_per_client = {
             client_id: dataset_size // self.config.batch_size
             for client_id, dataset_size in dataset_sizes.items()
         }
         if iterations_per_client:
-            min_iterations = max(1, min(iterations_per_client.values()))
+            max_iterations = max(1, max(iterations_per_client.values()))
         else:
-            min_iterations = 1
+            max_iterations = 1
 
         split_models = self.splitter.split(
             self.model.get_torch_model(), self.config.__dict__
@@ -292,7 +288,7 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
                 "round_start_time": self.round_start_time,
                 "signiture": model_queue.get_signiture(),
                 "local_epochs": self.config.local_epochs,
-                "iterations": min_iterations,
+                "iterations": max_iterations,
                 "split_count": len(self.split_models),
                 "model_index": 0,
             },

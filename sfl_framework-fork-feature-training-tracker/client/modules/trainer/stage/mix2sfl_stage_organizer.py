@@ -69,8 +69,11 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
     async def _post_round(self):
         import pickle
 
+        used_samples = getattr(self.model_trainer, "used_samples", None)
         submit_params = {
-            "dataset_size": len(self.dataset.get_trainset()),
+            "dataset_size": used_samples
+            if used_samples is not None
+            else len(self.dataset.get_trainset()),
         }
 
         if (
