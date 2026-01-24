@@ -1,5 +1,25 @@
 """
-USFL Simulation Runner with Workload Management
+Simulation Runner with Workload Management
+
+QUICK START (edit this file, then run it):
+1) Set BASE_CONFIG (dataset/model/optimizer).
+2) Add entries in USFL_OPTIONS (name is historical; any method can go here).
+3) Run: python simulation.py
+
+MINIMAL EXAMPLE (mix2sfl):
+    USFL_OPTIONS = {
+        "MIX2": {
+            "method": "mix2sfl",
+            "selector": "uniform",
+            "aggregator": "fedavg",
+            "dataset": "cifar10",
+            "model": "resnet18",
+            "batch_size": "64",
+            "labels_per_client": "2",
+            "dirichlet_alpha": "0.3",
+            "split_layer": "layer1.1.bn2",
+        },
+    }
 
 FEATURES:
 1. Skip/Resume: Set START_INDEX and END_INDEX to run specific workload ranges
@@ -154,6 +174,7 @@ if __name__ == "__main__":
             "balancing_strategy": "target",
             "balancing_target": "mean",
             "split_layer": "layer1.1.bn2",
+            "g_measurement_mode": "accumulated",
         },
     }
 
@@ -265,6 +286,7 @@ if __name__ == "__main__":
         ENABLE_CONCATENATION = workload.get("enable_concatenation", None)
         ENABLE_LOGIT_ADJUSTMENT = workload.get("enable_logit_adjustment", None)
         MIN_REQUIRE_SIZE = workload.get("min_require_size", None)
+        G_MEASUREMENT_MODE = workload.get("g_measurement_mode", None)
 
         server_command = []
 
@@ -357,6 +379,8 @@ if __name__ == "__main__":
             server_command.extend(["-ec"])
         if ENABLE_LOGIT_ADJUSTMENT and ENABLE_LOGIT_ADJUSTMENT.lower() == "true":
             server_command.extend(["-ela"])
+        if G_MEASUREMENT_MODE:
+            server_command.extend(["--g-measurement-mode", G_MEASUREMENT_MODE])
         if NETWORKING_FAIRNESS:
             if NETWORKING_FAIRNESS.lower() == "true":
                 server_command.extend(["-nf"])

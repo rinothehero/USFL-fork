@@ -52,6 +52,7 @@ class MultiSFLConfig:
     # G Measurement
     enable_g_measurement: bool = True
     g_measure_frequency: int = 10
+    g_measurement_mode: Literal["single", "accumulated"] = "single"
     use_variance_g: bool = False
     use_sfl_transform: bool = False
     use_torchvision_init: bool = False

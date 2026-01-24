@@ -12,7 +12,7 @@ Metrics:
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Set
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -403,7 +403,49 @@ class OracleCalculator:
         return oracle_client, oracle_server, split_grad
 
 
+class GradientAccumulator:
+    """Accumulates gradients for averaging over a full round."""
+
+    def __init__(self):
+        self.gradient_sum: Dict[str, torch.Tensor] = {}
+        self.total_weight: float = 0.0
+
+    def reset(self):
+        self.gradient_sum = {}
+        self.total_weight = 0.0
+
+    def add(self, gradient: Dict[str, torch.Tensor], weight: float = 1.0):
+        """Accumulate gradient with weight (typically batch size)."""
+        for name, grad in gradient.items():
+            grad_cpu = grad.clone().detach().cpu().float() if grad.is_cuda else grad.clone().detach().float()
+            weighted = grad_cpu * weight
+
+            if name not in self.gradient_sum:
+                self.gradient_sum[name] = weighted
+            else:
+                self.gradient_sum[name] += weighted
+
+        self.total_weight += weight
+
+    def get_weighted_average(self) -> Dict[str, torch.Tensor]:
+        """Return weighted average gradient."""
+        if self.total_weight == 0:
+            return {}
+
+        return {
+            name: grad / self.total_weight for name, grad in self.gradient_sum.items()
+        }
+
+
 class GMeasurementSystem:
+    """
+    G Measurement System for MultiSFL.
+
+    Measurement Modes:
+    - "single": Original 1-step measurement (first batch only per client)
+    - "accumulated": Full round gradient accumulation (Oracle-equivalent normalization)
+    """
+
     def __init__(
         self,
         full_dataloader: DataLoader,
@@ -412,6 +454,7 @@ class GMeasurementSystem:
         use_variance_g: bool = False,
         clip_grad: bool = False,
         clip_grad_max_norm: float = 10.0,
+        measurement_mode: str = "single",
     ):
         self.full_dataloader = full_dataloader
         self.device = device
@@ -419,6 +462,7 @@ class GMeasurementSystem:
         self.use_variance_g = use_variance_g
         self.clip_grad = clip_grad
         self.clip_grad_max_norm = clip_grad_max_norm
+        self.measurement_mode = measurement_mode
 
         self.oracle_calculator = OracleCalculator(full_dataloader, device)
         self.oracle_client_grad: Optional[Dict[str, torch.Tensor]] = None
@@ -432,8 +476,85 @@ class GMeasurementSystem:
 
         self.measurements: List[RoundGResult] = []
 
+        # Accumulated mode: gradient accumulators
+        self._client_accumulators: Dict[int, GradientAccumulator] = {}
+        self._server_accumulator: GradientAccumulator = GradientAccumulator()
+        self._accumulated_round_active: bool = False
+
+        if measurement_mode == "accumulated":
+            print("[G Measurement] Mode: ACCUMULATED (full round average)")
+        else:
+            print("[G Measurement] Mode: SINGLE (1-step)")
+
     def is_diagnostic_round(self, round_idx: int) -> bool:
         return (round_idx + 1) % self.diagnostic_frequency == 0
+
+    # ============================================================
+    # Accumulated Mode Methods
+    # ============================================================
+
+    def start_accumulated_round(self):
+        """Start accumulated measurement for a diagnostic round."""
+        if self.measurement_mode != "accumulated":
+            return
+
+        self._client_accumulators = {}
+        self._server_accumulator.reset()
+        self._accumulated_round_active = True
+        print("[G Measurement] Accumulated round started - accumulators reset")
+
+    def accumulate_client_gradient(
+        self, client_id: int, client_grad: Dict[str, torch.Tensor], batch_size: int
+    ):
+        """Accumulate client gradient during training."""
+        if self.measurement_mode != "accumulated" or not self._accumulated_round_active:
+            return
+
+        if client_id not in self._client_accumulators:
+            self._client_accumulators[client_id] = GradientAccumulator()
+
+        self._client_accumulators[client_id].add(client_grad, weight=float(batch_size))
+
+    def accumulate_server_gradient(
+        self, server_grad: Dict[str, torch.Tensor], batch_size: int
+    ):
+        """Accumulate server gradient during training."""
+        if self.measurement_mode != "accumulated" or not self._accumulated_round_active:
+            return
+
+        self._server_accumulator.add(server_grad, weight=float(batch_size))
+
+    def finalize_accumulated_round(self) -> Tuple[Dict[int, Dict[str, torch.Tensor]], Dict[str, torch.Tensor]]:
+        """
+        Finalize accumulated round and return averaged gradients.
+
+        Returns:
+            Tuple of (client_grads_dict, server_grad_dict)
+        """
+        if self.measurement_mode != "accumulated" or not self._accumulated_round_active:
+            return {}, {}
+
+        client_grads = {}
+        for client_id, accumulator in self._client_accumulators.items():
+            client_avg = accumulator.get_weighted_average()
+            if client_avg:
+                client_grads[client_id] = client_avg
+                print(
+                    f"[G Measurement] Client {client_id} accumulated: {accumulator.total_weight:.0f} samples"
+                )
+
+        server_grad = self._server_accumulator.get_weighted_average()
+        if server_grad:
+            print(
+                f"[G Measurement] Server accumulated: {self._server_accumulator.total_weight:.0f} samples"
+            )
+
+        self._accumulated_round_active = False
+        print(
+            f"[G Measurement] Accumulated round finalized: {len(client_grads)} clients"
+        )
+
+        return client_grads, server_grad
 
     def set_oracle_grads(
         self,
@@ -516,6 +637,180 @@ class GMeasurementSystem:
             f"(numel={server_vec.numel()})"
         )
 
+    def _measure_client_g_accumulated(
+        self,
+        client_model: nn.Module,
+        server_model: nn.Module,
+        x_list: List[torch.Tensor],
+        y_list: List[torch.Tensor],
+        client_ids: List[int],
+        client_weights: Optional[List[int]] = None,
+        branch_ids: Optional[List[int]] = None,
+    ) -> Tuple[GMetrics, Dict[int, GMetrics], float, float]:
+        """
+        Measure Client G by accumulating gradients across all collected batches.
+        """
+        if self.oracle_client_grad is None:
+            return GMetrics(), {}, float("nan"), float("nan")
+
+        client_model = client_model.to(self.device)
+        server_model = server_model.to(self.device)
+
+        client_bn_backup = backup_bn_stats(client_model)
+        server_bn_backup = backup_bn_stats(server_model)
+
+        client_model.train()
+        server_model.train()
+
+        if client_weights is None:
+            client_weights = [int(y.size(0)) for y in y_list]
+
+        default_oracle = self.oracle_client_grad
+
+        client_accumulators: Dict[int, GradientAccumulator] = {}
+        client_weight_map: Dict[int, float] = {}
+        branch_ids_by_client: Dict[int, Set[int]] = {}
+
+        for idx, (x, y, client_id) in enumerate(zip(x_list, y_list, client_ids)):
+            weight = (
+                float(client_weights[idx])
+                if idx < len(client_weights)
+                else float(y.size(0))
+            )
+            if weight <= 0:
+                continue
+
+            client_model.zero_grad(set_to_none=True)
+            server_model.zero_grad(set_to_none=True)
+
+            x = x.to(self.device)
+            y = y.to(self.device)
+
+            activation = client_model(x)
+            activation_detached = None
+            act_detached = None
+            id_detached = None
+            if isinstance(activation, tuple):
+                act, identity = activation
+                act_detached = act.detach().requires_grad_(True)
+                id_detached = identity.detach().requires_grad_(True)
+                logits = server_model((act_detached, id_detached))
+                loss = F.cross_entropy(logits, y, reduction="mean")
+                loss.backward()
+
+                if act_detached.grad is None or id_detached.grad is None:
+                    raise RuntimeError("Missing gradients for tuple split output")
+                torch.autograd.backward(
+                    [act, identity], [act_detached.grad, id_detached.grad]
+                )
+            else:
+                activation_detached = activation.detach().requires_grad_(True)
+                logits = server_model(activation_detached)
+
+                loss = F.cross_entropy(logits, y, reduction="mean")
+                loss.backward()
+
+                activation.backward(activation_detached.grad)
+
+            if self.clip_grad:
+                pre_clip_norm = torch.nn.utils.clip_grad_norm_(
+                    client_model.parameters(), max_norm=self.clip_grad_max_norm
+                )
+                print(f"[Clip][G][Client] pre_norm={float(pre_clip_norm):.6f}")
+
+            current_client_grad = {
+                name: param.grad.clone().detach().cpu()
+                for name, param in client_model.named_parameters()
+                if param.grad is not None
+            }
+
+            if client_id not in client_accumulators:
+                client_accumulators[client_id] = GradientAccumulator()
+            client_accumulators[client_id].add(current_client_grad, weight=weight)
+            client_weight_map[client_id] = client_weight_map.get(client_id, 0.0) + weight
+
+            if branch_ids is not None and idx < len(branch_ids):
+                branch_id = branch_ids[idx]
+                branch_ids_by_client.setdefault(client_id, set()).add(branch_id)
+
+            del x, y, activation, logits, loss, current_client_grad
+            if activation_detached is not None:
+                del activation_detached
+            if act_detached is not None:
+                del act_detached
+            if id_detached is not None:
+                del id_detached
+
+        restore_bn_stats(client_model, client_bn_backup)
+        restore_bn_stats(server_model, server_bn_backup)
+
+        if not client_accumulators:
+            return GMetrics(), {}, float("nan"), float("nan")
+
+        per_client_g: Dict[int, GMetrics] = {}
+        per_client_vecs: Dict[int, torch.Tensor] = {}
+        oracle_vecs_by_client: Dict[int, torch.Tensor] = {}
+        all_g_values: List[float] = []
+        all_g_rel_values: List[float] = []
+        all_d_cosine_values: List[float] = []
+
+        for client_id, accumulator in client_accumulators.items():
+            avg_grad = accumulator.get_weighted_average()
+
+            oracle_grad = default_oracle
+            if self.oracle_client_grads_by_branch is not None:
+                branch_set = branch_ids_by_client.get(client_id, set())
+                if len(branch_set) == 1:
+                    branch_id = next(iter(branch_set))
+                    oracle_grad = self.oracle_client_grads_by_branch.get(
+                        branch_id, default_oracle
+                    )
+
+            metrics = compute_g_metrics(avg_grad, oracle_grad)
+            per_client_g[client_id] = metrics
+            all_g_values.append(metrics.G)
+            all_g_rel_values.append(metrics.G_rel)
+            all_d_cosine_values.append(metrics.D_cosine)
+
+            oracle_keys = sorted(oracle_grad.keys())
+            per_client_vecs[client_id] = gradient_to_vector(avg_grad, oracle_keys)
+            oracle_vecs_by_client[client_id] = gradient_to_vector(
+                oracle_grad, oracle_keys
+            )
+
+        if all_g_values:
+            avg_g = sum(all_g_values) / len(all_g_values)
+            avg_g_rel = sum(all_g_rel_values) / len(all_g_rel_values)
+            avg_d_cosine = sum(all_d_cosine_values) / len(all_d_cosine_values)
+            avg_metrics = GMetrics(G=avg_g, G_rel=avg_g_rel, D_cosine=avg_d_cosine)
+        else:
+            avg_metrics = GMetrics()
+
+        variance_client_g = float("nan")
+        variance_client_g_rel = float("nan")
+        if self.use_variance_g and per_client_vecs:
+            total_weight = sum(client_weight_map.values())
+            if total_weight > 0:
+                Vc = 0.0
+                oracle_norm_sq = 0.0
+                for client_id, vec in per_client_vecs.items():
+                    weight = client_weight_map.get(client_id, 1.0) / total_weight
+                    oracle_vec = oracle_vecs_by_client.get(client_id)
+                    if oracle_vec is None:
+                        oracle_vec = gradient_to_vector(default_oracle)
+                    diff = vec - oracle_vec
+                    Vc += weight * torch.dot(diff, diff).item()
+                    oracle_norm_sq += weight * torch.dot(oracle_vec, oracle_vec).item()
+                variance_client_g = Vc
+                variance_client_g_rel = (
+                    Vc / oracle_norm_sq if oracle_norm_sq > 0 else float("nan")
+                )
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        return avg_metrics, per_client_g, variance_client_g, variance_client_g_rel
+
     def measure_client_g(
         self,
         client_model: nn.Module,
@@ -527,9 +822,20 @@ class GMeasurementSystem:
         branch_ids: Optional[List[int]] = None,
     ) -> Tuple[GMetrics, Dict[int, GMetrics], float, float]:
         """
-        Measure Client G using ONLY THE FIRST BATCH for each client.
-        This aligns with sfl_framework-fork's behavior (1-step measurement).
+        Measure Client G.
+        - "single": first batch per client only (1-step measurement)
+        - "accumulated": full round gradient accumulation per client
         """
+        if self.measurement_mode == "accumulated":
+            return self._measure_client_g_accumulated(
+                client_model,
+                server_model,
+                x_list,
+                y_list,
+                client_ids,
+                client_weights=client_weights,
+                branch_ids=branch_ids,
+            )
         if self.oracle_client_grad is None:
             return GMetrics(), {}, float("nan"), float("nan")
 
@@ -681,6 +987,152 @@ class GMeasurementSystem:
 
         return avg_metrics, per_client_g, variance_client_g, variance_client_g_rel
 
+    def _measure_server_g_accumulated(
+        self,
+        server_model: nn.Module,
+        f_list: List[Any],
+        y_list: List[torch.Tensor],
+        server_weights: Optional[List[int]] = None,
+        branch_ids: Optional[List[int]] = None,
+    ) -> Tuple[GMetrics, Dict[int, GMetrics], float, float]:
+        """
+        Measure Server G by accumulating gradients across all collected batches.
+        """
+        if self.oracle_server_grad is None or not f_list:
+            return GMetrics(), {}, float("nan"), float("nan")
+
+        server_model = server_model.to(self.device)
+        server_bn_backup = backup_bn_stats(server_model)
+
+        server_model.train()
+
+        if server_weights is None:
+            server_weights = [int(y.size(0)) for y in y_list]
+
+        default_oracle = self.oracle_server_grad
+
+        overall_accumulator = GradientAccumulator()
+        branch_accumulators: Dict[int, GradientAccumulator] = {}
+
+        for idx, (f_batch, y_batch) in enumerate(zip(f_list, y_list)):
+            server_model.zero_grad(set_to_none=True)
+
+            y_batch = y_batch.to(self.device)
+
+            if isinstance(f_batch, tuple):
+                f_act, f_id = f_batch
+                f_act = f_act.to(self.device).detach().requires_grad_(True)
+                f_id = f_id.to(self.device).detach().requires_grad_(True)
+                logits = server_model((f_act, f_id))
+            else:
+                f_batch = f_batch.to(self.device).detach().requires_grad_(True)
+                logits = server_model(f_batch)
+
+            loss = F.cross_entropy(logits, y_batch, reduction="mean")
+            loss.backward()
+
+            if self.clip_grad:
+                pre_clip_norm = torch.nn.utils.clip_grad_norm_(
+                    server_model.parameters(), max_norm=self.clip_grad_max_norm
+                )
+                print(f"[Clip][G][Server] pre_norm={float(pre_clip_norm):.6f}")
+
+            current_server_grad = {
+                name: param.grad.clone().detach().cpu()
+                for name, param in server_model.named_parameters()
+                if param.grad is not None
+            }
+
+            weight = (
+                float(server_weights[idx])
+                if idx < len(server_weights)
+                else float(y_batch.size(0))
+            )
+            if weight <= 0:
+                continue
+
+            overall_accumulator.add(current_server_grad, weight=weight)
+
+            if branch_ids is not None and idx < len(branch_ids):
+                branch_id = branch_ids[idx]
+                if branch_id not in branch_accumulators:
+                    branch_accumulators[branch_id] = GradientAccumulator()
+                branch_accumulators[branch_id].add(current_server_grad, weight=weight)
+
+            del f_batch, y_batch, logits, loss, current_server_grad
+
+        restore_bn_stats(server_model, server_bn_backup)
+
+        overall_avg = overall_accumulator.get_weighted_average()
+        if overall_avg:
+            result_metrics = compute_g_metrics(overall_avg, default_oracle)
+        else:
+            result_metrics = GMetrics()
+
+        per_branch_metrics: Dict[int, GMetrics] = {}
+        if branch_accumulators:
+            for branch_id, accumulator in branch_accumulators.items():
+                avg_grad = accumulator.get_weighted_average()
+                if not avg_grad:
+                    continue
+                oracle_grad = default_oracle
+                if self.oracle_server_grads_by_branch is not None:
+                    oracle_grad = self.oracle_server_grads_by_branch.get(
+                        branch_id, default_oracle
+                    )
+                per_branch_metrics[branch_id] = compute_g_metrics(avg_grad, oracle_grad)
+
+        variance_server_g = float("nan")
+        variance_server_g_rel = float("nan")
+        if self.use_variance_g:
+            vec_items: List[Tuple[torch.Tensor, torch.Tensor, float]] = []
+
+            if branch_accumulators:
+                for branch_id, accumulator in branch_accumulators.items():
+                    avg_grad = accumulator.get_weighted_average()
+                    if not avg_grad:
+                        continue
+                    oracle_grad = default_oracle
+                    if self.oracle_server_grads_by_branch is not None:
+                        oracle_grad = self.oracle_server_grads_by_branch.get(
+                            branch_id, default_oracle
+                        )
+                    oracle_keys = sorted(oracle_grad.keys())
+                    vec = gradient_to_vector(avg_grad, oracle_keys)
+                    oracle_vec = gradient_to_vector(oracle_grad, oracle_keys)
+                    vec_items.append((vec, oracle_vec, accumulator.total_weight))
+            elif overall_avg:
+                oracle_keys = sorted(default_oracle.keys())
+                vec = gradient_to_vector(overall_avg, oracle_keys)
+                oracle_vec = gradient_to_vector(default_oracle, oracle_keys)
+                vec_items.append((vec, oracle_vec, overall_accumulator.total_weight))
+
+            total_weight = sum(weight for _, _, weight in vec_items)
+            if total_weight > 0:
+                Vs = 0.0
+                oracle_norm_sq = 0.0
+                for vec, oracle_vec, weight in vec_items:
+                    scaled_weight = weight / total_weight
+                    diff = vec - oracle_vec
+                    Vs += scaled_weight * torch.dot(diff, diff).item()
+                    oracle_norm_sq += (
+                        scaled_weight * torch.dot(oracle_vec, oracle_vec).item()
+                    )
+                variance_server_g = Vs
+                variance_server_g_rel = (
+                    Vs / oracle_norm_sq if oracle_norm_sq > 0 else float("nan")
+                )
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        return (
+            result_metrics,
+            per_branch_metrics,
+            variance_server_g,
+            variance_server_g_rel,
+        )
+
     def measure_server_g(
         self,
         server_model: nn.Module,
@@ -690,9 +1142,18 @@ class GMeasurementSystem:
         branch_ids: Optional[List[int]] = None,
     ) -> Tuple[GMetrics, Dict[int, GMetrics], float, float]:
         """
-        Measure Server G using each collected batch.
-        This aligns with sfl_framework-fork's behavior (1-step measurement).
+        Measure Server G.
+        - "single": batch-wise metrics (1-step measurement)
+        - "accumulated": full round gradient accumulation
         """
+        if self.measurement_mode == "accumulated":
+            return self._measure_server_g_accumulated(
+                server_model,
+                f_list,
+                y_list,
+                server_weights=server_weights,
+                branch_ids=branch_ids,
+            )
         if self.oracle_server_grad is None or not f_list:
             return GMetrics(), {}, float("nan"), float("nan")
 
@@ -837,7 +1298,8 @@ class GMeasurementSystem:
         """
         Full G measurement for a diagnostic round.
         Models passed here should be pre-update (start of round).
-        Data passed here should be exactly what was used in the first training step.
+        Data passed here should be the first training step (single mode) or all steps
+        in the round (accumulated mode).
         """
         # Oracle is already computed (called separately before training loop)
         # self.compute_oracle(client_model, server_model)

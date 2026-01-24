@@ -41,10 +41,44 @@ class Mix2SFLModelTrainer(BaseModelTrainer):
         self.enable_g_measurement = getattr(
             server_config, "enable_g_measurement", False
         )
+        self.g_measurement_mode = getattr(server_config, "g_measurement_mode", "single")
         self.accumulated_gradients: list = []
         self.gradient_weights: list = []
         self.measurement_gradient = None
         self.measurement_gradient_weight = None
+        self._accumulated_grad_sum: dict = {}
+        self._accumulated_grad_samples: int = 0
+
+    def _reset_g_accumulation(self):
+        self.accumulated_gradients = []
+        self.gradient_weights = []
+        self._accumulated_grad_sum = {}
+        self._accumulated_grad_samples = 0
+
+    def _accumulate_client_grad(self, batch_size: int):
+        if batch_size <= 0:
+            return
+        for name, param in self.model.named_parameters():
+            if param.grad is None:
+                continue
+            grad = param.grad.detach().cpu()
+            if name not in self._accumulated_grad_sum:
+                self._accumulated_grad_sum[name] = grad * batch_size
+            else:
+                self._accumulated_grad_sum[name] += grad * batch_size
+        self._accumulated_grad_samples += batch_size
+
+    def _finalize_g_accumulation(self):
+        if self.g_measurement_mode != "accumulated":
+            return
+        if self._accumulated_grad_samples <= 0:
+            return
+        avg_grad = {
+            name: grad / float(self._accumulated_grad_samples)
+            for name, grad in self._accumulated_grad_sum.items()
+        }
+        self.accumulated_gradients = [avg_grad]
+        self.gradient_weights = [self._accumulated_grad_samples]
 
     async def _train_default_dataset(self, params: dict):
         self.model.train()
@@ -92,14 +126,17 @@ class Mix2SFLModelTrainer(BaseModelTrainer):
                         )
                         return
 
-                    if self.enable_g_measurement and not self.accumulated_gradients:
-                        client_grad = {
-                            name: param.grad.clone().detach().cpu()
-                            for name, param in self.model.named_parameters()
-                            if param.grad is not None
-                        }
-                        self.accumulated_gradients.append(client_grad)
-                        self.gradient_weights.append(len(labels))
+                    if self.enable_g_measurement:
+                        if self.g_measurement_mode == "accumulated":
+                            self._accumulate_client_grad(len(labels))
+                        elif not self.accumulated_gradients:
+                            client_grad = {
+                                name: param.grad.clone().detach().cpu()
+                                for name, param in self.model.named_parameters()
+                                if param.grad is not None
+                            }
+                            self.accumulated_gradients.append(client_grad)
+                            self.gradient_weights.append(len(labels))
 
                     optimizer.step()
                 else:
@@ -115,6 +152,7 @@ class Mix2SFLModelTrainer(BaseModelTrainer):
                     await self.api.wait_for_gradients()
 
     async def train(self, params: dict):
+        self._reset_g_accumulation()
         if self.server_config.dataset in [
             "cola",
             "sst2",
@@ -129,3 +167,4 @@ class Mix2SFLModelTrainer(BaseModelTrainer):
         ]:
             raise ValueError("mix2sfl supports vision datasets only")
         await self._train_default_dataset(params)
+        self._finalize_g_accumulation()

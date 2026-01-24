@@ -180,6 +180,7 @@ class Config:
     )
     use_variance_g: bool
     oracle_batch_size: Optional[int]
+    g_measurement_mode: str  # "single" (1-step) | "accumulated" (full round average)
 
     # ==================
     #  MISSING CLASS SELECTOR OPTIONS
@@ -1038,6 +1039,15 @@ def parse_args(custom_args=None):
         type=int,
         dest="oracle_batch_size",
         default=None,
+    )
+    parser.add_argument(
+        "--g-measurement-mode",
+        help="G measurement mode: 'single' (1-step, current) or 'accumulated' (full round average)",
+        action="store",
+        type=str,
+        dest="g_measurement_mode",
+        choices=["single", "accumulated"],
+        default="single",
     )
 
     parser.set_defaults(networking_fairness=True)

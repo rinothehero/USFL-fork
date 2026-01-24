@@ -152,6 +152,13 @@ def parse_args() -> argparse.Namespace:
         help="Frequency of G measurement (every N rounds)",
     )
     parser.add_argument(
+        "--g_measurement_mode",
+        type=str,
+        default="single",
+        choices=["single", "accumulated"],
+        help="G measurement mode: 'single' (1-step) or 'accumulated' (full round average)",
+    )
+    parser.add_argument(
         "--use_variance_g",
         type=str,
         default="false",
@@ -239,6 +246,7 @@ def main():
         split_layer=args.split_layer,
         enable_g_measurement=str_to_bool(args.enable_g_measurement),
         g_measure_frequency=args.g_measure_frequency,
+        g_measurement_mode=args.g_measurement_mode,
         use_variance_g=str_to_bool(args.use_variance_g),
         use_sfl_transform=str_to_bool(args.use_sfl_transform),
         use_torchvision_init=str_to_bool(args.use_torchvision_init),

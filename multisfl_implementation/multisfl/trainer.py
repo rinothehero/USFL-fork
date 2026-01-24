@@ -76,6 +76,7 @@ class MultiSFLTrainer:
                 use_variance_g=cfg.use_variance_g,
                 clip_grad=cfg.clip_grad,
                 clip_grad_max_norm=cfg.clip_grad_max_norm,
+                measurement_mode=cfg.g_measurement_mode,
             )
 
         self.B = cfg.num_branches or cfg.n_main_clients_per_round
@@ -204,6 +205,11 @@ class MultiSFLTrainer:
             # G Measurement: Setup PRE-ROUND model and compute Oracle
             is_diagnostic = (
                 self.g_system is not None and self.g_system.is_diagnostic_round(r)
+            )
+            collect_all_steps = (
+                is_diagnostic
+                and self.g_system is not None
+                and self.g_system.measurement_mode == "accumulated"
             )
             wc_measure = None
             ws_measure = None
@@ -387,8 +393,8 @@ class MultiSFLTrainer:
                             branch_collected += int(provided.sum())
                         branch_trials = trials
 
-                    # G Measurement: Collect features for Server G (first step only)
-                    if is_diagnostic and local_step == 0:
+                    # G Measurement: Collect data (first step in single mode, all steps in accumulated mode)
+                    if is_diagnostic and (collect_all_steps or local_step == 0):
                         y_main_cpu = y_main.detach().cpu()
 
                         # Server G data (per branch)

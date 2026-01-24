@@ -41,10 +41,44 @@ class USFLModelTrainer(BaseModelTrainer):
         self.enable_g_measurement = getattr(
             server_config, "enable_g_measurement", False
         )
+        self.g_measurement_mode = getattr(server_config, "g_measurement_mode", "single")
         self.accumulated_gradients: list = []  # List of gradient dicts
         self.gradient_weights: list = []  # Weights for each gradient (batch size)
         self.measurement_gradient = None  # For 1-step measurement protocol
         self.measurement_gradient_weight = None
+        self._accumulated_grad_sum: dict = {}
+        self._accumulated_grad_samples: int = 0
+
+    def _reset_g_accumulation(self):
+        self.accumulated_gradients = []
+        self.gradient_weights = []
+        self._accumulated_grad_sum = {}
+        self._accumulated_grad_samples = 0
+
+    def _accumulate_client_grad(self, batch_size: int):
+        if batch_size <= 0:
+            return
+        for name, param in self.model.named_parameters():
+            if param.grad is None:
+                continue
+            grad = param.grad.detach().cpu()
+            if name not in self._accumulated_grad_sum:
+                self._accumulated_grad_sum[name] = grad * batch_size
+            else:
+                self._accumulated_grad_sum[name] += grad * batch_size
+        self._accumulated_grad_samples += batch_size
+
+    def _finalize_g_accumulation(self):
+        if self.g_measurement_mode != "accumulated":
+            return
+        if self._accumulated_grad_samples <= 0:
+            return
+        avg_grad = {
+            name: grad / float(self._accumulated_grad_samples)
+            for name, grad in self._accumulated_grad_sum.items()
+        }
+        self.accumulated_gradients = [avg_grad]
+        self.gradient_weights = [self._accumulated_grad_samples]
 
     async def _train_default_dataset(self, params: dict):
         self.model.train()
@@ -142,18 +176,17 @@ class USFLModelTrainer(BaseModelTrainer):
                         return  # 1-step만 하고 종료
 
                     # === NORMAL MODE ===
-                    # G Measurement: Collect client model gradients ONLY on first batch (memory efficient)
-                    if (
-                        self.enable_g_measurement
-                        and len(self.accumulated_gradients) == 0
-                    ):
-                        client_grad = {
-                            name: param.grad.clone().detach().cpu()
-                            for name, param in self.model.named_parameters()
-                            if param.grad is not None
-                        }
-                        self.accumulated_gradients.append(client_grad)
-                        self.gradient_weights.append(len(labels))
+                    if self.enable_g_measurement:
+                        if self.g_measurement_mode == "accumulated":
+                            self._accumulate_client_grad(len(labels))
+                        elif len(self.accumulated_gradients) == 0:
+                            client_grad = {
+                                name: param.grad.clone().detach().cpu()
+                                for name, param in self.model.named_parameters()
+                                if param.grad is not None
+                            }
+                            self.accumulated_gradients.append(client_grad)
+                            self.gradient_weights.append(len(labels))
 
                     optimizer.step()
 
@@ -214,18 +247,17 @@ class USFLModelTrainer(BaseModelTrainer):
                         return  # 1-step만 하고 종료
 
                     # === NORMAL MODE ===
-                    # G Measurement: Collect client model gradients ONLY on first batch
-                    if (
-                        self.enable_g_measurement
-                        and len(self.accumulated_gradients) == 0
-                    ):
-                        client_grad = {
-                            name: param.grad.clone().detach().cpu()
-                            for name, param in self.model.named_parameters()
-                            if param.grad is not None
-                        }
-                        self.accumulated_gradients.append(client_grad)
-                        self.gradient_weights.append(len(labels))
+                    if self.enable_g_measurement:
+                        if self.g_measurement_mode == "accumulated":
+                            self._accumulate_client_grad(len(labels))
+                        elif len(self.accumulated_gradients) == 0:
+                            client_grad = {
+                                name: param.grad.clone().detach().cpu()
+                                for name, param in self.model.named_parameters()
+                                if param.grad is not None
+                            }
+                            self.accumulated_gradients.append(client_grad)
+                            self.gradient_weights.append(len(labels))
 
                     optimizer.step()
 
@@ -368,6 +400,7 @@ class USFLModelTrainer(BaseModelTrainer):
             progress_bar.close()
 
     async def train(self, params: dict):
+        self._reset_g_accumulation()
         if self.server_config.dataset in [
             "cola",
             "sst2",
@@ -383,3 +416,4 @@ class USFLModelTrainer(BaseModelTrainer):
             await self._train_glue_dataset(params)
         else:
             await self._train_default_dataset(params)
+        self._finalize_g_accumulation()

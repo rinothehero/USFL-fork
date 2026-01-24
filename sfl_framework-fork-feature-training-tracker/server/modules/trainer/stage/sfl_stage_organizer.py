@@ -75,10 +75,12 @@ class SFLStageOrganizer(BaseStageOrganizer):
             diagnostic_rounds = getattr(config, "diagnostic_rounds", "1,3,5")
             if isinstance(diagnostic_rounds, str):
                 diagnostic_rounds = [int(x) for x in diagnostic_rounds.split(",")]
+            measurement_mode = getattr(config, "g_measurement_mode", "single")
             self.g_measurement_system = GMeasurementSystem(
                 diagnostic_rounds=diagnostic_rounds,
                 device=config.device,
                 use_variance_g=getattr(config, "use_variance_g", False),
+                measurement_mode=measurement_mode,
             )
 
     async def _pre_round(self, round_number: int):
@@ -196,6 +198,14 @@ class SFLStageOrganizer(BaseStageOrganizer):
         references: list["ndarray"] = []
         results: list[dict] = []
 
+        # G Measurement: Start accumulated round if in accumulated mode
+        if (
+            self.g_measurement_system is not None
+            and self.g_measurement_system.is_diagnostic_round(round_number)
+            and self.g_measurement_system.measurement_mode == "accumulated"
+        ):
+            self.g_measurement_system.start_accumulated_round()
+
         async def __server_side_training():
             nonlocal total, training_loss, total_labels
             nonlocal predictions, references
@@ -233,41 +243,45 @@ class SFLStageOrganizer(BaseStageOrganizer):
                     collect_server_grad=is_diagnostic,
                 )
 
-                if (
-                    is_diagnostic
-                    and server_grad
-                    and not self.g_measurement_system.server_g_tildes
-                ):
+                # G Measurement: Collect server gradient
+                if is_diagnostic and server_grad:
                     batch_weight = len(activation["labels"])
-                    self.g_measurement_system.store_server_gradient(
-                        server_grad, batch_weight
-                    )
-                    if (
-                        self.g_measurement_system.split_g_tilde is None
-                        and grad is not None
-                    ):
-                        if isinstance(grad, tuple):
-                            split_grad = tuple(
-                                g.clone().detach().cpu() for g in grad if g is not None
-                            )
-                            split_grad = tuple(
-                                g.mean(dim=0) if g.dim() >= 1 else g for g in split_grad
-                            )
-                            self.g_measurement_system.split_g_tilde = split_grad
-                        else:
-                            split_grad = grad.clone().detach().cpu()
-                            if split_grad.dim() >= 1:
-                                self.g_measurement_system.split_g_tilde = (
-                                    split_grad.mean(dim=0)
-                                )
-                            else:
-                                self.g_measurement_system.split_g_tilde = split_grad
-                        print(
-                            f"[G Measurement] Split layer gradient collected (client={client_id})"
+                    if self.g_measurement_system.measurement_mode == "accumulated":
+                        # Accumulated mode: collect every iteration
+                        self.g_measurement_system.accumulate_server_gradient(
+                            server_grad, batch_weight
                         )
-                    print(
-                        f"[G Measurement] Server gradient collected (client={client_id}, batch_size={batch_weight})"
-                    )
+                    elif not self.g_measurement_system.server_g_tildes:
+                        # Single mode: only first batch
+                        self.g_measurement_system.store_server_gradient(
+                            server_grad, batch_weight
+                        )
+                        if (
+                            self.g_measurement_system.split_g_tilde is None
+                            and grad is not None
+                        ):
+                            if isinstance(grad, tuple):
+                                split_grad = tuple(
+                                    g.clone().detach().cpu() for g in grad if g is not None
+                                )
+                                split_grad = tuple(
+                                    g.mean(dim=0) if g.dim() >= 1 else g for g in split_grad
+                                )
+                                self.g_measurement_system.split_g_tilde = split_grad
+                            else:
+                                split_grad = grad.clone().detach().cpu()
+                                if split_grad.dim() >= 1:
+                                    self.g_measurement_system.split_g_tilde = (
+                                        split_grad.mean(dim=0)
+                                    )
+                                else:
+                                    self.g_measurement_system.split_g_tilde = split_grad
+                            print(
+                                f"[G Measurement] Split layer gradient collected (client={client_id})"
+                            )
+                        print(
+                            f"[G Measurement] Server gradient collected (client={client_id}, batch_size={batch_weight})"
+                        )
 
                 # 6) metric 계산을 위한 로직 (기존과 동일)
                 predicted = (
@@ -304,6 +318,14 @@ class SFLStageOrganizer(BaseStageOrganizer):
             task.cancel()
 
         await asyncio.gather(*pending, return_exceptions=True)
+
+        # G Measurement: Finalize accumulated round
+        if (
+            self.g_measurement_system is not None
+            and self.g_measurement_system.is_diagnostic_round(round_number)
+            and self.g_measurement_system.measurement_mode == "accumulated"
+        ):
+            self.g_measurement_system.finalize_accumulated_round()
 
         for metric in metrics:
             result = metric.compute(predictions=predictions, references=references)

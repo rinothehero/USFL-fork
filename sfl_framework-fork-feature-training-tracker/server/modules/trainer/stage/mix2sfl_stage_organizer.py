@@ -64,10 +64,12 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
             diagnostic_rounds = getattr(config, "diagnostic_rounds", "1,3,5")
             if isinstance(diagnostic_rounds, str):
                 diagnostic_rounds = [int(x) for x in diagnostic_rounds.split(",")]
+            measurement_mode = getattr(config, "g_measurement_mode", "single")
             self.g_measurement_system = GMeasurementSystem(
                 diagnostic_rounds=diagnostic_rounds,
                 device=config.device,
                 use_variance_g=getattr(config, "use_variance_g", False),
+                measurement_mode=measurement_mode,
             )
 
     def _concatenate_activations(self, concatenated_activations, activation):
@@ -295,6 +297,14 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
         )
 
     async def _in_round(self, round_number: int):
+        # G Measurement: Start accumulated round if in accumulated mode
+        if (
+            self.g_measurement_system is not None
+            and self.g_measurement_system.is_diagnostic_round(round_number)
+            and self.g_measurement_system.measurement_mode == "accumulated"
+        ):
+            self.g_measurement_system.start_accumulated_round()
+
         async def __server_side_training():
             iteration_count = 0
             server_model = self.split_models[1].to(self.config.device)
@@ -369,7 +379,8 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
                     self.g_measurement_system is not None
                     and self.g_measurement_system.is_diagnostic_round(round_number)
                 )
-                if is_diagnostic and iteration_count == 0:
+                # G Measurement: Collect server gradient
+                if is_diagnostic:
                     server_grad = {
                         name: param.grad.clone().detach().cpu()
                         for name, param in server_model.named_parameters()
@@ -378,9 +389,16 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
                     batch_weight = sum(
                         len(act["labels"]) for act in non_empty_activations
                     )
-                    self.g_measurement_system.store_server_gradient(
-                        server_grad, batch_weight
-                    )
+                    if self.g_measurement_system.measurement_mode == "accumulated":
+                        # Accumulated mode: collect every iteration
+                        self.g_measurement_system.accumulate_server_gradient(
+                            server_grad, batch_weight
+                        )
+                    elif iteration_count == 0:
+                        # Single mode: only first batch
+                        self.g_measurement_system.store_server_gradient(
+                            server_grad, batch_weight
+                        )
 
                     if self.g_measurement_system.split_g_tilde is None:
                         if isinstance(grad, tuple):
@@ -558,6 +576,14 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
             task.cancel()
 
         await asyncio.gather(*pending, return_exceptions=True)
+
+        # G Measurement: Finalize accumulated round
+        if (
+            self.g_measurement_system is not None
+            and self.g_measurement_system.is_diagnostic_round(round_number)
+            and self.g_measurement_system.measurement_mode == "accumulated"
+        ):
+            self.g_measurement_system.finalize_accumulated_round()
 
     async def _post_round(self, round_number: int):
         model_queue = self.global_dict.get("model_queue")

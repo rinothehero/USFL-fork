@@ -770,6 +770,10 @@ class GMeasurementSystem:
     2. on_diagnostic_round_start(model, client_names, server_names) - oracle 계산
     3. on_measurement_step(server_grad, client_grads) - 1-step grad 저장
     4. compute_g() - G 계산
+
+    Measurement Modes:
+    - "single": 기존 1-step 방식 (첫 번째 배치만 측정)
+    - "accumulated": 전체 라운드 gradient 누적 후 평균 (Oracle과 동일한 정규화)
     """
 
     def __init__(
@@ -777,10 +781,12 @@ class GMeasurementSystem:
         diagnostic_rounds: List[int] = [1, 3, 5],
         device: str = "cuda",
         use_variance_g: bool = False,
+        measurement_mode: str = "single",  # "single" | "accumulated"
     ):
         self.diagnostic_rounds = set(diagnostic_rounds)
         self.device = device
         self.use_variance_g = use_variance_g
+        self.measurement_mode = measurement_mode
 
         self.oracle_calculator: Optional[OracleGradientCalculator] = None
 
@@ -792,10 +798,15 @@ class GMeasurementSystem:
         self.client_param_names: Set[str] = set()
         self.server_param_names: Set[str] = set()
 
-        # 1-step measurement results
+        # 1-step measurement results (single mode)
         self.server_g_tildes: List[Dict[str, torch.Tensor]] = []
         self.server_weights: List[float] = []
         self.client_g_tildes: Dict[int, Dict[str, torch.Tensor]] = {}
+
+        # Accumulated mode: gradient accumulators
+        self._server_accumulator: GradientAccumulator = GradientAccumulator()
+        self._client_accumulators: Dict[int, GradientAccumulator] = {}
+        self._accumulated_round_active: bool = False
 
         # Split layer gradient (activation gradient at split point)
         self.oracle_split_grad: Optional[
@@ -809,8 +820,104 @@ class GMeasurementSystem:
         # Results
         self.measurements: List[RoundGMeasurement] = []
 
+        if measurement_mode == "accumulated":
+            print("[G Measurement] Mode: ACCUMULATED (full round average)")
+        else:
+            print("[G Measurement] Mode: SINGLE (1-step)")
+
     def is_diagnostic_round(self, round_number: int) -> bool:
         return round_number in self.diagnostic_rounds
+
+    # ============================================================
+    # Accumulated Mode Methods
+    # ============================================================
+
+    def start_accumulated_round(self):
+        """
+        Accumulated 모드에서 라운드 시작 시 호출
+        - Accumulator 초기화
+        """
+        if self.measurement_mode != "accumulated":
+            return
+
+        self._server_accumulator.reset()
+        self._client_accumulators = {}
+        self._accumulated_round_active = True
+        print("[G Measurement] Accumulated round started - accumulators reset")
+
+    def accumulate_server_gradient(
+        self, server_grad: Dict[str, torch.Tensor], batch_size: int
+    ):
+        """
+        Accumulated 모드에서 매 iteration마다 서버 gradient 누적
+
+        Args:
+            server_grad: 서버 모델의 gradient (reduction='mean' 기준)
+            batch_size: 현재 배치 크기 (weight로 사용)
+
+        Note:
+            Oracle은 reduction='sum' + total_samples로 나눔
+            학습은 reduction='mean'이므로:
+            accumulated = Σ(grad_mean * batch_size) / Σ(batch_size)
+                        = Σ(grad_sum) / total_samples
+            → Oracle과 동일한 정규화
+        """
+        if self.measurement_mode != "accumulated" or not self._accumulated_round_active:
+            return
+
+        # grad_mean * batch_size = grad_sum (reduction='sum'과 동일)
+        self._server_accumulator.add(server_grad, weight=float(batch_size))
+
+    def accumulate_client_gradient(
+        self, client_id: int, client_grad: Dict[str, torch.Tensor], batch_size: int
+    ):
+        """
+        Accumulated 모드에서 매 iteration마다 클라이언트 gradient 누적
+
+        Args:
+            client_id: 클라이언트 ID
+            client_grad: 클라이언트 모델의 gradient
+            batch_size: 현재 배치 크기
+        """
+        if self.measurement_mode != "accumulated" or not self._accumulated_round_active:
+            return
+
+        if client_id not in self._client_accumulators:
+            self._client_accumulators[client_id] = GradientAccumulator()
+
+        self._client_accumulators[client_id].add(client_grad, weight=float(batch_size))
+
+    def finalize_accumulated_round(self):
+        """
+        Accumulated 모드에서 라운드 끝에 호출
+        - 누적된 gradient를 평균 내어 g_tildes로 저장
+        """
+        if self.measurement_mode != "accumulated" or not self._accumulated_round_active:
+            return
+
+        # Server gradient average
+        server_avg = self._server_accumulator.get_weighted_average()
+        if server_avg:
+            self.server_g_tildes = [server_avg]
+            self.server_weights = [self._server_accumulator.total_weight]
+            print(
+                f"[G Measurement] Server accumulated: {self._server_accumulator.total_weight:.0f} samples"
+            )
+
+        # Client gradient averages
+        self.client_g_tildes = {}
+        for client_id, accumulator in self._client_accumulators.items():
+            client_avg = accumulator.get_weighted_average()
+            if client_avg:
+                self.client_g_tildes[client_id] = client_avg
+                print(
+                    f"[G Measurement] Client {client_id} accumulated: {accumulator.total_weight:.0f} samples"
+                )
+
+        self._accumulated_round_active = False
+        print(
+            f"[G Measurement] Accumulated round finalized: server + {len(self.client_g_tildes)} clients"
+        )
 
     def initialize(self, full_dataloader: DataLoader):
         """Oracle calculator 초기화"""
