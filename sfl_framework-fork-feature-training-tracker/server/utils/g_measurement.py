@@ -773,6 +773,7 @@ class GMeasurementSystem:
 
     Measurement Modes:
     - "single": 기존 1-step 방식 (첫 번째 배치만 측정)
+    - "k_batch": 첫 K개 배치 gradient 누적 후 평균
     - "accumulated": 전체 라운드 gradient 누적 후 평균 (Oracle과 동일한 정규화)
     """
 
@@ -781,12 +782,14 @@ class GMeasurementSystem:
         diagnostic_rounds: List[int] = [1, 3, 5],
         device: str = "cuda",
         use_variance_g: bool = False,
-        measurement_mode: str = "single",  # "single" | "accumulated"
+        measurement_mode: str = "single",  # "single" | "k_batch" | "accumulated"
+        measurement_k: int = 5,  # Number of batches for k_batch mode
     ):
         self.diagnostic_rounds = set(diagnostic_rounds)
         self.device = device
         self.use_variance_g = use_variance_g
         self.measurement_mode = measurement_mode
+        self.measurement_k = measurement_k
 
         self.oracle_calculator: Optional[OracleGradientCalculator] = None
 
@@ -803,10 +806,11 @@ class GMeasurementSystem:
         self.server_weights: List[float] = []
         self.client_g_tildes: Dict[int, Dict[str, torch.Tensor]] = {}
 
-        # Accumulated mode: gradient accumulators
+        # Accumulated/K-batch mode: gradient accumulators
         self._server_accumulator: GradientAccumulator = GradientAccumulator()
         self._client_accumulators: Dict[int, GradientAccumulator] = {}
         self._accumulated_round_active: bool = False
+        self._server_batch_count: int = 0  # For k_batch mode
 
         # Split layer gradient (activation gradient at split point)
         self.oracle_split_grad: Optional[
@@ -822,6 +826,8 @@ class GMeasurementSystem:
 
         if measurement_mode == "accumulated":
             print("[G Measurement] Mode: ACCUMULATED (full round average)")
+        elif measurement_mode == "k_batch":
+            print(f"[G Measurement] Mode: K_BATCH (first {measurement_k} batches)")
         else:
             print("[G Measurement] Mode: SINGLE (1-step)")
 
@@ -829,31 +835,37 @@ class GMeasurementSystem:
         return round_number in self.diagnostic_rounds
 
     # ============================================================
-    # Accumulated Mode Methods
+    # Accumulated / K-Batch Mode Methods
     # ============================================================
 
     def start_accumulated_round(self):
         """
-        Accumulated 모드에서 라운드 시작 시 호출
+        Accumulated/K-batch 모드에서 라운드 시작 시 호출
         - Accumulator 초기화
+        - Batch counter 초기화 (k_batch 모드)
         """
-        if self.measurement_mode != "accumulated":
+        if self.measurement_mode not in ("accumulated", "k_batch"):
             return
 
         self._server_accumulator.reset()
         self._client_accumulators = {}
         self._accumulated_round_active = True
-        print("[G Measurement] Accumulated round started - accumulators reset")
+        self._server_batch_count = 0
+        mode_str = f"K_BATCH (K={self.measurement_k})" if self.measurement_mode == "k_batch" else "ACCUMULATED"
+        print(f"[G Measurement] {mode_str} round started - accumulators reset")
 
     def accumulate_server_gradient(
         self, server_grad: Dict[str, torch.Tensor], batch_size: int
-    ):
+    ) -> bool:
         """
-        Accumulated 모드에서 매 iteration마다 서버 gradient 누적
+        Accumulated/K-batch 모드에서 매 iteration마다 서버 gradient 누적
 
         Args:
             server_grad: 서버 모델의 gradient (reduction='mean' 기준)
             batch_size: 현재 배치 크기 (weight로 사용)
+
+        Returns:
+            bool: True if gradient was accumulated, False if skipped (k_batch limit reached)
 
         Note:
             Oracle은 reduction='sum' + total_samples로 나눔
@@ -862,46 +874,73 @@ class GMeasurementSystem:
                         = Σ(grad_sum) / total_samples
             → Oracle과 동일한 정규화
         """
-        if self.measurement_mode != "accumulated" or not self._accumulated_round_active:
-            return
+        if self.measurement_mode not in ("accumulated", "k_batch"):
+            return False
+        if not self._accumulated_round_active:
+            return False
+
+        # K-batch mode: check if we've collected enough batches
+        if self.measurement_mode == "k_batch":
+            if self._server_batch_count >= self.measurement_k:
+                return False  # Already collected K batches
+            self._server_batch_count += 1
 
         # grad_mean * batch_size = grad_sum (reduction='sum'과 동일)
         self._server_accumulator.add(server_grad, weight=float(batch_size))
+        return True
 
     def accumulate_client_gradient(
         self, client_id: int, client_grad: Dict[str, torch.Tensor], batch_size: int
     ):
         """
-        Accumulated 모드에서 매 iteration마다 클라이언트 gradient 누적
+        Accumulated/K-batch 모드에서 매 iteration마다 클라이언트 gradient 누적
 
         Args:
             client_id: 클라이언트 ID
             client_grad: 클라이언트 모델의 gradient
             batch_size: 현재 배치 크기
+
+        Note: K-batch limit는 클라이언트별로 적용됨
         """
-        if self.measurement_mode != "accumulated" or not self._accumulated_round_active:
+        if self.measurement_mode not in ("accumulated", "k_batch"):
+            return
+        if not self._accumulated_round_active:
             return
 
         if client_id not in self._client_accumulators:
             self._client_accumulators[client_id] = GradientAccumulator()
 
-        self._client_accumulators[client_id].add(client_grad, weight=float(batch_size))
+        # K-batch mode: check batch count per client
+        accumulator = self._client_accumulators[client_id]
+        if self.measurement_mode == "k_batch":
+            # Use batch_count stored in accumulator (we need to track this)
+            current_count = getattr(accumulator, '_batch_count', 0)
+            if current_count >= self.measurement_k:
+                return  # Already collected K batches for this client
+            accumulator._batch_count = current_count + 1
+
+        accumulator.add(client_grad, weight=float(batch_size))
 
     def finalize_accumulated_round(self):
         """
-        Accumulated 모드에서 라운드 끝에 호출
+        Accumulated/K-batch 모드에서 라운드 끝에 호출
         - 누적된 gradient를 평균 내어 g_tildes로 저장
         """
-        if self.measurement_mode != "accumulated" or not self._accumulated_round_active:
+        if self.measurement_mode not in ("accumulated", "k_batch"):
             return
+        if not self._accumulated_round_active:
+            return
+
+        mode_str = f"K_BATCH (K={self.measurement_k})" if self.measurement_mode == "k_batch" else "ACCUMULATED"
 
         # Server gradient average
         server_avg = self._server_accumulator.get_weighted_average()
         if server_avg:
             self.server_g_tildes = [server_avg]
             self.server_weights = [self._server_accumulator.total_weight]
+            batch_info = f" ({self._server_batch_count} batches)" if self.measurement_mode == "k_batch" else ""
             print(
-                f"[G Measurement] Server accumulated: {self._server_accumulator.total_weight:.0f} samples"
+                f"[G Measurement] Server {mode_str}: {self._server_accumulator.total_weight:.0f} samples{batch_info}"
             )
 
         # Client gradient averages
@@ -910,13 +949,15 @@ class GMeasurementSystem:
             client_avg = accumulator.get_weighted_average()
             if client_avg:
                 self.client_g_tildes[client_id] = client_avg
+                batch_count = getattr(accumulator, '_batch_count', 'N/A')
+                batch_info = f" ({batch_count} batches)" if self.measurement_mode == "k_batch" else ""
                 print(
-                    f"[G Measurement] Client {client_id} accumulated: {accumulator.total_weight:.0f} samples"
+                    f"[G Measurement] Client {client_id} {mode_str}: {accumulator.total_weight:.0f} samples{batch_info}"
                 )
 
         self._accumulated_round_active = False
         print(
-            f"[G Measurement] Accumulated round finalized: server + {len(self.client_g_tildes)} clients"
+            f"[G Measurement] {mode_str} round finalized: server + {len(self.client_g_tildes)} clients"
         )
 
     def initialize(self, full_dataloader: DataLoader):

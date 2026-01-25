@@ -40,18 +40,21 @@ class SFLModelTrainer(BaseModelTrainer):
             server_config, "enable_g_measurement", False
         )
         self.g_measurement_mode = getattr(server_config, "g_measurement_mode", "single")
+        self.g_measurement_k = getattr(server_config, "g_measurement_k", 5)
         self.accumulated_gradients: list = []  # List of gradient dicts
         self.gradient_weights: list = []  # Weights for each gradient (batch size)
         self.measurement_gradient = None  # For 1-step measurement protocol
         self.measurement_gradient_weight = None
         self._accumulated_grad_sum: dict = {}
         self._accumulated_grad_samples: int = 0
+        self._client_batch_count: int = 0  # For k_batch mode
 
     def _reset_g_accumulation(self):
         self.accumulated_gradients = []
         self.gradient_weights = []
         self._accumulated_grad_sum = {}
         self._accumulated_grad_samples = 0
+        self._client_batch_count = 0
 
     def _accumulate_client_grad(self, batch_size: int):
         if batch_size <= 0:
@@ -67,7 +70,7 @@ class SFLModelTrainer(BaseModelTrainer):
         self._accumulated_grad_samples += batch_size
 
     def _finalize_g_accumulation(self):
-        if self.g_measurement_mode != "accumulated":
+        if self.g_measurement_mode not in ("accumulated", "k_batch"):
             return
         if self._accumulated_grad_samples <= 0:
             return
@@ -77,6 +80,8 @@ class SFLModelTrainer(BaseModelTrainer):
         }
         self.accumulated_gradients = [avg_grad]
         self.gradient_weights = [self._accumulated_grad_samples]
+        if self.g_measurement_mode == "k_batch":
+            print(f"[Client] K-batch finalized: {self._client_batch_count} batches, {self._accumulated_grad_samples} samples")
 
     async def _train_default_dataset(self, params: dict):
         self.model.train()
@@ -127,6 +132,11 @@ class SFLModelTrainer(BaseModelTrainer):
                 if self.enable_g_measurement:
                     if self.g_measurement_mode == "accumulated":
                         self._accumulate_client_grad(len(labels))
+                    elif self.g_measurement_mode == "k_batch":
+                        # K-batch mode: collect first K batches
+                        if self._client_batch_count < self.g_measurement_k:
+                            self._accumulate_client_grad(len(labels))
+                            self._client_batch_count += 1
                     elif len(self.accumulated_gradients) == 0:
                         client_grad = {
                             name: param.grad.clone().detach().cpu()
@@ -166,10 +176,26 @@ class SFLModelTrainer(BaseModelTrainer):
                 gradients, model_index = await self.api.wait_for_gradients()
 
                 self.propagator.backward(gradients)
-                optimizer.step()
 
-                if self.enable_g_measurement and self.g_measurement_mode == "accumulated":
-                    self._accumulate_client_grad(len(labels))
+                # G Measurement for GLUE dataset (before optimizer.step)
+                if self.enable_g_measurement:
+                    if self.g_measurement_mode == "accumulated":
+                        self._accumulate_client_grad(len(labels))
+                    elif self.g_measurement_mode == "k_batch":
+                        if self._client_batch_count < self.g_measurement_k:
+                            self._accumulate_client_grad(len(labels))
+                            self._client_batch_count += 1
+                    elif len(self.accumulated_gradients) == 0:
+                        # Single mode: only first batch
+                        client_grad = {
+                            name: param.grad.clone().detach().cpu()
+                            for name, param in self.model.named_parameters()
+                            if param.grad is not None
+                        }
+                        self.accumulated_gradients.append(client_grad)
+                        self.gradient_weights.append(len(labels))
+
+                optimizer.step()
 
     async def train(self, params: dict = None):
         self._reset_g_accumulation()

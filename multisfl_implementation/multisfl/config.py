@@ -52,7 +52,8 @@ class MultiSFLConfig:
     # G Measurement
     enable_g_measurement: bool = True
     g_measure_frequency: int = 10
-    g_measurement_mode: Literal["single", "accumulated"] = "single"
+    g_measurement_mode: Literal["single", "k_batch", "accumulated"] = "single"
+    g_measurement_k: int = 5  # Number of batches for k_batch mode
     use_variance_g: bool = False
     use_sfl_transform: bool = False
     use_torchvision_init: bool = False

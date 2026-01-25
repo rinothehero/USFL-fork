@@ -42,18 +42,21 @@ class Mix2SFLModelTrainer(BaseModelTrainer):
             server_config, "enable_g_measurement", False
         )
         self.g_measurement_mode = getattr(server_config, "g_measurement_mode", "single")
+        self.g_measurement_k = getattr(server_config, "g_measurement_k", 5)
         self.accumulated_gradients: list = []
         self.gradient_weights: list = []
         self.measurement_gradient = None
         self.measurement_gradient_weight = None
         self._accumulated_grad_sum: dict = {}
         self._accumulated_grad_samples: int = 0
+        self._client_batch_count: int = 0  # For k_batch mode
 
     def _reset_g_accumulation(self):
         self.accumulated_gradients = []
         self.gradient_weights = []
         self._accumulated_grad_sum = {}
         self._accumulated_grad_samples = 0
+        self._client_batch_count = 0
 
     def _accumulate_client_grad(self, batch_size: int):
         if batch_size <= 0:
@@ -69,7 +72,7 @@ class Mix2SFLModelTrainer(BaseModelTrainer):
         self._accumulated_grad_samples += batch_size
 
     def _finalize_g_accumulation(self):
-        if self.g_measurement_mode != "accumulated":
+        if self.g_measurement_mode not in ("accumulated", "k_batch"):
             return
         if self._accumulated_grad_samples <= 0:
             return
@@ -77,6 +80,8 @@ class Mix2SFLModelTrainer(BaseModelTrainer):
             name: grad / float(self._accumulated_grad_samples)
             for name, grad in self._accumulated_grad_sum.items()
         }
+        if self.g_measurement_mode == "k_batch":
+            print(f"[Client] K-batch finalized: {self._client_batch_count} batches, {self._accumulated_grad_samples} samples")
         self.accumulated_gradients = [avg_grad]
         self.gradient_weights = [self._accumulated_grad_samples]
 
@@ -129,6 +134,11 @@ class Mix2SFLModelTrainer(BaseModelTrainer):
                     if self.enable_g_measurement:
                         if self.g_measurement_mode == "accumulated":
                             self._accumulate_client_grad(len(labels))
+                        elif self.g_measurement_mode == "k_batch":
+                            # K-batch mode: collect first K batches
+                            if self._client_batch_count < self.g_measurement_k:
+                                self._accumulate_client_grad(len(labels))
+                                self._client_batch_count += 1
                         elif not self.accumulated_gradients:
                             client_grad = {
                                 name: param.grad.clone().detach().cpu()

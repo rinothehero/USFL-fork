@@ -443,6 +443,7 @@ class GMeasurementSystem:
 
     Measurement Modes:
     - "single": Original 1-step measurement (first batch only per client)
+    - "k_batch": First K batches measurement (middle ground)
     - "accumulated": Full round gradient accumulation (Oracle-equivalent normalization)
     """
 
@@ -455,6 +456,7 @@ class GMeasurementSystem:
         clip_grad: bool = False,
         clip_grad_max_norm: float = 10.0,
         measurement_mode: str = "single",
+        measurement_k: int = 5,
     ):
         self.full_dataloader = full_dataloader
         self.device = device
@@ -463,6 +465,7 @@ class GMeasurementSystem:
         self.clip_grad = clip_grad
         self.clip_grad_max_norm = clip_grad_max_norm
         self.measurement_mode = measurement_mode
+        self.measurement_k = measurement_k
 
         self.oracle_calculator = OracleCalculator(full_dataloader, device)
         self.oracle_client_grad: Optional[Dict[str, torch.Tensor]] = None
@@ -483,6 +486,8 @@ class GMeasurementSystem:
 
         if measurement_mode == "accumulated":
             print("[G Measurement] Mode: ACCUMULATED (full round average)")
+        elif measurement_mode == "k_batch":
+            print(f"[G Measurement] Mode: K_BATCH (first {measurement_k} batches)")
         else:
             print("[G Measurement] Mode: SINGLE (1-step)")
 
@@ -824,9 +829,10 @@ class GMeasurementSystem:
         """
         Measure Client G.
         - "single": first batch per client only (1-step measurement)
+        - "k_batch": first K batches accumulated per client
         - "accumulated": full round gradient accumulation per client
         """
-        if self.measurement_mode == "accumulated":
+        if self.measurement_mode in ("accumulated", "k_batch"):
             return self._measure_client_g_accumulated(
                 client_model,
                 server_model,
@@ -1144,9 +1150,10 @@ class GMeasurementSystem:
         """
         Measure Server G.
         - "single": batch-wise metrics (1-step measurement)
+        - "k_batch": first K batches accumulated
         - "accumulated": full round gradient accumulation
         """
-        if self.measurement_mode == "accumulated":
+        if self.measurement_mode in ("accumulated", "k_batch"):
             return self._measure_server_g_accumulated(
                 server_model,
                 f_list,

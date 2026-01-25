@@ -92,7 +92,8 @@ class ServerConfig:
     diagnostic_rounds: str  # Comma-separated list of rounds to run G measurement
     use_variance_g: bool
     oracle_batch_size: Optional[int]
-    g_measurement_mode: str  # "single" (1-step) | "accumulated" (full round average)
+    g_measurement_mode: str  # "single" (1-step) | "k_batch" (first K batches) | "accumulated" (full round average)
+    g_measurement_k: int  # Number of batches to collect in k_batch mode (default: 5)
     # FitFL
     max_pruning_ratio: int  # Maximum pruning ratio.
     # FitFL

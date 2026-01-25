@@ -157,7 +157,8 @@ num_label = 100 if cifar100 else 10
 G_Measurement = True  # Enable 3-perspective G measurement
 G_Measure_Frequency = 10  # Diagnostic round frequency (every N epochs)
 G_Measure_Mode = "strict"  # 'strict' (Global Model) or 'realistic' (Individual Models)
-G_Measurement_Accumulation = "single"  # "single" (1-step) | "accumulated" (full round average)
+G_Measurement_Accumulation = "single"  # "single" (1-step) | "k_batch" (first K) | "accumulated" (full round)
+G_Measurement_K = 5  # Number of batches for k_batch mode
 
 # G Measurement Mode: distance-based (default) vs variance-based (SFL-style)
 # Usage: python GAS_main.py true  -> variance-based
@@ -518,11 +519,13 @@ if G_Measurement:
         "client_batch_sizes": {},
         "server_grads": [],
         "server_batch_sizes": [],
-        # Accumulated mode: gradient sum and sample count
+        # Accumulated/K-batch mode: gradient sum and sample count
         "accumulated_client_grads": {},  # {client_id: [grad_sum_tensors]}
         "accumulated_client_samples": {},  # {client_id: total_samples}
+        "accumulated_client_batch_counts": {},  # {client_id: batch_count} for k_batch
         "accumulated_server_grads": None,  # [grad_sum_tensors]
         "accumulated_server_samples": 0,
+        "accumulated_server_batch_count": 0,  # for k_batch mode
     }
 else:
     g_measure_state = None
@@ -535,8 +538,8 @@ def finalize_g_measurement(g_measure_state, g_manager, user_parti_num):
         return False
 
     # Check readiness based on accumulation mode
-    if G_Measurement_Accumulation == "accumulated":
-        # Accumulated mode: check if we have accumulated data for all clients and server
+    if G_Measurement_Accumulation in ("accumulated", "k_batch"):
+        # Accumulated/K-batch mode: check if we have accumulated data for all clients and server
         if (
             len(g_measure_state["accumulated_client_grads"]) < user_parti_num
             or g_measure_state["accumulated_server_grads"] is None
@@ -556,8 +559,8 @@ def finalize_g_measurement(g_measure_state, g_manager, user_parti_num):
     per_client_g = {}
     per_client_vecs = {}
 
-    if G_Measurement_Accumulation == "accumulated":
-        # Accumulated mode: compute average gradients and use them
+    if G_Measurement_Accumulation in ("accumulated", "k_batch"):
+        # Accumulated/K-batch mode: compute average gradients and use them
         for client_id in g_measure_state["client_order"]:
             accumulated_grads = g_measure_state["accumulated_client_grads"].get(client_id)
             total_samples = g_measure_state["accumulated_client_samples"].get(client_id, 1)
@@ -574,7 +577,8 @@ def finalize_g_measurement(g_measure_state, g_manager, user_parti_num):
             per_client_vecs[client_id] = flatten_grad_list(avg_client_grads)
             # Store for batch_sizes (use total samples)
             g_measure_state["client_batch_sizes"][client_id] = total_samples
-        print(f"[G Measurement] Accumulated mode: averaged client gradients from {len(per_client_g)} clients")
+        mode_str = "K-batch" if G_Measurement_Accumulation == "k_batch" else "Accumulated"
+        print(f"[G Measurement] {mode_str} mode: averaged client gradients from {len(per_client_g)} clients")
     else:
         # Single mode: original logic
         for client_id in g_measure_state["client_order"]:
@@ -603,8 +607,8 @@ def finalize_g_measurement(g_measure_state, g_manager, user_parti_num):
     server_g_list = []
     server_vecs = []
 
-    if G_Measurement_Accumulation == "accumulated":
-        # Accumulated mode: compute average server gradient
+    if G_Measurement_Accumulation in ("accumulated", "k_batch"):
+        # Accumulated/K-batch mode: compute average server gradient
         accumulated_server = g_measure_state["accumulated_server_grads"]
         total_server_samples = g_measure_state["accumulated_server_samples"]
         if accumulated_server is not None and total_server_samples > 0:
@@ -778,11 +782,13 @@ def finalize_g_measurement(g_measure_state, g_manager, user_parti_num):
     g_measure_state["client_batch_sizes"].clear()
     g_measure_state["server_grads"].clear()
     g_measure_state["server_batch_sizes"].clear()
-    # Clear accumulated mode fields
+    # Clear accumulated/k_batch mode fields
     g_measure_state["accumulated_client_grads"].clear()
     g_measure_state["accumulated_client_samples"].clear()
+    g_measure_state["accumulated_client_batch_counts"].clear()
     g_measure_state["accumulated_server_grads"] = None
     g_measure_state["accumulated_server_samples"] = 0
+    g_measure_state["accumulated_server_batch_count"] = 0
 
     return True
 
@@ -888,31 +894,40 @@ while epoch != epochs:
 
     if g_measure_state is not None and g_measure_state["active"]:
         batch_size = labels.size(0)
-        if G_Measurement_Accumulation == "accumulated":
-            # Accumulated mode: accumulate ALL gradients for each client
-            current_grads = [
-                p.grad.clone().cpu() * batch_size  # weight by batch size (grad_sum)
-                if p.grad is not None
-                else torch.zeros_like(p).cpu()
-                for p in user_model.parameters()
-            ]
-            if selected_client not in g_measure_state["accumulated_client_grads"]:
-                g_measure_state["client_order"].append(selected_client)
-                g_measure_state["accumulated_client_grads"][selected_client] = current_grads
-                g_measure_state["accumulated_client_samples"][selected_client] = batch_size
-            else:
-                # Add to existing accumulated gradients
-                for i, grad in enumerate(current_grads):
-                    g_measure_state["accumulated_client_grads"][selected_client][i] += grad
-                g_measure_state["accumulated_client_samples"][selected_client] += batch_size
-            # Also collect split grad (only first batch for split layer)
-            if (
-                selected_client not in g_measure_state["client_split_grads"]
-                and activation.grad is not None
-            ):
-                g_measure_state["client_split_grads"][selected_client] = (
-                    activation.grad.mean(dim=0).clone().cpu()
-                )
+        if G_Measurement_Accumulation in ("accumulated", "k_batch"):
+            # Accumulated/K-batch mode: accumulate gradients for each client
+            # K-batch mode: stop after K batches per client
+            client_batch_count = g_measure_state["accumulated_client_batch_counts"].get(selected_client, 0)
+            should_collect = True
+            if G_Measurement_Accumulation == "k_batch" and client_batch_count >= G_Measurement_K:
+                should_collect = False
+
+            if should_collect:
+                current_grads = [
+                    p.grad.clone().cpu() * batch_size  # weight by batch size (grad_sum)
+                    if p.grad is not None
+                    else torch.zeros_like(p).cpu()
+                    for p in user_model.parameters()
+                ]
+                if selected_client not in g_measure_state["accumulated_client_grads"]:
+                    g_measure_state["client_order"].append(selected_client)
+                    g_measure_state["accumulated_client_grads"][selected_client] = current_grads
+                    g_measure_state["accumulated_client_samples"][selected_client] = batch_size
+                    g_measure_state["accumulated_client_batch_counts"][selected_client] = 1
+                else:
+                    # Add to existing accumulated gradients
+                    for i, grad in enumerate(current_grads):
+                        g_measure_state["accumulated_client_grads"][selected_client][i] += grad
+                    g_measure_state["accumulated_client_samples"][selected_client] += batch_size
+                    g_measure_state["accumulated_client_batch_counts"][selected_client] += 1
+                # Also collect split grad (only first batch for split layer)
+                if (
+                    selected_client not in g_measure_state["client_split_grads"]
+                    and activation.grad is not None
+                ):
+                    g_measure_state["client_split_grads"][selected_client] = (
+                        activation.grad.mean(dim=0).clone().cpu()
+                    )
         else:
             # Single mode: only first batch per client
             if (
@@ -1025,21 +1040,30 @@ while epoch != epochs:
 
         if g_measure_state is not None and g_measure_state["active"]:
             server_batch_size = concat_labels.size(0)
-            if G_Measurement_Accumulation == "accumulated":
-                # Accumulated mode: accumulate ALL server gradients
-                current_grads = [
-                    p.grad.clone().cpu() * server_batch_size  # weight by batch size
-                    if p.grad is not None
-                    else torch.zeros_like(p).cpu()
-                    for p in server_model.parameters()
-                ]
-                if g_measure_state["accumulated_server_grads"] is None:
-                    g_measure_state["accumulated_server_grads"] = current_grads
-                    g_measure_state["accumulated_server_samples"] = server_batch_size
-                else:
-                    for i, grad in enumerate(current_grads):
-                        g_measure_state["accumulated_server_grads"][i] += grad
-                    g_measure_state["accumulated_server_samples"] += server_batch_size
+            if G_Measurement_Accumulation in ("accumulated", "k_batch"):
+                # Accumulated/K-batch mode: accumulate server gradients
+                # K-batch mode: stop after K batches
+                should_collect = True
+                if G_Measurement_Accumulation == "k_batch":
+                    if g_measure_state["accumulated_server_batch_count"] >= G_Measurement_K:
+                        should_collect = False
+
+                if should_collect:
+                    current_grads = [
+                        p.grad.clone().cpu() * server_batch_size  # weight by batch size
+                        if p.grad is not None
+                        else torch.zeros_like(p).cpu()
+                        for p in server_model.parameters()
+                    ]
+                    if g_measure_state["accumulated_server_grads"] is None:
+                        g_measure_state["accumulated_server_grads"] = current_grads
+                        g_measure_state["accumulated_server_samples"] = server_batch_size
+                        g_measure_state["accumulated_server_batch_count"] = 1
+                    else:
+                        for i, grad in enumerate(current_grads):
+                            g_measure_state["accumulated_server_grads"][i] += grad
+                        g_measure_state["accumulated_server_samples"] += server_batch_size
+                        g_measure_state["accumulated_server_batch_count"] += 1
             else:
                 # Single mode: only first batch
                 if len(g_measure_state["server_grads"]) < 1:

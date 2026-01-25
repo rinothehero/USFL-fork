@@ -77,6 +77,7 @@ class MultiSFLTrainer:
                 clip_grad=cfg.clip_grad,
                 clip_grad_max_norm=cfg.clip_grad_max_norm,
                 measurement_mode=cfg.g_measurement_mode,
+                measurement_k=cfg.g_measurement_k,
             )
 
         self.B = cfg.num_branches or cfg.n_main_clients_per_round
@@ -209,7 +210,7 @@ class MultiSFLTrainer:
             collect_all_steps = (
                 is_diagnostic
                 and self.g_system is not None
-                and self.g_system.measurement_mode == "accumulated"
+                and self.g_system.measurement_mode in ("accumulated", "k_batch")
             )
             wc_measure = None
             ws_measure = None
@@ -393,8 +394,13 @@ class MultiSFLTrainer:
                             branch_collected += int(provided.sum())
                         branch_trials = trials
 
-                    # G Measurement: Collect data (first step in single mode, all steps in accumulated mode)
-                    if is_diagnostic and (collect_all_steps or local_step == 0):
+                    # G Measurement: Collect data (first step in single mode, first K in k_batch, all steps in accumulated mode)
+                    should_collect_g_data = is_diagnostic and (
+                        (self.g_system.measurement_mode == "single" and local_step == 0)
+                        or (self.g_system.measurement_mode == "accumulated")
+                        or (self.g_system.measurement_mode == "k_batch" and local_step < self.cfg.g_measurement_k)
+                    )
+                    if should_collect_g_data:
                         y_main_cpu = y_main.detach().cpu()
 
                         # Server G data (per branch)

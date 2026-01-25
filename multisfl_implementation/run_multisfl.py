@@ -155,8 +155,14 @@ def parse_args() -> argparse.Namespace:
         "--g_measurement_mode",
         type=str,
         default="single",
-        choices=["single", "accumulated"],
-        help="G measurement mode: 'single' (1-step) or 'accumulated' (full round average)",
+        choices=["single", "k_batch", "accumulated"],
+        help="G measurement mode: 'single' (1-step), 'k_batch' (first K batches), or 'accumulated' (full round average)",
+    )
+    parser.add_argument(
+        "--g_measurement_k",
+        type=int,
+        default=5,
+        help="Number of batches for k_batch mode (default: 5)",
     )
     parser.add_argument(
         "--use_variance_g",
@@ -247,6 +253,7 @@ def main():
         enable_g_measurement=str_to_bool(args.enable_g_measurement),
         g_measure_frequency=args.g_measure_frequency,
         g_measurement_mode=args.g_measurement_mode,
+        g_measurement_k=args.g_measurement_k,
         use_variance_g=str_to_bool(args.use_variance_g),
         use_sfl_transform=str_to_bool(args.use_sfl_transform),
         use_torchvision_init=str_to_bool(args.use_torchvision_init),
