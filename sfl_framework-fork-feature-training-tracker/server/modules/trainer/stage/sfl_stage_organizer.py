@@ -104,9 +104,14 @@ class SFLStageOrganizer(BaseStageOrganizer):
             "CLIENTS_SELECTED", {"client_ids": self.selected_clients}
         )
 
-        split_models = self.splitter.split(
-            self.model.get_torch_model(), self.config.__dict__
-        )
+        # FlexibleResNet uses pre-built split models (layer boundary support)
+        if hasattr(self.model, "get_split_models"):
+            client_model, server_model = self.model.get_split_models()
+            split_models = [client_model, server_model]
+        else:
+            split_models = self.splitter.split(
+                self.model.get_torch_model(), self.config.__dict__
+            )
         self.split_models = split_models
 
         model_queue = self.global_dict.get("model_queue")
@@ -161,6 +166,9 @@ class SFLStageOrganizer(BaseStageOrganizer):
                 self.split_models[0],
                 self.split_models[1],
             )
+
+            if hasattr(self.model, "sync_full_model_from_split"):
+                self.model.sync_full_model_from_split()
 
             full_model = self.model.get_torch_model().to(self.config.device)
             self.g_measurement_system.compute_oracle_split_for_round(
@@ -248,7 +256,10 @@ class SFLStageOrganizer(BaseStageOrganizer):
                 # G Measurement: Collect server gradient
                 if is_diagnostic and server_grad:
                     batch_weight = len(activation["labels"])
-                    if self.g_measurement_system.measurement_mode in ("accumulated", "k_batch"):
+                    if self.g_measurement_system.measurement_mode in (
+                        "accumulated",
+                        "k_batch",
+                    ):
                         # Accumulated/K-batch mode: collect (k_batch will stop after K batches internally)
                         self.g_measurement_system.accumulate_server_gradient(
                             server_grad, batch_weight
@@ -264,10 +275,13 @@ class SFLStageOrganizer(BaseStageOrganizer):
                         ):
                             if isinstance(grad, tuple):
                                 split_grad = tuple(
-                                    g.clone().detach().cpu() for g in grad if g is not None
+                                    g.clone().detach().cpu()
+                                    for g in grad
+                                    if g is not None
                                 )
                                 split_grad = tuple(
-                                    g.mean(dim=0) if g.dim() >= 1 else g for g in split_grad
+                                    g.mean(dim=0) if g.dim() >= 1 else g
+                                    for g in split_grad
                                 )
                                 self.g_measurement_system.split_g_tilde = split_grad
                             else:

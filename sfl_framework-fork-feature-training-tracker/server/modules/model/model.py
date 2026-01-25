@@ -5,6 +5,7 @@ from .distilbert import DistilBert
 from .lenet import LeNet
 from .mobilenet import MobileNet
 from .resnet import ResNet, ResNetCifar
+from .flexible_resnet import FlexibleResNet
 from .vgg11 import VGG11
 
 if TYPE_CHECKING:
@@ -20,6 +21,10 @@ def get_model(config: "Config", num_classes: int):
         return ResNet(config, num_classes)
     elif config.model == "resnet18_cifar":
         return ResNetCifar(config, num_classes)
+    elif config.model == "resnet18_flex":
+        # FlexibleResNet: supports layer boundary splits (layer2, layer3, layer4)
+        # Usage: model="resnet18_flex", split_layer="layer2"
+        return FlexibleResNet(config, num_classes)
     elif config.model == "alexnet" or config.model == "alexnet_scala":
         return AlexNet(config, num_classes)
     elif config.model == "mobilenet":

@@ -216,9 +216,14 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
         else:
             max_iterations = 1
 
-        split_models = self.splitter.split(
-            self.model.get_torch_model(), self.config.__dict__
-        )
+        # FlexibleResNet uses pre-built split models (layer boundary support)
+        if hasattr(self.model, "get_split_models"):
+            client_model, server_model = self.model.get_split_models()
+            split_models = [client_model, server_model]
+        else:
+            split_models = self.splitter.split(
+                self.model.get_torch_model(), self.config.__dict__
+            )
         self.split_models = split_models
 
         model_queue = self.global_dict.get("model_queue")
@@ -267,6 +272,9 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
                 self.split_models[0],
                 self.split_models[1],
             )
+
+            if hasattr(self.model, "sync_full_model_from_split"):
+                self.model.sync_full_model_from_split()
 
             full_model = self.model.get_torch_model().to(self.config.device)
             self.g_measurement_system.compute_oracle_split_for_round(
@@ -391,7 +399,10 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
                     batch_weight = sum(
                         len(act["labels"]) for act in non_empty_activations
                     )
-                    if self.g_measurement_system.measurement_mode in ("accumulated", "k_batch"):
+                    if self.g_measurement_system.measurement_mode in (
+                        "accumulated",
+                        "k_batch",
+                    ):
                         # Accumulated/K-batch mode: collect (k_batch will stop after K batches internally)
                         self.g_measurement_system.accumulate_server_gradient(
                             server_grad, batch_weight
@@ -457,7 +468,9 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
                                         for si, sj in zip(outputs_i, outputs_j)
                                     )
                                 else:
-                                    mixed_outputs = lam * outputs_i + (1.0 - lam) * outputs_j
+                                    mixed_outputs = (
+                                        lam * outputs_i + (1.0 - lam) * outputs_j
+                                    )
 
                                 labels_i = act_i["labels"].to(self.config.device)
                                 labels_j = act_j["labels"].to(self.config.device)

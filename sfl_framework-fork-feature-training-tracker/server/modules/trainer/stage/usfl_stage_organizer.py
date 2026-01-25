@@ -818,9 +818,14 @@ class USFLStageOrganizer(BaseStageOrganizer):
             # --- End of Original Logic ---
 
         # 모델 분할 및 모델 큐 설정
-        self.split_models = self.splitter.split(
-            self.model.get_torch_model(), self.config.__dict__
-        )
+        # FlexibleResNet uses pre-built split models (layer boundary support)
+        if hasattr(self.model, "get_split_models"):
+            client_model, server_model = self.model.get_split_models()
+            self.split_models = [client_model, server_model]
+        else:
+            self.split_models = self.splitter.split(
+                self.model.get_torch_model(), self.config.__dict__
+            )
         model_queue = self.global_dict.get("model_queue")
         model_queue.start_insert_mode()
 
@@ -877,6 +882,9 @@ class USFLStageOrganizer(BaseStageOrganizer):
                 self.split_models[0],  # client model
                 self.split_models[1],  # server model
             )
+
+            if hasattr(self.model, "sync_full_model_from_split"):
+                self.model.sync_full_model_from_split()
 
             # Compute oracle gradient using split models (includes split layer gradient)
             full_model = self.model.get_torch_model().to(self.config.device)
@@ -995,7 +1003,10 @@ class USFLStageOrganizer(BaseStageOrganizer):
                         batch_weight = sum(
                             len(act["labels"]) for act in non_empty_activations
                         )
-                        if self.g_measurement_system.measurement_mode in ("accumulated", "k_batch"):
+                        if self.g_measurement_system.measurement_mode in (
+                            "accumulated",
+                            "k_batch",
+                        ):
                             # Accumulated/K-batch mode: collect (k_batch will stop after K batches internally)
                             self.g_measurement_system.accumulate_server_gradient(
                                 server_grad, batch_weight
