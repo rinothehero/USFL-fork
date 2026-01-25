@@ -174,7 +174,12 @@ if __name__ == "__main__":
             "balancing_strategy": "target",
             "balancing_target": "mean",
             "split_layer": "layer1.1.bn2",
+            # G Measurement options:
+            # - "single": First batch only (default)
+            # - "k_batch": First K batches (set g_measurement_k)
+            # - "accumulated": All batches in round
             "g_measurement_mode": "accumulated",
+            # "g_measurement_k": "5",  # Only used when g_measurement_mode is "k_batch"
         },
     }
 
@@ -287,6 +292,7 @@ if __name__ == "__main__":
         ENABLE_LOGIT_ADJUSTMENT = workload.get("enable_logit_adjustment", None)
         MIN_REQUIRE_SIZE = workload.get("min_require_size", None)
         G_MEASUREMENT_MODE = workload.get("g_measurement_mode", None)
+        G_MEASUREMENT_K = workload.get("g_measurement_k", None)
 
         server_command = []
 
@@ -381,6 +387,8 @@ if __name__ == "__main__":
             server_command.extend(["-ela"])
         if G_MEASUREMENT_MODE:
             server_command.extend(["--g-measurement-mode", G_MEASUREMENT_MODE])
+        if G_MEASUREMENT_K:
+            server_command.extend(["--g-measurement-k", str(G_MEASUREMENT_K)])
         if NETWORKING_FAIRNESS:
             if NETWORKING_FAIRNESS.lower() == "true":
                 server_command.extend(["-nf"])
