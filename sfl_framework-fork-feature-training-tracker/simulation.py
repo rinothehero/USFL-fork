@@ -164,6 +164,7 @@ if __name__ == "__main__":
             "aggregator": "fedavg",
             "dataset": "cifar10",
             "model": "resnet18_flex",
+            "force_imagenet_style": "true",
             "batch_size": "500",
             "labels_per_client": "2",
             "dirichlet_alpha": "0.3",
@@ -279,6 +280,7 @@ if __name__ == "__main__":
         USE_CUMULATIVE_USAGE = workload.get("use_cumulative_usage", None)
         USAGE_DECAY_FACTOR = workload.get("usage_decay_factor", None)
         NETWORKING_FAIRNESS = workload.get("networking_fairness", None)
+        FORCE_IMAGENET_STYLE = workload.get("force_imagenet_style", None)
         USE_DYNAMIC_BATCH_SCHEDULER = workload.get("use_dynamic_batch_scheduler", None)
         USE_VARIANCE_G = workload.get("use_variance_g", None)
         USE_FRESH_SCORING = workload.get("use_fresh_scoring", None)
@@ -300,6 +302,8 @@ if __name__ == "__main__":
             server_command.extend(["-d", DATASET])
         if MODEL:
             server_command.extend(["-m", MODEL])
+        if FORCE_IMAGENET_STYLE:
+            server_command.extend(["--force-imagenet-style", FORCE_IMAGENET_STYLE])
         if METHOD:
             server_command.extend(["-M", METHOD])
         if LOCAL_EPOCHS:
