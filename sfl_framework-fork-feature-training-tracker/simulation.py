@@ -163,7 +163,7 @@ if __name__ == "__main__":
             "selector": "usfl",
             "aggregator": "fedavg",
             "dataset": "cifar10",
-            "model": "resnet18",
+            "model": "resnet18_flex",
             "batch_size": "500",
             "labels_per_client": "2",
             "dirichlet_alpha": "0.3",
@@ -173,13 +173,13 @@ if __name__ == "__main__":
             "use_variance_g": "true",
             "balancing_strategy": "target",
             "balancing_target": "mean",
-            "split_layer": "layer1.1.bn2",
+            "split_layer": "layer2",
             # G Measurement options:
             # - "single": First batch only (default)
             # - "k_batch": First K batches (set g_measurement_k)
             # - "accumulated": All batches in round
             "g_measurement_mode": "accumulated",
-            # "g_measurement_k": "5",  # Only used when g_measurement_mode is "k_batch"
+            "g_measurement_k": "5",  # Only used when g_measurement_mode is "k_batch"
         },
     }
 
