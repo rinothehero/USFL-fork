@@ -272,6 +272,7 @@ def parse_args(custom_args=None):
         choices=[
             "resnet18",
             "resnet18_cifar",
+            "resnet18_flex",
             "lenet",
             "vgg11",
             "distilbert",
