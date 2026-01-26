@@ -487,8 +487,8 @@ else:
         clients.append(Client(users_data[i], client_steps))
 
 stats = IncrementalStats(
-    device=device, diagonal=use_resnet
-)  # ResNet uses diagonal, AlexNet uses full covariance
+    device=device, diagonal=True
+)  # Always use diagonal variance (memory efficient)
 condensed_data = {c: None for c in range(num_label)}
 train_begin_time = datetime.datetime.now()
 
@@ -984,27 +984,14 @@ while epoch != epochs:
             )
             centered_features = features_of_label - mean_feature
 
-            if use_resnet:
-                # Diagonal variance for ResNet (memory efficient)
-                var_vector = (
-                    torch.sum((centered_features**2) * weights_of_label[:, None], dim=0)
-                    / total_weight
-                )
-                stats.update(
-                    mean_feature, var_vector, label_weights[label.item()], label.item()
-                )
-            else:
-                # Full covariance matrix for AlexNet (more accurate)
-                cov_matrix = (
-                    torch.matmul(
-                        (centered_features * weights_of_label[:, None]).T,
-                        centered_features,
-                    )
-                    / total_weight
-                )
-                stats.update(
-                    mean_feature, cov_matrix, label_weights[label.item()], label.item()
-                )
+            # Always use diagonal variance (memory efficient)
+            var_vector = (
+                torch.sum((centered_features**2) * weights_of_label[:, None], dim=0)
+                / total_weight
+            )
+            stats.update(
+                mean_feature, var_vector, label_weights[label.item()], label.item()
+            )
         if Generate is True:
             # Activations generation
             if local_epoch % Sample_Frequency == 0:
@@ -1023,7 +1010,7 @@ while epoch != epochs:
                         feature_shape,
                         device,
                         stats,
-                        diagonal=use_resnet,
+                        diagonal=True,  # Always use diagonal variance
                     )
 
         # server-side model update
