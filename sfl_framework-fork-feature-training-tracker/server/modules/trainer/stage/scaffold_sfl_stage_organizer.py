@@ -245,58 +245,49 @@ class ScaffoldSFLStageOrganizer(BaseStageOrganizer):
             nonlocal total, training_loss, total_labels
             nonlocal predictions, references
 
-            # SFLV2: Create persistent optimizer and criterion once per round
+            # Create persistent optimizer and criterion once per round
             server_model = self.split_models[1].to(self.config.device)
             server_optimizer = self.in_round._get_optimizer(server_model, self.config)
             server_criterion = self.in_round._get_criterion(self.config)
 
             while True:
-                # SFLV2: Synchronous barrier - wait for ALL clients' activations
-                activations = await self.in_round.wait_for_concatenated_activations(
-                    self.selected_clients
+                # Receive activation from client (arrival order)
+                activation = await self.in_round.wait_for_activations()
+                client_id = activation["client_id"]
+
+                raw_act = activation["outputs"]
+                if isinstance(raw_act, tuple):
+                    act_tensor = raw_act[0]
+                else:
+                    act_tensor = raw_act
+
+                # Select server-side model (aggregation mode or single model)
+                if self.config.server_model_aggregation:
+                    current_server_model = self.server_models[
+                        self.selected_clients.index(client_id)
+                    ]
+                else:
+                    current_server_model = server_model
+
+                # Server-side forward
+                output = await self.in_round.forward(
+                    current_server_model, {"outputs": act_tensor, **activation}
                 )
 
-                # SFLV2: Random permutation for processing order
-                perm = torch.randperm(len(activations)).tolist()
+                is_diagnostic = (
+                    self.g_measurement_system is not None
+                    and self.g_measurement_system.is_diagnostic_round(round_number)
+                )
 
-                # Process each client in random order with sequential server updates
-                for idx in perm:
-                    activation = activations[idx]
-                    client_id = activation["client_id"]
-
-                    raw_act = activation["outputs"]
-                    if isinstance(raw_act, tuple):
-                        act_tensor = raw_act[0]
-                    else:
-                        act_tensor = raw_act
-
-                    # Select server-side model (aggregation mode or single model)
-                    if self.config.server_model_aggregation:
-                        current_server_model = self.server_models[
-                            self.selected_clients.index(client_id)
-                        ]
-                    else:
-                        current_server_model = server_model
-
-                    # Server-side forward
-                    output = await self.in_round.forward(
-                        current_server_model, {"outputs": act_tensor, **activation}
-                    )
-
-                    is_diagnostic = (
-                        self.g_measurement_system is not None
-                        and self.g_measurement_system.is_diagnostic_round(round_number)
-                    )
-
-                    # Server-side backward with persistent optimizer
-                    grad, loss, server_grad = await self.in_round.backward_from_label(
-                        current_server_model,
-                        output,
-                        activation,
-                        collect_server_grad=is_diagnostic,
-                        optimizer=server_optimizer,
-                        criterion=server_criterion,
-                    )
+                # Server-side backward with persistent optimizer
+                grad, loss, server_grad = await self.in_round.backward_from_label(
+                    current_server_model,
+                    output,
+                    activation,
+                    collect_server_grad=is_diagnostic,
+                    optimizer=server_optimizer,
+                    criterion=server_criterion,
+                )
 
                     # G Measurement: Collect server gradient
                     if is_diagnostic and server_grad:
