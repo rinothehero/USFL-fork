@@ -159,8 +159,8 @@ if __name__ == "__main__":
     # USFL feature groups
     USFL_OPTIONS = {
         "A": {
-            "method": "usfl",
-            "selector": "usfl",
+            "method": "scaffold_sfl",
+            "selector": "uniform",
             "aggregator": "fedavg",
             "dataset": "cifar10",
             "model": "resnet18",
