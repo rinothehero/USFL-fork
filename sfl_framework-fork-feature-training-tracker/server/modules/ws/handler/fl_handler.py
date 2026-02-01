@@ -48,6 +48,7 @@ class FLHandler(BaseHandler):
                 "gradient_weights",
                 "client_gradient",
                 "measurement_gradient_weight",
+                "delta_c",  # SCAFFOLD control variate update
             ]
         }
 
