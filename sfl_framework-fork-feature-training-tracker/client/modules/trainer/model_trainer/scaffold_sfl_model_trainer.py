@@ -103,11 +103,11 @@ class ScaffoldSFLModelTrainer(BaseModelTrainer):
                 self.theta_0[name] = param.data.clone().detach().cpu()
 
     def _initialize_control_variates(self):
-        """Initialize c_i to zeros if not already set"""
+        """Initialize c_i to zeros if not already set (stored on CPU)"""
         if not self.c_i:
             for name, param in self.model.named_parameters():
                 if param.requires_grad:
-                    self.c_i[name] = torch.zeros_like(param.data)
+                    self.c_i[name] = torch.zeros_like(param.data).cpu()
 
     def _apply_scaffold_correction(self):
         """Apply SCAFFOLD gradient correction: grad <- grad - c_i + c"""
