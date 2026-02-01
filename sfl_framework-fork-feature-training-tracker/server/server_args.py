@@ -43,9 +43,6 @@ class Config:
     # ==================
     dataset: str  # Dataset to use for training (e.g., 'cifar10', 'cola').
     model: str  # Model architecture to use (e.g., 'resnet18', 'vgg11', 'tiny_vgg11', 'distilbert').
-    force_imagenet_style: (
-        bool  # Force ImageNet-style stem for FlexibleResNet on CIFAR datasets.
-    )
 
     # ==================
     #     TRAINING SETTINGS
@@ -275,7 +272,6 @@ def parse_args(custom_args=None):
         choices=[
             "resnet18",
             "resnet18_cifar",
-            "resnet18_flex",
             "lenet",
             "vgg11",
             "distilbert",
@@ -285,15 +281,6 @@ def parse_args(custom_args=None):
             "mobilenet",
         ],
         required=True,
-    )
-
-    parser.add_argument(
-        "--force-imagenet-style",
-        help="Force ImageNet-style stem for FlexibleResNet even on CIFAR datasets",
-        action="store",
-        type=str_to_bool,
-        dest="force_imagenet_style",
-        default=False,
     )
 
     parser.add_argument(

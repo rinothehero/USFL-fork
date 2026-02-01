@@ -45,18 +45,6 @@ class PostRound:
             return updated_model
 
     def update_global_model(self, updated_model: "torch.nn.Module", model: "BaseModel"):
-        if updated_model is None:
-            return
-
-        if (
-            hasattr(model, "client_model")
-            and hasattr(model, "server_model")
-            and hasattr(model, "sync_full_model_from_split")
-        ):
-            model.client_model.load_state_dict(updated_model.state_dict())
-            model.sync_full_model_from_split()
-            return
-
         torch_model = model.get_torch_model()
         torch_model.load_state_dict(updated_model.state_dict())
 

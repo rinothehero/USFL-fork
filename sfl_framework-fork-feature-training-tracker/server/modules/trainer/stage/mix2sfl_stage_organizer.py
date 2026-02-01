@@ -389,11 +389,30 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
                     self.g_measurement_system is not None
                     and self.g_measurement_system.is_diagnostic_round(round_number)
                 )
-                batch_weight = None
+                # G Measurement: Collect server gradient
                 if is_diagnostic:
+                    server_grad = {
+                        name: param.grad.clone().detach().cpu()
+                        for name, param in server_model.named_parameters()
+                        if param.grad is not None
+                    }
                     batch_weight = sum(
                         len(act["labels"]) for act in non_empty_activations
                     )
+                    if self.g_measurement_system.measurement_mode in (
+                        "accumulated",
+                        "k_batch",
+                    ):
+                        # Accumulated/K-batch mode: collect (k_batch will stop after K batches internally)
+                        self.g_measurement_system.accumulate_server_gradient(
+                            server_grad, batch_weight
+                        )
+                    elif iteration_count == 0:
+                        # Single mode: only first batch
+                        self.g_measurement_system.store_server_gradient(
+                            server_grad, batch_weight
+                        )
+
                     if self.g_measurement_system.split_g_tilde is None:
                         if isinstance(grad, tuple):
                             split_grad = tuple(
@@ -474,30 +493,6 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
                                     mixed_logits, mixed_labels
                                 )
                                 mixed_loss.backward()
-
-                if is_diagnostic:
-                    if batch_weight is None:
-                        batch_weight = sum(
-                            len(act["labels"]) for act in non_empty_activations
-                        )
-                    server_grad = {
-                        name: param.grad.clone().detach().cpu()
-                        for name, param in server_model.named_parameters()
-                        if param.grad is not None
-                    }
-                    if self.g_measurement_system.measurement_mode in (
-                        "accumulated",
-                        "k_batch",
-                    ):
-                        # Accumulated/K-batch mode: collect (k_batch will stop after K batches internally)
-                        self.g_measurement_system.accumulate_server_gradient(
-                            server_grad, batch_weight
-                        )
-                    elif iteration_count == 0:
-                        # Single mode: only first batch
-                        self.g_measurement_system.store_server_gradient(
-                            server_grad, batch_weight
-                        )
 
                 optimizer.step()
 

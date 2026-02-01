@@ -7,6 +7,7 @@ from .mix2sfl_stage_organizer import Mix2SFLStageOrganizer
 from .nestfl_stage_organizer import NestFLStageOrganizer
 from .prunefl_stage_organizer import PruneFLStageOrganizer
 from .scala_stage_organizer import ScalaStageOrganizer
+from .scaffold_sfl_stage_organizer import ScaffoldSFLStageOrganizer
 from .sfl_stage_organizer import SFLStageOrganizer
 from .usfl_stage_organizer import USFLStageOrganizer
 
@@ -34,6 +35,8 @@ def get_stage_organizer(
         return NestFLStageOrganizer(config, server_config, api, dataset)
     elif server_config.method in ["sfl", "sflprox"]:
         return SFLStageOrganizer(config, server_config, api, dataset)
+    elif server_config.method == "scaffold_sfl":
+        return ScaffoldSFLStageOrganizer(config, server_config, api, dataset)
     elif server_config.method == "mix2sfl":
         return Mix2SFLStageOrganizer(config, server_config, api, dataset)
     elif server_config.method == "scala":

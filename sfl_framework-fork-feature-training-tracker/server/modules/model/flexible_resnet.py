@@ -59,7 +59,6 @@ def parse_split_layer(split_layer: str) -> dict:
 
 class BasicBlock(nn.Module):
     """Basic residual block for ResNet-18."""
-
     expansion = 1
 
     def __init__(
@@ -71,12 +70,7 @@ class BasicBlock(nn.Module):
     ):
         super(BasicBlock, self).__init__()
         self.conv1 = nn.Conv2d(
-            in_channels,
-            out_channels,
-            kernel_size=3,
-            stride=stride,
-            padding=1,
-            bias=False,
+            in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False
         )
         self.bn1 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=False)
@@ -119,15 +113,11 @@ class FlexibleResNetClient(nn.Module):
         # Initial conv layer
         if cifar_style:
             # CIFAR-10 style: 3x3 conv, no maxpool
-            self.conv1 = nn.Conv2d(
-                3, 64, kernel_size=3, stride=1, padding=1, bias=False
-            )
+            self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
             self.maxpool = nn.Identity()
         else:
             # ImageNet style: 7x7 conv with maxpool
-            self.conv1 = nn.Conv2d(
-                3, 64, kernel_size=7, stride=2, padding=3, bias=False
-            )
+            self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
             self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
 
         self.bn1 = nn.BatchNorm2d(64)
@@ -145,19 +135,11 @@ class FlexibleResNetClient(nn.Module):
 
         disable_inplace(self)
 
-    def _make_layer(
-        self, out_channels: int, num_blocks: int, stride: int
-    ) -> nn.Sequential:
+    def _make_layer(self, out_channels: int, num_blocks: int, stride: int) -> nn.Sequential:
         downsample = None
         if stride != 1 or self.in_channels != out_channels:
             downsample = nn.Sequential(
-                nn.Conv2d(
-                    self.in_channels,
-                    out_channels,
-                    kernel_size=1,
-                    stride=stride,
-                    bias=False,
-                ),
+                nn.Conv2d(self.in_channels, out_channels, kernel_size=1, stride=stride, bias=False),
                 nn.BatchNorm2d(out_channels),
             )
 
@@ -203,9 +185,7 @@ class FlexibleResNetClient(nn.Module):
         out = block.relu(out)
         return out
 
-    def forward(
-        self, x: torch.Tensor
-    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+    def forward(self, x: torch.Tensor) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -313,19 +293,11 @@ class FlexibleResNetServer(nn.Module):
         self._build_partial_block_completer()
         disable_inplace(self)
 
-    def _make_layer(
-        self, out_channels: int, num_blocks: int, stride: int
-    ) -> nn.Sequential:
+    def _make_layer(self, out_channels: int, num_blocks: int, stride: int) -> nn.Sequential:
         downsample = None
         if stride != 1 or self.in_channels != out_channels:
             downsample = nn.Sequential(
-                nn.Conv2d(
-                    self.in_channels,
-                    out_channels,
-                    kernel_size=1,
-                    stride=stride,
-                    bias=False,
-                ),
+                nn.Conv2d(self.in_channels, out_channels, kernel_size=1, stride=stride, bias=False),
                 nn.BatchNorm2d(out_channels),
             )
 
@@ -355,12 +327,7 @@ class FlexibleResNetServer(nn.Module):
                 self.partial_block["bn1"] = nn.BatchNorm2d(out_channels)
             self.partial_block["relu"] = nn.ReLU(inplace=False)
             self.partial_block["conv2"] = nn.Conv2d(
-                out_channels,
-                out_channels,
-                kernel_size=3,
-                stride=1,
-                padding=1,
-                bias=False,
+                out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False
             )
             self.partial_block["bn2"] = nn.BatchNorm2d(out_channels)
             self.partial_block["final_relu"] = nn.ReLU(inplace=False)
@@ -435,11 +402,7 @@ class FlexibleResNet(BaseModel):
         self.config = config
 
         split_layer = getattr(config, "split_layer", "layer2")
-        force_imagenet_style = getattr(config, "force_imagenet_style", False)
-        cifar_style = (
-            config.dataset in ["cifar10", "cifar100", "fmnist", "mnist"]
-            and not force_imagenet_style
-        )
+        cifar_style = config.dataset in ["cifar10", "cifar100", "fmnist", "mnist"]
 
         self.split_layer = split_layer
         self.cifar_style = cifar_style
@@ -458,17 +421,11 @@ class FlexibleResNet(BaseModel):
     def _create_full_model(self):
         """Create a full model for evaluation."""
         if self.cifar_style:
-            self.torch_model = torchvision.models.resnet18(
-                weights=None, num_classes=self.num_classes
-            )
-            self.torch_model.conv1 = nn.Conv2d(
-                3, 64, kernel_size=3, stride=1, padding=1, bias=False
-            )
+            self.torch_model = torchvision.models.resnet18(weights=None, num_classes=self.num_classes)
+            self.torch_model.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
             self.torch_model.maxpool = nn.Identity()
         else:
-            self.torch_model = torchvision.models.resnet18(
-                weights=None, num_classes=self.num_classes
-            )
+            self.torch_model = torchvision.models.resnet18(weights=None, num_classes=self.num_classes)
 
         disable_inplace(self.torch_model)
 
@@ -486,14 +443,11 @@ class FlexibleResNet(BaseModel):
             return self.forward(inputs)
 
     def save_model(self, save_path: str) -> None:
-        torch.save(
-            {
-                "client": self.client_model.state_dict(),
-                "server": self.server_model.state_dict(),
-                "full": self.torch_model.state_dict(),
-            },
-            save_path + ".pth",
-        )
+        torch.save({
+            "client": self.client_model.state_dict(),
+            "server": self.server_model.state_dict(),
+            "full": self.torch_model.state_dict(),
+        }, save_path + ".pth")
 
     def load_model(self, load_path: str) -> None:
         state = torch.load(load_path + ".pth")
@@ -540,10 +494,7 @@ class FlexibleResNet(BaseModel):
         with torch.no_grad():
             for data in testloader:
                 inputs, labels = data
-                inputs, labels = (
-                    inputs.to(self.config.device),
-                    labels.to(self.config.device),
-                )
+                inputs, labels = inputs.to(self.config.device), labels.to(self.config.device)
                 outputs = self.forward(inputs)
                 _, predicted = torch.max(outputs.data, 1)
                 total += labels.size(0)

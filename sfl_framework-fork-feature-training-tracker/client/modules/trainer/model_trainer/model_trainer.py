@@ -5,6 +5,7 @@ from .fitfl_model_trainer import FitFLModelTrainer
 from .fl_model_trainer import FLModelTrainer
 from .mix2sfl_model_trainer import Mix2SFLModelTrainer
 from .scala_model_trainer import ScalaModelTrainer
+from .scaffold_sfl_model_trainer import ScaffoldSFLModelTrainer
 from .sfl_model_trainer import SFLModelTrainer
 from .sflprox_model_trainer import SFLProxModelTrainer
 from .usfl_model_trainer import USFLModelTrainer
@@ -34,6 +35,10 @@ def get_model_trainer(
         )
     elif server_config.method == "sfl":
         return SFLModelTrainer(
+            config, server_config, dataset, model, training_params, api
+        )
+    elif server_config.method == "scaffold_sfl":
+        return ScaffoldSFLModelTrainer(
             config, server_config, dataset, model, training_params, api
         )
     elif server_config.method == "mix2sfl":
