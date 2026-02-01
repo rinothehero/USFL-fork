@@ -169,7 +169,7 @@ if __name__ == "__main__":
             "dirichlet_alpha": "0.3",
             "gradient_shuffle": "true",
             "gradient_shuffle_strategy": "random",
-            "use_dynamic_batch_scheduler": "true",
+            "use_dynamic_batch_scheduler": "false",
             "use_variance_g": "true",
             "balancing_strategy": "target",
             "balancing_target": "mean",
