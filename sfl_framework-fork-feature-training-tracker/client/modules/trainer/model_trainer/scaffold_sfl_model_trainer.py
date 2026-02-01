@@ -96,11 +96,11 @@ class ScaffoldSFLModelTrainer(BaseModelTrainer):
             print(f"[Client] K-batch finalized: {self._client_batch_count} batches, {self._accumulated_grad_samples} samples")
 
     def _snapshot_params(self):
-        """Snapshot initial parameters θ0 at round start"""
+        """Snapshot initial parameters θ0 at round start (stored on CPU)"""
         self.theta_0 = {}
         for name, param in self.model.named_parameters():
             if param.requires_grad:
-                self.theta_0[name] = param.data.clone().detach()
+                self.theta_0[name] = param.data.clone().detach().cpu()
 
     def _initialize_control_variates(self):
         """Initialize c_i to zeros if not already set"""
@@ -129,14 +129,14 @@ class ScaffoldSFLModelTrainer(BaseModelTrainer):
             if not param.requires_grad or name not in self.theta_0:
                 continue
 
-            # delta_theta = theta_K - theta_0
-            delta_theta = param.data - self.theta_0[name]
+            # delta_theta = theta_K - theta_0 (both on CPU)
+            delta_theta = param.data.cpu() - self.theta_0[name]
 
-            # c_i_new = c_i - c - delta_theta / (K * lr)
+            # c_i_new = c_i - c - delta_theta / (K * lr) (all on CPU)
             c_i_new[name] = (
                 self.c_i[name]
-                - self.c.get(name, torch.zeros_like(param.data))
-                - delta_theta.cpu() / (K * lr)
+                - self.c.get(name, torch.zeros_like(self.c_i[name]))
+                - delta_theta / (K * lr)
             )
 
         # delta_c = c_i_new - c_i
@@ -286,11 +286,11 @@ class ScaffoldSFLModelTrainer(BaseModelTrainer):
             self.c = pickle.loads(bytes.fromhex(self.training_params["control_variate"]))
             print(f"[SCAFFOLD Client {self.config.client_id}] Received global control variate c")
         else:
-            # Initialize c to zeros if not provided
+            # Initialize c to zeros if not provided (on CPU)
             self.c = {}
             for name, param in self.model.named_parameters():
                 if param.requires_grad:
-                    self.c[name] = torch.zeros_like(param.data)
+                    self.c[name] = torch.zeros_like(param.data).cpu()
 
         if self.server_config.dataset in [
             "cola",

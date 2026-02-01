@@ -486,16 +486,20 @@ class ScaffoldSFLStageOrganizer(BaseStageOrganizer):
             num_clients = len(delta_c_list)
             participation_ratio = num_clients / self.config.num_clients
 
-            for name in self.c:
-                weighted_sum = sum(
-                    delta_c[name] * weight
-                    for delta_c, weight in zip(delta_c_list, client_weights)
-                    if name in delta_c
-                )
-                # c <- c + (N/m) * avg(delta_c)
-                self.c[name] = self.c[name] + participation_ratio * (weighted_sum / total_weight)
+            if total_weight > 0:
+                for name in self.c:
+                    # Compute weighted sum (all tensors are on CPU)
+                    weighted_sum = sum(
+                        delta_c[name].cpu() * weight
+                        for delta_c, weight in zip(delta_c_list, client_weights)
+                        if name in delta_c
+                    )
+                    # c <- c + (N/m) * avg(delta_c)
+                    self.c[name] = self.c[name] + participation_ratio * (weighted_sum / total_weight)
 
-            print(f"[SCAFFOLD Server] Updated global control variate c from {len(delta_c_list)} clients")
+                print(f"[SCAFFOLD Server] Updated global control variate c from {len(delta_c_list)} clients")
+            else:
+                print(f"[SCAFFOLD Server] Warning: total_weight is zero, skipping control variate update")
 
         client_ids = [model[0] for model in model_queue.queue]
         self.global_dict.add_event(

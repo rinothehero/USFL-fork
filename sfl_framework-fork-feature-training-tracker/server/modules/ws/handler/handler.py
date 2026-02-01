@@ -27,13 +27,9 @@ def get_handler(
         return FLHandler(config, global_dict)
     elif config.method == "nestfl":
         return NestFLHandler(config, global_dict)
-    elif config.method == "sfl":
-        return SFLHandler(config, global_dict)
-    elif config.method == "sfl-u":
-        return SFLHandler(config, global_dict)
-    elif config.method == "mix2sfl":
+    elif config.method in ["sfl", "sfl-u", "mix2sfl", "scaffold_sfl"]:
         return SFLHandler(config, global_dict)
     elif config.method in ["scala", "usfl", "sflprox"]:
         return ScalaHandler(config, global_dict)
     else:
-        raise ValueError(f"Handler {config.handler} not found")
+        raise ValueError(f"Handler for method '{config.method}' not found")
