@@ -112,6 +112,14 @@ class InRound:
             else None
         )
 
+        # BatchNorm requires batch_size > 1 during training
+        batch_size = input[0].shape[0] if isinstance(input, tuple) else input.shape[0]
+        if batch_size == 1 and torch_model.training:
+            torch_model.eval()
+            result = propagator.forward(input, {"attention_mask": attention_mask})
+            torch_model.train()
+            return result
+
         return propagator.forward(input, {"attention_mask": attention_mask})
 
     async def backward_from_label_without_parameter_update(

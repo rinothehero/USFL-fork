@@ -164,7 +164,7 @@ if __name__ == "__main__":
             "aggregator": "fedavg",
             "dataset": "cifar10",
             "model": "resnet18",
-            "batch_size": "500",
+            "batch_size": "50",
             "labels_per_client": "2",
             "dirichlet_alpha": "0.3",
             "gradient_shuffle": "true",
