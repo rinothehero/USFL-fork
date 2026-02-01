@@ -163,6 +163,8 @@ class InRound:
         torch_model: "ModuleDict",
         outputs,
         activation,
+        optimizer: "optim.Optimizer" = None,
+        criterion: "nn.Module" = None,
     ):
         torch_model = torch_model.to(self.config.device)
         outputs = outputs.to(self.config.device)
@@ -177,8 +179,11 @@ class InRound:
             if inputs.requires_grad:
                 inputs.retain_grad()
 
-        criterion = self._get_criterion(self.config)
-        optimizer = self._get_optimizer(torch_model, self.config)
+        # Use external optimizer/criterion if provided, otherwise create new (legacy)
+        if criterion is None:
+            criterion = self._get_criterion(self.config)
+        if optimizer is None:
+            optimizer = self._get_optimizer(torch_model, self.config)
 
         optimizer.zero_grad()
 
@@ -225,7 +230,22 @@ class InRound:
         activation,
         collect_server_grad: bool = False,
         skip_optimizer: bool = False,
+        optimizer: "optim.Optimizer" = None,
+        criterion: "nn.Module" = None,
     ):
+        """
+        Perform backward pass from labels.
+
+        Args:
+            torch_model: Server-side model
+            outputs: Model outputs
+            activation: Activation dict containing labels and inputs
+            collect_server_grad: Whether to collect server gradients for G measurement
+            skip_optimizer: Whether to skip optimizer.step()
+            optimizer: External optimizer for state persistence (recommended).
+                       If None, creates a new optimizer (legacy behavior, not recommended).
+            criterion: External criterion. If None, creates from config.
+        """
         torch_model = torch_model.to(self.config.device)
         outputs = outputs.to(self.config.device)
         labels = activation["labels"].to(self.config.device)
@@ -239,8 +259,11 @@ class InRound:
             if inputs.requires_grad:
                 inputs.retain_grad()
 
-        criterion = self._get_criterion(self.config)
-        optimizer = self._get_optimizer(torch_model, self.config)
+        # Use external optimizer/criterion if provided, otherwise create new (legacy)
+        if criterion is None:
+            criterion = self._get_criterion(self.config)
+        if optimizer is None:
+            optimizer = self._get_optimizer(torch_model, self.config)
 
         optimizer.zero_grad()
 

@@ -921,6 +921,11 @@ class USFLStageOrganizer(BaseStageOrganizer):
         ):
             self.g_measurement_system.start_accumulated_round()
 
+        # SFLV2: Create persistent optimizer and criterion once per round
+        server_model = self.split_models[1].to(self.config.device)
+        server_optimizer = self.in_round._get_optimizer(server_model, self.config)
+        server_criterion = self.in_round._get_criterion(self.config)
+
         async def __server_side_training():
             nonlocal iteration_count
             while True:
@@ -996,6 +1001,8 @@ class USFLStageOrganizer(BaseStageOrganizer):
                         logits,
                         concatenated_activations,
                         collect_server_grad=is_diagnostic,
+                        optimizer=server_optimizer,
+                        criterion=server_criterion,
                     )
 
                     # G Measurement: Collect server gradient

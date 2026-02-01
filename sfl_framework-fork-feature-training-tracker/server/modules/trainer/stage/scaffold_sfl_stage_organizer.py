@@ -244,104 +244,124 @@ class ScaffoldSFLStageOrganizer(BaseStageOrganizer):
         async def __server_side_training():
             nonlocal total, training_loss, total_labels
             nonlocal predictions, references
+
+            # SFLV2: Create persistent optimizer and criterion once per round
+            server_model = self.split_models[1].to(self.config.device)
+            server_optimizer = self.in_round._get_optimizer(server_model, self.config)
+            server_criterion = self.in_round._get_criterion(self.config)
+
             while True:
-                # 1) Receive activation from client
-                activation = await self.in_round.wait_for_activations()
-                client_id = activation["client_id"]
-
-                raw_act = activation["outputs"]
-                if isinstance(raw_act, tuple):
-                    act_tensor = raw_act[0]
-                else:
-                    act_tensor = raw_act
-
-                # 2) Select server-side model
-                server_model = (
-                    self.server_models[self.selected_clients.index(client_id)]
-                    if self.config.server_model_aggregation
-                    else self.split_models[1]
+                # SFLV2: Synchronous barrier - wait for ALL clients' activations
+                activations = await self.in_round.wait_for_concatenated_activations(
+                    self.selected_clients
                 )
 
-                # 3) Server-side forward and backward
-                output = await self.in_round.forward(
-                    server_model, {"outputs": act_tensor, **activation}
-                )
-                is_diagnostic = (
-                    self.g_measurement_system is not None
-                    and self.g_measurement_system.is_diagnostic_round(round_number)
-                )
+                # SFLV2: Random permutation for processing order
+                perm = torch.randperm(len(activations)).tolist()
 
-                grad, loss, server_grad = await self.in_round.backward_from_label(
-                    server_model,
-                    output,
-                    activation,
-                    collect_server_grad=is_diagnostic,
-                )
+                # Process each client in random order with sequential server updates
+                for idx in perm:
+                    activation = activations[idx]
+                    client_id = activation["client_id"]
 
-                # G Measurement: Collect server gradient
-                if is_diagnostic and server_grad:
-                    batch_weight = len(activation["labels"])
-                    if self.g_measurement_system.measurement_mode in (
-                        "accumulated",
-                        "k_batch",
-                    ):
-                        self.g_measurement_system.accumulate_server_gradient(
-                            server_grad, batch_weight
-                        )
-                    elif not self.g_measurement_system.server_g_tildes:
-                        self.g_measurement_system.store_server_gradient(
-                            server_grad, batch_weight
-                        )
-                        if (
-                            self.g_measurement_system.split_g_tilde is None
-                            and grad is not None
+                    raw_act = activation["outputs"]
+                    if isinstance(raw_act, tuple):
+                        act_tensor = raw_act[0]
+                    else:
+                        act_tensor = raw_act
+
+                    # Select server-side model (aggregation mode or single model)
+                    if self.config.server_model_aggregation:
+                        current_server_model = self.server_models[
+                            self.selected_clients.index(client_id)
+                        ]
+                    else:
+                        current_server_model = server_model
+
+                    # Server-side forward
+                    output = await self.in_round.forward(
+                        current_server_model, {"outputs": act_tensor, **activation}
+                    )
+
+                    is_diagnostic = (
+                        self.g_measurement_system is not None
+                        and self.g_measurement_system.is_diagnostic_round(round_number)
+                    )
+
+                    # Server-side backward with persistent optimizer
+                    grad, loss, server_grad = await self.in_round.backward_from_label(
+                        current_server_model,
+                        output,
+                        activation,
+                        collect_server_grad=is_diagnostic,
+                        optimizer=server_optimizer,
+                        criterion=server_criterion,
+                    )
+
+                    # G Measurement: Collect server gradient
+                    if is_diagnostic and server_grad:
+                        batch_weight = len(activation["labels"])
+                        if self.g_measurement_system.measurement_mode in (
+                            "accumulated",
+                            "k_batch",
                         ):
-                            if isinstance(grad, tuple):
-                                split_grad = tuple(
-                                    g.clone().detach().cpu()
-                                    for g in grad
-                                    if g is not None
-                                )
-                                split_grad = tuple(
-                                    g.mean(dim=0) if g.dim() >= 1 else g
-                                    for g in split_grad
-                                )
-                                self.g_measurement_system.split_g_tilde = split_grad
-                            else:
-                                split_grad = grad.clone().detach().cpu()
-                                if split_grad.dim() >= 1:
-                                    self.g_measurement_system.split_g_tilde = (
-                                        split_grad.mean(dim=0)
-                                    )
-                                else:
-                                    self.g_measurement_system.split_g_tilde = split_grad
-                            print(
-                                f"[G Measurement] Split layer gradient collected (client={client_id})"
+                            self.g_measurement_system.accumulate_server_gradient(
+                                server_grad, batch_weight
                             )
-                        print(
-                            f"[G Measurement] Server gradient collected (client={client_id}, batch_size={batch_weight})"
-                        )
+                        elif not self.g_measurement_system.server_g_tildes:
+                            self.g_measurement_system.store_server_gradient(
+                                server_grad, batch_weight
+                            )
+                            if (
+                                self.g_measurement_system.split_g_tilde is None
+                                and grad is not None
+                            ):
+                                if isinstance(grad, tuple):
+                                    split_grad = tuple(
+                                        g.clone().detach().cpu()
+                                        for g in grad
+                                        if g is not None
+                                    )
+                                    split_grad = tuple(
+                                        g.mean(dim=0) if g.dim() >= 1 else g
+                                        for g in split_grad
+                                    )
+                                    self.g_measurement_system.split_g_tilde = split_grad
+                                else:
+                                    split_grad = grad.clone().detach().cpu()
+                                    if split_grad.dim() >= 1:
+                                        self.g_measurement_system.split_g_tilde = (
+                                            split_grad.mean(dim=0)
+                                        )
+                                    else:
+                                        self.g_measurement_system.split_g_tilde = split_grad
+                                print(
+                                    f"[G Measurement] Split layer gradient collected (client={client_id})"
+                                )
+                            print(
+                                f"[G Measurement] Server gradient collected (client={client_id}, batch_size={batch_weight})"
+                            )
 
-                # Compute metrics
-                predicted = (
-                    output
-                    if self.config.dataset == "sts-b"
-                    else torch.argmax(output, dim=-1)
-                )
-                predictions.extend(predicted.cpu().numpy())
-                references.extend(activation["labels"].cpu().numpy())
+                    # Compute metrics
+                    predicted = (
+                        output
+                        if self.config.dataset == "sts-b"
+                        else torch.argmax(output, dim=-1)
+                    )
+                    predictions.extend(predicted.cpu().numpy())
+                    references.extend(activation["labels"].cpu().numpy())
 
-                total += 1
-                total_labels += len(activation["labels"])
-                training_loss += loss
+                    total += 1
+                    total_labels += len(activation["labels"])
+                    training_loss += loss
 
-                # Send gradient to client
-                await self.in_round.send_gradients(
-                    self.connection,
-                    grad,
-                    client_id,
-                    activation["model_index"],
-                )
+                    # Send gradient back to client
+                    await self.in_round.send_gradients(
+                        self.connection,
+                        grad,
+                        client_id,
+                        activation["model_index"],
+                    )
 
         wait_for_models = asyncio.create_task(
             self.in_round.wait_for_model_submission(
