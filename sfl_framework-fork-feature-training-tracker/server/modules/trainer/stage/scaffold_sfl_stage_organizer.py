@@ -289,70 +289,70 @@ class ScaffoldSFLStageOrganizer(BaseStageOrganizer):
                     criterion=server_criterion,
                 )
 
-                    # G Measurement: Collect server gradient
-                    if is_diagnostic and server_grad:
-                        batch_weight = len(activation["labels"])
-                        if self.g_measurement_system.measurement_mode in (
-                            "accumulated",
-                            "k_batch",
+                # G Measurement: Collect server gradient
+                if is_diagnostic and server_grad:
+                    batch_weight = len(activation["labels"])
+                    if self.g_measurement_system.measurement_mode in (
+                        "accumulated",
+                        "k_batch",
+                    ):
+                        self.g_measurement_system.accumulate_server_gradient(
+                            server_grad, batch_weight
+                        )
+                    elif not self.g_measurement_system.server_g_tildes:
+                        self.g_measurement_system.store_server_gradient(
+                            server_grad, batch_weight
+                        )
+                        if (
+                            self.g_measurement_system.split_g_tilde is None
+                            and grad is not None
                         ):
-                            self.g_measurement_system.accumulate_server_gradient(
-                                server_grad, batch_weight
-                            )
-                        elif not self.g_measurement_system.server_g_tildes:
-                            self.g_measurement_system.store_server_gradient(
-                                server_grad, batch_weight
-                            )
-                            if (
-                                self.g_measurement_system.split_g_tilde is None
-                                and grad is not None
-                            ):
-                                if isinstance(grad, tuple):
-                                    split_grad = tuple(
-                                        g.clone().detach().cpu()
-                                        for g in grad
-                                        if g is not None
-                                    )
-                                    split_grad = tuple(
-                                        g.mean(dim=0) if g.dim() >= 1 else g
-                                        for g in split_grad
-                                    )
-                                    self.g_measurement_system.split_g_tilde = split_grad
-                                else:
-                                    split_grad = grad.clone().detach().cpu()
-                                    if split_grad.dim() >= 1:
-                                        self.g_measurement_system.split_g_tilde = (
-                                            split_grad.mean(dim=0)
-                                        )
-                                    else:
-                                        self.g_measurement_system.split_g_tilde = split_grad
-                                print(
-                                    f"[G Measurement] Split layer gradient collected (client={client_id})"
+                            if isinstance(grad, tuple):
+                                split_grad = tuple(
+                                    g.clone().detach().cpu()
+                                    for g in grad
+                                    if g is not None
                                 )
+                                split_grad = tuple(
+                                    g.mean(dim=0) if g.dim() >= 1 else g
+                                    for g in split_grad
+                                )
+                                self.g_measurement_system.split_g_tilde = split_grad
+                            else:
+                                split_grad = grad.clone().detach().cpu()
+                                if split_grad.dim() >= 1:
+                                    self.g_measurement_system.split_g_tilde = (
+                                        split_grad.mean(dim=0)
+                                    )
+                                else:
+                                    self.g_measurement_system.split_g_tilde = split_grad
                             print(
-                                f"[G Measurement] Server gradient collected (client={client_id}, batch_size={batch_weight})"
+                                f"[G Measurement] Split layer gradient collected (client={client_id})"
                             )
+                        print(
+                            f"[G Measurement] Server gradient collected (client={client_id}, batch_size={batch_weight})"
+                        )
 
-                    # Compute metrics
-                    predicted = (
-                        output
-                        if self.config.dataset == "sts-b"
-                        else torch.argmax(output, dim=-1)
-                    )
-                    predictions.extend(predicted.cpu().numpy())
-                    references.extend(activation["labels"].cpu().numpy())
+                # Compute metrics
+                predicted = (
+                    output
+                    if self.config.dataset == "sts-b"
+                    else torch.argmax(output, dim=-1)
+                )
+                predictions.extend(predicted.cpu().numpy())
+                references.extend(activation["labels"].cpu().numpy())
 
-                    total += 1
-                    total_labels += len(activation["labels"])
-                    training_loss += loss
+                total += 1
+                total_labels += len(activation["labels"])
+                training_loss += loss
 
-                    # Send gradient back to client
-                    await self.in_round.send_gradients(
-                        self.connection,
-                        grad,
-                        client_id,
-                        activation["model_index"],
-                    )
+                # Send gradient back to client
+                await self.in_round.send_gradients(
+                    self.connection,
+                    grad,
+                    client_id,
+                    activation["model_index"],
+                )
 
         wait_for_models = asyncio.create_task(
             self.in_round.wait_for_model_submission(
