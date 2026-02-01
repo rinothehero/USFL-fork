@@ -305,6 +305,7 @@ def parse_args(custom_args=None):
             "sflprox",
             "cl",
             "mix2sfl",
+            "scaffold_sfl",
         ],
         required=True,
     )
