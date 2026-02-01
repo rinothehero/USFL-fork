@@ -464,7 +464,6 @@ class ScaffoldSFLStageOrganizer(BaseStageOrganizer):
 
         # SCAFFOLD: Collect delta_c from clients and update global c
         delta_c_list = []
-        client_weights = []
         for item in model_queue.queue:
             if len(item) >= 3:
                 client_id, model, num_samples = item[0], item[1], item[2]
@@ -472,34 +471,25 @@ class ScaffoldSFLStageOrganizer(BaseStageOrganizer):
                     delta_c_hex = num_samples["delta_c"]
                     delta_c = pickle.loads(bytes.fromhex(delta_c_hex))
                     delta_c_list.append(delta_c)
-
-                    # Use dataset_size as weight
-                    weight = num_samples.get("dataset_size", 1)
-                    client_weights.append(weight)
-
                     del num_samples["delta_c"]  # Clean up
-                    print(f"[SCAFFOLD Server] Received delta_c from client {client_id} (weight={weight})")
+                    print(f"[SCAFFOLD Server] Received delta_c from client {client_id}")
 
         if delta_c_list:
-            # Aggregate delta_c: weighted average
-            total_weight = sum(client_weights)
-            num_clients = len(delta_c_list)
-            participation_ratio = num_clients / self.config.num_clients
+            # SCAFFOLD Algorithm 1: c <- c + (1/N) * Σ delta_c_i
+            # Simple sum over participating clients, scaled by 1/N (total clients)
+            N = self.config.num_clients
 
-            if total_weight > 0:
-                for name in self.c:
-                    # Compute weighted sum (all tensors are on CPU)
-                    weighted_sum = sum(
-                        delta_c[name].cpu() * weight
-                        for delta_c, weight in zip(delta_c_list, client_weights)
-                        if name in delta_c
-                    )
-                    # c <- c + (N/m) * avg(delta_c)
-                    self.c[name] = self.c[name] + participation_ratio * (weighted_sum / total_weight)
+            for name in self.c:
+                # Sum delta_c from all participating clients (unweighted)
+                delta_c_sum = sum(
+                    delta_c[name].cpu()
+                    for delta_c in delta_c_list
+                    if name in delta_c
+                )
+                # c <- c + (1/N) * Σ delta_c_i
+                self.c[name] = self.c[name] + delta_c_sum / N
 
-                print(f"[SCAFFOLD Server] Updated global control variate c from {len(delta_c_list)} clients")
-            else:
-                print(f"[SCAFFOLD Server] Warning: total_weight is zero, skipping control variate update")
+            print(f"[SCAFFOLD Server] Updated global control variate c from {len(delta_c_list)} clients (N={N})")
 
         client_ids = [model[0] for model in model_queue.queue]
         self.global_dict.add_event(
