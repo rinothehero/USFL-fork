@@ -59,12 +59,12 @@ class MNIST(BaseDataset):
                 pin_memory=False,
             )
         else:
-            # Original scheduler: Use configured batch size with shuffling and drop_last
+            # Original scheduler: Use configured batch size with shuffling
             train_loader = torch.utils.data.DataLoader(
                 dataset=self.trainset,
                 batch_size=self.config.batch_size,
                 shuffle=True,
-                drop_last=True,  # For BatchNorm
+                drop_last=False,  # Server handles batch_size=1 with eval mode
                 pin_memory=False,
             )
 

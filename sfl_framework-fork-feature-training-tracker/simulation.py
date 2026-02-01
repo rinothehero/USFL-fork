@@ -159,17 +159,17 @@ if __name__ == "__main__":
     # USFL feature groups
     USFL_OPTIONS = {
         "A": {
-            "method": "usfl",
-            "selector": "usfl",
+            "method": "scaffold_sfl",
+            "selector": "uniform",
             "aggregator": "fedavg",
             "dataset": "cifar10",
             "model": "resnet18",
-            "batch_size": "500",
+            "batch_size": "50",
             "labels_per_client": "2",
             "dirichlet_alpha": "0.3",
             "gradient_shuffle": "true",
             "gradient_shuffle_strategy": "random",
-            "use_dynamic_batch_scheduler": "true",
+            "use_dynamic_batch_scheduler": "false",
             "use_variance_g": "true",
             "balancing_strategy": "target",
             "balancing_target": "mean",
