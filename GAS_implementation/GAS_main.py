@@ -133,7 +133,7 @@ momentum = _env_float("GAS_MOMENTUM", momentum)
 split_layer = _env_str("GAS_SPLIT_LAYER", split_layer)
 
 # Random seeds selection
-seed_value = 2023
+seed_value = _env_int("GAS_SEED", 2023)
 torch.manual_seed(seed_value)
 np.random.seed(seed_value)
 torch.cuda.manual_seed(seed_value)
