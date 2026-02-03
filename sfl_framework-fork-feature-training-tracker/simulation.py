@@ -154,6 +154,9 @@ if __name__ == "__main__":
         "usage_decay_factor": "0.95",
         "use_fresh_scoring": "false",
         "freshness_decay_rate": "0.5",
+        # Drift Measurement (SCAFFOLD-style)
+        "enable_drift_measurement": "false",
+        "drift_sample_interval": "1",
     }
 
     # USFL feature groups
@@ -293,6 +296,8 @@ if __name__ == "__main__":
         MIN_REQUIRE_SIZE = workload.get("min_require_size", None)
         G_MEASUREMENT_MODE = workload.get("g_measurement_mode", None)
         G_MEASUREMENT_K = workload.get("g_measurement_k", None)
+        ENABLE_DRIFT_MEASUREMENT = workload.get("enable_drift_measurement", None)
+        DRIFT_SAMPLE_INTERVAL = workload.get("drift_sample_interval", None)
 
         server_command = []
 
@@ -389,6 +394,10 @@ if __name__ == "__main__":
             server_command.extend(["--g-measurement-mode", G_MEASUREMENT_MODE])
         if G_MEASUREMENT_K:
             server_command.extend(["--g-measurement-k", str(G_MEASUREMENT_K)])
+        if ENABLE_DRIFT_MEASUREMENT and ENABLE_DRIFT_MEASUREMENT.lower() == "true":
+            server_command.extend(["--enable-drift-measurement"])
+        if DRIFT_SAMPLE_INTERVAL:
+            server_command.extend(["--drift-sample-interval", str(DRIFT_SAMPLE_INTERVAL)])
         if NETWORKING_FAIRNESS:
             if NETWORKING_FAIRNESS.lower() == "true":
                 server_command.extend(["-nf"])
