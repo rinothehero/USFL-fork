@@ -51,12 +51,81 @@ class Mix2SFLModelTrainer(BaseModelTrainer):
         self._accumulated_grad_samples: int = 0
         self._client_batch_count: int = 0  # For k_batch mode
 
+        # Drift Measurement (SCAFFOLD-style)
+        self.enable_drift_measurement = getattr(
+            server_config, "enable_drift_measurement", False
+        )
+        self.drift_sample_interval = getattr(server_config, "drift_sample_interval", 1)
+        self._round_start_params: dict = {}
+        self._drift_trajectory_sum: float = 0.0
+        self._batch_step_count: int = 0
+        self._endpoint_drift: float = 0.0
+
     def _reset_g_accumulation(self):
         self.accumulated_gradients = []
         self.gradient_weights = []
         self._accumulated_grad_sum = {}
         self._accumulated_grad_samples = 0
         self._client_batch_count = 0
+
+    # Drift Measurement Methods
+    def _reset_drift_measurement(self):
+        """Reset drift measurement state for new round."""
+        self._round_start_params = {}
+        self._drift_trajectory_sum = 0.0
+        self._batch_step_count = 0
+        self._endpoint_drift = 0.0
+
+    def _snapshot_round_start(self):
+        """Save model parameters at round start (x_c^{t,0})."""
+        if not self.enable_drift_measurement:
+            return
+        self._round_start_params = {
+            name: param.detach().clone().cpu()
+            for name, param in self.model.named_parameters()
+        }
+
+    def _compute_drift_to_start(self) -> float:
+        """Compute ||x_c^{t,b} - x_c^{t,0}||^2."""
+        if not self._round_start_params:
+            return 0.0
+        drift_sq = 0.0
+        for name, param in self.model.named_parameters():
+            if name in self._round_start_params:
+                diff = param.detach().cpu() - self._round_start_params[name]
+                drift_sq += (diff ** 2).sum().item()
+        return drift_sq
+
+    def _accumulate_drift(self):
+        """Accumulate drift after optimizer step."""
+        if not self.enable_drift_measurement:
+            return
+        self._batch_step_count += 1
+        if self._batch_step_count % self.drift_sample_interval == 0:
+            drift_sq = self._compute_drift_to_start()
+            self._drift_trajectory_sum += drift_sq
+
+    def _finalize_drift_measurement(self):
+        """Finalize drift measurement at round end."""
+        if not self.enable_drift_measurement:
+            return
+        # Always compute endpoint drift at the very end
+        self._endpoint_drift = self._compute_drift_to_start()
+        # If sampling was used, extrapolate trajectory sum
+        if self.drift_sample_interval > 1:
+            sampled_steps = self._batch_step_count // self.drift_sample_interval
+            if sampled_steps > 0:
+                self._drift_trajectory_sum = (
+                    self._drift_trajectory_sum * self._batch_step_count / sampled_steps
+                )
+
+    def get_drift_metrics(self) -> dict:
+        """Return drift metrics for server."""
+        return {
+            "drift_trajectory_sum": self._drift_trajectory_sum,
+            "drift_batch_steps": self._batch_step_count,
+            "drift_endpoint": self._endpoint_drift,
+        }
 
     def _accumulate_client_grad(self, batch_size: int):
         if batch_size <= 0:
@@ -89,6 +158,9 @@ class Mix2SFLModelTrainer(BaseModelTrainer):
         self.model.train()
         optimizer = self.get_optimizer(self.server_config)
         iterations = int(params.get("iterations", len(self.trainloader)))
+
+        # Snapshot parameters at round start for drift measurement
+        self._snapshot_round_start()
 
         for epoch in range(self.training_params["local_epochs"]):
             dataloader_iterator = iter(self.trainloader)
@@ -149,6 +221,9 @@ class Mix2SFLModelTrainer(BaseModelTrainer):
                             self.gradient_weights.append(len(labels))
 
                     optimizer.step()
+
+                    # Accumulate drift after parameter update
+                    self._accumulate_drift()
                 else:
                     await self.api.submit_activations(
                         {
@@ -163,6 +238,7 @@ class Mix2SFLModelTrainer(BaseModelTrainer):
 
     async def train(self, params: dict):
         self._reset_g_accumulation()
+        self._reset_drift_measurement()
         if self.server_config.dataset in [
             "cola",
             "sst2",
@@ -178,3 +254,4 @@ class Mix2SFLModelTrainer(BaseModelTrainer):
             raise ValueError("mix2sfl supports vision datasets only")
         await self._train_default_dataset(params)
         self._finalize_g_accumulation()
+        self._finalize_drift_measurement()

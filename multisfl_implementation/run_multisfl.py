@@ -206,6 +206,20 @@ def parse_args() -> argparse.Namespace:
         help="Max norm for gradient clipping",
     )
 
+    # Drift Measurement
+    parser.add_argument(
+        "--enable_drift_measurement",
+        type=str_to_bool,
+        default=False,
+        help="Enable SCAFFOLD-style drift measurement",
+    )
+    parser.add_argument(
+        "--drift_sample_interval",
+        type=int,
+        default=1,
+        help="Sample drift every N steps (1 = every step)",
+    )
+
     return parser.parse_args()
 
 
@@ -262,6 +276,8 @@ def main():
         clip_grad_max_norm=args.clip_grad_max_norm,
         min_samples_per_client=args.min_samples_per_client,
         use_full_epochs=args.use_full_epochs,
+        enable_drift_measurement=args.enable_drift_measurement,
+        drift_sample_interval=args.drift_sample_interval,
     )
 
     # Data Partitioning
@@ -488,6 +504,11 @@ def main():
         "total_requested": total_requested,
         "total_collected": total_collected,
     }
+
+    # Add drift measurement results
+    if trainer.drift_tracker is not None:
+        results["drift_history"] = trainer.drift_tracker.get_history()
+        print(f"\n[Drift Measurement] Final G_drift values: {results['drift_history']['G_drift'][-5:]}")
 
     os.makedirs("results", exist_ok=True)
     filename = f"results/results_multisfl_{args.dataset}_{args.partition}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"

@@ -184,6 +184,12 @@ class Config:
     g_measurement_k: int  # Number of batches to collect in k_batch mode (default: 5)
 
     # ==================
+    #  DRIFT MEASUREMENT OPTIONS (SCAFFOLD-style)
+    # ==================
+    enable_drift_measurement: bool  # Enable client drift measurement
+    drift_sample_interval: int  # Measure drift every n steps (1 = every step, default: 1)
+
+    # ==================
     #  MISSING CLASS SELECTOR OPTIONS
     # ==================
     num_missing_class: int
@@ -494,7 +500,7 @@ def parse_args(custom_args=None):
         action="store",
         type=str,
         dest="distributer",
-        choices=["uniform", "dirichlet", "label", "label_dirichlet", "shard_dirichlet"],
+        choices=["uniform", "iid", "dirichlet", "label", "label_dirichlet", "shard_dirichlet"],
         default="dirichlet",
         required=False,
     )
@@ -1058,6 +1064,22 @@ def parse_args(custom_args=None):
         type=int,
         dest="g_measurement_k",
         default=5,
+    )
+
+    # Drift Measurement Options (SCAFFOLD-style)
+    parser.add_argument(
+        "--enable-drift-measurement",
+        help="Enable client drift measurement (SCAFFOLD-style)",
+        action="store_true",
+        dest="enable_drift_measurement",
+    )
+    parser.add_argument(
+        "--drift-sample-interval",
+        help="Measure drift every n steps (1 = every step, default: 1)",
+        action="store",
+        type=int,
+        dest="drift_sample_interval",
+        default=1,
     )
 
     parser.set_defaults(networking_fairness=True)

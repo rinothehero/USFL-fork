@@ -12,6 +12,7 @@ from .in_round.in_round import InRound
 from .post_round.post_round import PostRound
 from .pre_round.pre_round import PreRound
 from utils.g_measurement import GMeasurementSystem
+from utils.drift_measurement import DriftMeasurementTracker
 
 if TYPE_CHECKING:
     from server_args import Config
@@ -73,6 +74,12 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
                 measurement_mode=measurement_mode,
                 measurement_k=measurement_k,
             )
+
+        # Drift Measurement (SCAFFOLD-style)
+        self.drift_tracker = None
+        if getattr(config, "enable_drift_measurement", False):
+            self.drift_tracker = DriftMeasurementTracker()
+            print("[Drift] DriftMeasurementTracker initialized (Mix2SFL)")
 
     def _concatenate_activations(self, concatenated_activations, activation):
         if not concatenated_activations:
@@ -225,6 +232,10 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
                 self.model.get_torch_model(), self.config.__dict__
             )
         self.split_models = split_models
+
+        # Drift Measurement: Snapshot client model at round start
+        if self.drift_tracker is not None:
+            self.drift_tracker.on_round_start(self.split_models[0])
 
         model_queue = self.global_dict.get("model_queue")
         model_queue.start_insert_mode()
@@ -687,6 +698,23 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
                 if isinstance(num_samples, dict) and "client_gradient" in num_samples:
                     del num_samples["client_gradient"]
 
+        # Drift Measurement: Collect drift metrics from clients
+        if self.drift_tracker is not None:
+            for item in model_queue.queue:
+                if len(item) >= 3:
+                    client_id, model, num_samples = item[0], item[1], item[2]
+                    if isinstance(num_samples, dict):
+                        drift_trajectory_sum = num_samples.get("drift_trajectory_sum", 0.0)
+                        drift_batch_steps = num_samples.get("drift_batch_steps", 0)
+                        drift_endpoint = num_samples.get("drift_endpoint", 0.0)
+                        if drift_batch_steps > 0:
+                            self.drift_tracker.collect_client_drift(
+                                client_id,
+                                drift_trajectory_sum,
+                                drift_batch_steps,
+                                drift_endpoint,
+                            )
+
         client_ids = [model[0] for model in model_queue.queue]
         self.global_dict.add_event(
             "MODEL_AGGREGATION_START", {"client_ids": client_ids}
@@ -703,6 +731,17 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
         if updated_torch_model is not None:
             updated_torch_model = self.aggregator.model_reshape(updated_torch_model)
             self.post_round.update_global_model(updated_torch_model, self.model)
+
+        # Drift Measurement: Compute G_drift after aggregation
+        if self.drift_tracker is not None:
+            if hasattr(self.model, "get_split_models"):
+                new_client_model, _ = self.model.get_split_models()
+            else:
+                new_client_model = self.split_models[0]
+
+            drift_result = self.drift_tracker.on_round_end(round_number, new_client_model)
+            if drift_result:
+                self.global_dict.add_event("DRIFT_MEASUREMENT", drift_result.to_dict())
 
         model_queue.clear()
         accuracy = self.post_round.evaluate_global_model(self.model, self.testloader)

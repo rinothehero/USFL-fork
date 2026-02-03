@@ -51,6 +51,16 @@ class USFLModelTrainer(BaseModelTrainer):
         self._accumulated_grad_samples: int = 0
         self._client_batch_count: int = 0  # For k_batch mode
 
+        # Drift Measurement (SCAFFOLD-style)
+        self.enable_drift_measurement = getattr(
+            server_config, "enable_drift_measurement", False
+        )
+        self.drift_sample_interval = getattr(server_config, "drift_sample_interval", 1)
+        self._round_start_params: dict = {}
+        self._drift_trajectory_sum: float = 0.0
+        self._batch_step_count: int = 0
+        self._endpoint_drift: float = 0.0
+
     def _reset_g_accumulation(self):
         self.accumulated_gradients = []
         self.gradient_weights = []
@@ -85,6 +95,52 @@ class USFLModelTrainer(BaseModelTrainer):
         if self.g_measurement_mode == "k_batch":
             print(f"[Client] K-batch finalized: {self._client_batch_count} batches, {self._accumulated_grad_samples} samples")
 
+    # Drift Measurement Methods (SCAFFOLD-style)
+    def _reset_drift_measurement(self):
+        self._round_start_params = {}
+        self._drift_trajectory_sum = 0.0
+        self._batch_step_count = 0
+        self._endpoint_drift = 0.0
+
+    def _snapshot_round_start(self):
+        self._round_start_params = {
+            name: param.data.clone().detach()
+            for name, param in self.model.named_parameters()
+        }
+        self._drift_trajectory_sum = 0.0
+        self._batch_step_count = 0
+
+    def _compute_drift_to_start(self) -> float:
+        drift_sq = 0.0
+        for name, param in self.model.named_parameters():
+            if name in self._round_start_params:
+                diff = param.data - self._round_start_params[name]
+                drift_sq += (diff ** 2).sum().item()
+        return drift_sq
+
+    def _accumulate_drift(self):
+        self._batch_step_count += 1
+        if self._batch_step_count % self.drift_sample_interval == 0:
+            drift = self._compute_drift_to_start()
+            self._drift_trajectory_sum += drift
+            self._endpoint_drift = drift
+
+    def _finalize_drift_measurement(self):
+        self._endpoint_drift = self._compute_drift_to_start()
+        if self.drift_sample_interval > 1:
+            sampled_steps = self._batch_step_count // self.drift_sample_interval
+            if sampled_steps > 0:
+                self._drift_trajectory_sum = (
+                    self._drift_trajectory_sum * self._batch_step_count / sampled_steps
+                )
+
+    def get_drift_metrics(self) -> dict:
+        return {
+            "drift_trajectory_sum": self._drift_trajectory_sum,
+            "drift_batch_steps": self._batch_step_count,
+            "drift_endpoint": self._endpoint_drift,
+        }
+
     async def _train_default_dataset(self, params: dict):
         self.model.train()
         optimizer = self.optimizer
@@ -93,6 +149,10 @@ class USFLModelTrainer(BaseModelTrainer):
         my_schedule = (
             schedule_dict.get(str(self.config.client_id)) if schedule_dict else None
         )
+
+        # Drift Measurement: Snapshot round start params
+        if self.enable_drift_measurement:
+            self._snapshot_round_start()
 
         for epoch in range(self.training_params["local_epochs"]):
             print(f"Epoch: {epoch}, client_id: {self.config.client_id}")
@@ -200,6 +260,10 @@ class USFLModelTrainer(BaseModelTrainer):
 
                     optimizer.step()
 
+                    # Drift Measurement: Accumulate after optimizer step
+                    if self.enable_drift_measurement:
+                        self._accumulate_drift()
+
                     completed_iterations += 1
                     progress_bar.update(1)
 
@@ -276,6 +340,10 @@ class USFLModelTrainer(BaseModelTrainer):
 
                     optimizer.step()
 
+                    # Drift Measurement: Accumulate after optimizer step
+                    if self.enable_drift_measurement:
+                        self._accumulate_drift()
+
                     completed_iterations += 1
                     progress_bar.update(1)
 
@@ -285,6 +353,10 @@ class USFLModelTrainer(BaseModelTrainer):
                         break
 
             progress_bar.close()
+
+        # Drift Measurement: Finalize at round end
+        if self.enable_drift_measurement:
+            self._finalize_drift_measurement()
 
     async def _train_glue_dataset(self, params: dict):
         self.model.train()
@@ -454,6 +526,7 @@ class USFLModelTrainer(BaseModelTrainer):
 
     async def train(self, params: dict):
         self._reset_g_accumulation()
+        self._reset_drift_measurement()
         if self.server_config.dataset in [
             "cola",
             "sst2",

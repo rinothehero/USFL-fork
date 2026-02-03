@@ -18,6 +18,7 @@ from .scheduler import SamplingProportionScheduler
 from .models import SplitModel, get_full_model, get_split_models, ClientNet, ServerNet
 from .utils import set_seed
 from .g_measurement import GMeasurementSystem
+from .drift_measurement import MultiSFLDriftTracker
 from torch.utils.data import DataLoader, ConcatDataset
 
 
@@ -82,6 +83,15 @@ class MultiSFLTrainer:
 
         self.B = cfg.num_branches or cfg.n_main_clients_per_round
         assert self.B == len(self.fed.branches) == len(self.main.branches)
+
+        # Initialize Drift Measurement Tracker
+        self.drift_tracker: Optional[MultiSFLDriftTracker] = None
+        if cfg.enable_drift_measurement:
+            self.drift_tracker = MultiSFLDriftTracker(
+                sample_interval=cfg.drift_sample_interval,
+                device=cfg.device,
+            )
+            print(f"[Drift Measurement] Initialized. Sample interval: {cfg.drift_sample_interval}")
 
         self.stats: List[RoundStats] = []
 
@@ -202,6 +212,12 @@ class MultiSFLTrainer:
             print(
                 f"\n[Round {r + 1}/{self.cfg.num_rounds}] Branch-Client mapping: {mapping}"
             )
+
+            # Drift Measurement: Snapshot master client model at round start
+            if self.drift_tracker is not None:
+                wc_master_sd = self.fed.master_state_dict
+                if wc_master_sd is not None:
+                    self.drift_tracker.on_round_start(wc_master_sd)
 
             # G Measurement: Setup PRE-ROUND model and compute Oracle
             is_diagnostic = (
@@ -481,10 +497,18 @@ class MultiSFLTrainer:
                         clip_grad_max_norm=self.cfg.clip_grad_max_norm,
                     )
 
+                    # Drift Measurement: Accumulate drift after client update
+                    if self.drift_tracker is not None:
+                        self.drift_tracker.accumulate_branch_drift(b, bc.model)
+
                     branch_grad_norm_sq += train_result.grad_norm_sq
                     branch_grad_f_main_norm += train_result.grad_f_main_norm
                     branch_server_update_norm += train_result.server_param_update_norm
                     branch_client_update_norm += client_stats.param_update_norm
+
+                # Drift Measurement: Finalize branch when it completes local steps
+                if self.drift_tracker is not None:
+                    self.drift_tracker.finalize_branch(b, bc.model, client_id=client_id)
 
                 # Normalize by actual steps run
                 grad_norm_sq_list.append(branch_grad_norm_sq / steps_to_run)
@@ -531,6 +555,12 @@ class MultiSFLTrainer:
             self.main.compute_master()
             self.fed.soft_pull_to_master()
             self.main.soft_pull_to_master()
+
+            # Drift Measurement: Finalize round metrics
+            if self.drift_tracker is not None:
+                wc_master_new = self.fed.master_state_dict
+                if wc_master_new is not None:
+                    self.drift_tracker.on_round_end(r + 1, wc_master_new)
 
             # G Measurement: Perform measurement using PRE-ROUND models and COLLECTED data
             if (

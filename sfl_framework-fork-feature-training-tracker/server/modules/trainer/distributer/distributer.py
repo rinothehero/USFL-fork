@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 
 def get_distributer(config: "Config"):
-    if config.distributer == "uniform":
+    if config.distributer == "uniform" or config.distributer == "iid":
         return UniformDistributer(config)
     elif config.distributer == "dirichlet":
         return DirichletDistributer(config)

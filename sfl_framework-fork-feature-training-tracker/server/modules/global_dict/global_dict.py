@@ -128,6 +128,7 @@ class GlobalDict:
 
         with open(filename, "w") as f:
             g_measurements = []
+            drift_measurements = []
             for round_idx, events in self.global_dict["metric"].items():
                 for event in events:
                     if event.get("event") == "G_MEASUREMENT":
@@ -138,11 +139,32 @@ class GlobalDict:
                                 "params": event.get("params"),
                             }
                         )
+                    elif event.get("event") == "DRIFT_MEASUREMENT":
+                        drift_measurements.append(
+                            {
+                                "round": round_idx,
+                                "timestamp": event.get("timestamp"),
+                                "params": event.get("params"),
+                            }
+                        )
+
+            # Build drift_history in same format as GAS/MultiSFL for consistency
+            drift_history = None
+            if drift_measurements:
+                drift_history = {
+                    "G_drift": [m["params"].get("G_drift", 0.0) for m in drift_measurements],
+                    "G_end": [m["params"].get("G_end", 0.0) for m in drift_measurements],
+                    "G_drift_norm": [m["params"].get("G_drift_norm", 0.0) for m in drift_measurements],
+                    "delta_global_norm_sq": [m["params"].get("delta_global_norm_sq", 0.0) for m in drift_measurements],
+                    "per_round": [m["params"] for m in drift_measurements],
+                }
 
             result = {
                 "config": self.global_dict["config"],
                 "metric": self.global_dict["metric"],
                 "g_measurements": g_measurements,
+                "drift_measurements": drift_measurements,
+                "drift_history": drift_history,
             }
 
             json.dump(result, f, indent=4)

@@ -26,6 +26,7 @@ from utils import (
     find_client_with_min_time,
 )
 from g_measurement import GMeasurementManager, compute_g_score
+from drift_measurement import DriftMeasurementTracker
 
 
 def _set_batchnorm_eval(module: nn.Module) -> Dict[str, bool]:
@@ -159,6 +160,10 @@ G_Measure_Frequency = 10  # Diagnostic round frequency (every N epochs)
 G_Measure_Mode = "strict"  # 'strict' (Global Model) or 'realistic' (Individual Models)
 G_Measurement_Accumulation = "single"  # "single" (1-step) | "k_batch" (first K) | "accumulated" (full round)
 G_Measurement_K = 5  # Number of batches for k_batch mode
+
+# Drift Measurement Settings (SCAFFOLD-style client drift tracking)
+DRIFT_MEASUREMENT = _env_bool("GAS_DRIFT_MEASUREMENT", False)
+DRIFT_SAMPLE_INTERVAL = _env_int("GAS_DRIFT_SAMPLE_INTERVAL", 1)  # 1 = every step
 
 # G Measurement Mode: distance-based (default) vs variance-based (SFL-style)
 # Usage: python GAS_main.py true  -> variance-based
@@ -530,6 +535,15 @@ if G_Measurement:
 else:
     g_measure_state = None
 
+# Initialize Drift Measurement Tracker
+drift_tracker = None
+if DRIFT_MEASUREMENT:
+    drift_tracker = DriftMeasurementTracker(
+        sample_interval=DRIFT_SAMPLE_INTERVAL,
+        device=str(device),
+    )
+    print(f"[Drift Measurement] Initialized. Sample interval: {DRIFT_SAMPLE_INTERVAL}")
+
 
 def finalize_g_measurement(g_measure_state, g_manager, user_parti_num):
     if g_measure_state is None or not g_measure_state["active"]:
@@ -822,9 +836,17 @@ logit_local_adjustments = []
 for i in range(user_num):
     logit_local_adjustments.append(compute_local_adjustment(users_data[i], device))
 
+_drift_epoch_started = False  # Track if drift measurement started for this epoch
+
 while epoch != epochs:
     user_model.train()
     server_model.train()
+
+    # Drift Measurement: Start of epoch snapshot
+    if drift_tracker is not None and not _drift_epoch_started:
+        drift_tracker.on_round_start(userParam)
+        _drift_epoch_started = True
+
     # select a client
     if WRTT is True:
         selected_client = find_client_with_min_time(clients, order)
@@ -952,6 +974,13 @@ while epoch != epochs:
     usersParam[np.where(order == selected_client)[0][0]] = copy.deepcopy(
         user_model.state_dict()
     )
+
+    # Drift Measurement: Accumulate drift after optimizer step
+    if drift_tracker is not None:
+        drift_tracker.accumulate_client_drift(
+            selected_client, user_model.state_dict()
+        )
+
     if WRTT is True:  # Record the time of the backward pass
         clients[selected_client].model_process()
 
@@ -1090,6 +1119,13 @@ while epoch != epochs:
     # client-side models aggregation
     replace = clients[selected_client].increment_counter()
     if replace:  # If local iterations are completed, select a new client
+        # Drift Measurement: Finalize client when it completes local training
+        if drift_tracker is not None:
+            drift_tracker.finalize_client(
+                selected_client,
+                usersParam[np.where(order == selected_client)[0][0]]
+            )
+
         count_local += 1
         if WRTT is True:  # Record the time of model upload
             clients[selected_client].transmit_model()
@@ -1115,6 +1151,11 @@ while epoch != epochs:
 
             test_flag = (epoch + 1) % Accu_Test_Frequency == 0
             epoch += 1
+
+            # Drift Measurement: Finalize round
+            if drift_tracker is not None:
+                drift_tracker.on_round_end(epoch, userParam)
+                _drift_epoch_started = False  # Reset for next epoch
 
             if WRTT:
                 if test_flag:
@@ -1390,6 +1431,10 @@ results = {
 }
 if G_Measurement and g_manager is not None:
     results["g_history"] = g_manager.get_history()
+
+if DRIFT_MEASUREMENT and drift_tracker is not None:
+    results["drift_history"] = drift_tracker.get_history()
+    print(f"\n[Drift Measurement] Final G_drift values: {results['drift_history']['G_drift'][-5:]}")
 
 os.makedirs("results", exist_ok=True)
 json_filename = f"results/results_gas_{selectDataset}_{timestamp_str}.json"

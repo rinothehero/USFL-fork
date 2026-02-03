@@ -62,6 +62,10 @@ class MultiSFLConfig:
     clip_grad: bool = False
     clip_grad_max_norm: float = 10.0
 
+    # Drift Measurement (SCAFFOLD-style)
+    enable_drift_measurement: bool = False
+    drift_sample_interval: int = 1  # 1 = every step
+
     def __post_init__(self):
         if self.p_min <= 0:
             raise ValueError(

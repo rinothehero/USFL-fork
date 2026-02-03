@@ -61,6 +61,16 @@ class ScaffoldSFLModelTrainer(BaseModelTrainer):
         self.local_step_count = 0  # Count of optimizer.step() calls
         self.delta_c = {}  # Control variate update to send to server
 
+        # Drift Measurement (SCAFFOLD-style)
+        self.enable_drift_measurement = getattr(
+            server_config, "enable_drift_measurement", False
+        )
+        self.drift_sample_interval = getattr(server_config, "drift_sample_interval", 1)
+        self._round_start_params: dict = {}  # For drift measurement (separate from theta_0)
+        self._drift_trajectory_sum: float = 0.0
+        self._batch_step_count: int = 0
+        self._endpoint_drift: float = 0.0
+
     def _reset_g_accumulation(self):
         self.accumulated_gradients = []
         self.gradient_weights = []
@@ -94,6 +104,65 @@ class ScaffoldSFLModelTrainer(BaseModelTrainer):
         self.gradient_weights = [self._accumulated_grad_samples]
         if self.g_measurement_mode == "k_batch":
             print(f"[Client] K-batch finalized: {self._client_batch_count} batches, {self._accumulated_grad_samples} samples")
+
+    # Drift Measurement Methods
+    def _reset_drift_measurement(self):
+        """Reset drift measurement state for new round."""
+        self._round_start_params = {}
+        self._drift_trajectory_sum = 0.0
+        self._batch_step_count = 0
+        self._endpoint_drift = 0.0
+
+    def _snapshot_round_start_for_drift(self):
+        """Save model parameters at round start for drift measurement (x_c^{t,0})."""
+        if not self.enable_drift_measurement:
+            return
+        self._round_start_params = {
+            name: param.detach().clone().cpu()
+            for name, param in self.model.named_parameters()
+        }
+
+    def _compute_drift_to_start(self) -> float:
+        """Compute ||x_c^{t,b} - x_c^{t,0}||^2."""
+        if not self._round_start_params:
+            return 0.0
+        drift_sq = 0.0
+        for name, param in self.model.named_parameters():
+            if name in self._round_start_params:
+                diff = param.detach().cpu() - self._round_start_params[name]
+                drift_sq += (diff ** 2).sum().item()
+        return drift_sq
+
+    def _accumulate_drift(self):
+        """Accumulate drift after optimizer step."""
+        if not self.enable_drift_measurement:
+            return
+        self._batch_step_count += 1
+        if self._batch_step_count % self.drift_sample_interval == 0:
+            drift_sq = self._compute_drift_to_start()
+            self._drift_trajectory_sum += drift_sq
+
+    def _finalize_drift_measurement(self):
+        """Finalize drift measurement at round end."""
+        if not self.enable_drift_measurement:
+            return
+        # Always compute endpoint drift at the very end
+        self._endpoint_drift = self._compute_drift_to_start()
+        # If sampling was used, extrapolate trajectory sum
+        if self.drift_sample_interval > 1:
+            sampled_steps = self._batch_step_count // self.drift_sample_interval
+            if sampled_steps > 0:
+                self._drift_trajectory_sum = (
+                    self._drift_trajectory_sum * self._batch_step_count / sampled_steps
+                )
+
+    def get_drift_metrics(self) -> dict:
+        """Return drift metrics for server."""
+        return {
+            "drift_trajectory_sum": self._drift_trajectory_sum,
+            "drift_batch_steps": self._batch_step_count,
+            "drift_endpoint": self._endpoint_drift,
+        }
 
     def _snapshot_params(self):
         """Snapshot initial parameters θ0 at round start (stored on CPU)"""
@@ -155,6 +224,9 @@ class ScaffoldSFLModelTrainer(BaseModelTrainer):
         self._initialize_control_variates()
         self._snapshot_params()
         self.local_step_count = 0
+
+        # Drift measurement: Snapshot parameters at round start
+        self._snapshot_round_start_for_drift()
 
         for epoch in range(self.training_params["local_epochs"]):
             total_labels = 0
@@ -220,6 +292,9 @@ class ScaffoldSFLModelTrainer(BaseModelTrainer):
                 optimizer.step()
                 self.local_step_count += 1
 
+                # Accumulate drift after parameter update
+                self._accumulate_drift()
+
     async def _train_glue_dataset(self, params: dict):
         self.model.train()
         optimizer = self.get_optimizer(self.server_config)
@@ -228,6 +303,9 @@ class ScaffoldSFLModelTrainer(BaseModelTrainer):
         self._initialize_control_variates()
         self._snapshot_params()
         self.local_step_count = 0
+
+        # Drift measurement: Snapshot parameters at round start
+        self._snapshot_round_start_for_drift()
 
         for epoch in range(self.training_params["local_epochs"]):
             for batch in tqdm(self.trainloader, desc="Training Batches"):
@@ -277,8 +355,12 @@ class ScaffoldSFLModelTrainer(BaseModelTrainer):
                 optimizer.step()
                 self.local_step_count += 1
 
+                # Accumulate drift after parameter update
+                self._accumulate_drift()
+
     async def train(self, params: dict = None):
         self._reset_g_accumulation()
+        self._reset_drift_measurement()
 
         # SCAFFOLD: Receive global control variate from server
         if "control_variate" in self.training_params:
@@ -309,6 +391,7 @@ class ScaffoldSFLModelTrainer(BaseModelTrainer):
             await self._train_default_dataset(params)
 
         self._finalize_g_accumulation()
+        self._finalize_drift_measurement()
 
         # SCAFFOLD: Compute control variate update
         self._compute_delta_c()

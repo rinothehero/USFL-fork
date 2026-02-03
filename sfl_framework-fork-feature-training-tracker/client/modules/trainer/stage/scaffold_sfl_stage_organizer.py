@@ -105,6 +105,16 @@ class ScaffoldSFLStageOrganizer(BaseStageOrganizer):
             submit_params["delta_c"] = pickle.dumps(self.model_trainer.delta_c).hex()
             print(f"[SCAFFOLD Client {self.config.client_id}] Submitting delta_c")
 
+        # Drift Measurement: Include drift metrics if collected
+        if (
+            hasattr(self.model_trainer, "enable_drift_measurement")
+            and self.model_trainer.enable_drift_measurement
+        ):
+            drift_metrics = self.model_trainer.get_drift_metrics()
+            submit_params["drift_trajectory_sum"] = drift_metrics["drift_trajectory_sum"]
+            submit_params["drift_batch_steps"] = drift_metrics["drift_batch_steps"]
+            submit_params["drift_endpoint"] = drift_metrics["drift_endpoint"]
+
         await self.post_round.submit_model(
             self.api,
             self.model,

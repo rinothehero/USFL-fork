@@ -25,6 +25,9 @@ from utils.g_measurement import (
     compute_g_metrics,
 )
 
+# Drift Measurement (SCAFFOLD-style)
+from utils.drift_measurement import DriftMeasurementTracker
+
 if TYPE_CHECKING:
     from server_args import Config
 
@@ -105,6 +108,12 @@ class USFLStageOrganizer(BaseStageOrganizer):
                 measurement_mode=measurement_mode,
                 measurement_k=measurement_k,
             )
+
+        # Drift Measurement (SCAFFOLD-style)
+        self.drift_tracker = None
+        if getattr(config, "enable_drift_measurement", False):
+            self.drift_tracker = DriftMeasurementTracker()
+            print("[Drift] DriftMeasurementTracker initialized (USFL)")
 
     @staticmethod
     def _get_exponential_bin(usage_count: int) -> int:
@@ -826,6 +835,11 @@ class USFLStageOrganizer(BaseStageOrganizer):
             self.split_models = self.splitter.split(
                 self.model.get_torch_model(), self.config.__dict__
             )
+
+        # Drift Measurement: Snapshot client model at round start
+        if self.drift_tracker is not None:
+            self.drift_tracker.on_round_start(self.split_models[0])
+
         model_queue = self.global_dict.get("model_queue")
         model_queue.start_insert_mode()
 
@@ -1334,6 +1348,24 @@ class USFLStageOrganizer(BaseStageOrganizer):
                     del num_samples["client_gradient"]
         # ===== END G MEASUREMENT =====
 
+        # ===== DRIFT MEASUREMENT: Collect drift metrics from clients =====
+        if self.drift_tracker is not None:
+            for item in model_queue.queue:
+                if len(item) >= 3:
+                    client_id, model, num_samples = item[0], item[1], item[2]
+                    if isinstance(num_samples, dict):
+                        drift_trajectory_sum = num_samples.get("drift_trajectory_sum", 0.0)
+                        drift_batch_steps = num_samples.get("drift_batch_steps", 0)
+                        drift_endpoint = num_samples.get("drift_endpoint", 0.0)
+                        if drift_batch_steps > 0:
+                            self.drift_tracker.collect_client_drift(
+                                client_id,
+                                drift_trajectory_sum,
+                                drift_batch_steps,
+                                drift_endpoint,
+                            )
+        # ===== END DRIFT MEASUREMENT COLLECTION =====
+
         client_ids = [model[0] for model in model_queue.queue]
         self.global_dict.add_event(
             "MODEL_AGGREGATION_START", {"client_ids": client_ids}
@@ -1349,6 +1381,19 @@ class USFLStageOrganizer(BaseStageOrganizer):
         if updated_torch_model != None:
             updated_torch_model = self.aggregator.model_reshape(updated_torch_model)
             self.post_round.update_global_model(updated_torch_model, self.model)
+
+        # ===== DRIFT MEASUREMENT: Compute G_drift after aggregation =====
+        if self.drift_tracker is not None:
+            # Get the new global client model after aggregation
+            if hasattr(self.model, "get_split_models"):
+                new_client_model, _ = self.model.get_split_models()
+            else:
+                new_client_model = self.split_models[0]
+
+            drift_result = self.drift_tracker.on_round_end(round_number, new_client_model)
+            if drift_result:
+                self.global_dict.add_event("DRIFT_MEASUREMENT", drift_result.to_dict())
+        # ===== END DRIFT MEASUREMENT =====
 
         model_queue.clear()
         accuracy = self.post_round.evaluate_global_model(self.model, self.testloader)

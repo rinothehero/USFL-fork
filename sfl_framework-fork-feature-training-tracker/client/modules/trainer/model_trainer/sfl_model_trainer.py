@@ -49,6 +49,16 @@ class SFLModelTrainer(BaseModelTrainer):
         self._accumulated_grad_samples: int = 0
         self._client_batch_count: int = 0  # For k_batch mode
 
+        # Drift Measurement (SCAFFOLD-style)
+        self.enable_drift_measurement = getattr(
+            server_config, "enable_drift_measurement", False
+        )
+        self.drift_sample_interval = getattr(server_config, "drift_sample_interval", 1)
+        self._round_start_params: dict = {}  # x_c^{t,0} snapshot
+        self._drift_trajectory_sum: float = 0.0  # S_n(t) = Σ||x^{t,b} - x^{t,0}||²
+        self._batch_step_count: int = 0  # B_{n,t}
+        self._endpoint_drift: float = 0.0  # E_n(t) = ||x^{t,B} - x^{t,0}||²
+
     def _reset_g_accumulation(self):
         self.accumulated_gradients = []
         self.gradient_weights = []
@@ -83,9 +93,71 @@ class SFLModelTrainer(BaseModelTrainer):
         if self.g_measurement_mode == "k_batch":
             print(f"[Client] K-batch finalized: {self._client_batch_count} batches, {self._accumulated_grad_samples} samples")
 
+    # ==================
+    # Drift Measurement Methods (SCAFFOLD-style)
+    # ==================
+    def _reset_drift_measurement(self):
+        """Reset drift measurement state for new round"""
+        self._round_start_params = {}
+        self._drift_trajectory_sum = 0.0
+        self._batch_step_count = 0
+        self._endpoint_drift = 0.0
+
+    def _snapshot_round_start(self):
+        """Save x_c^{t,0} at round start"""
+        self._round_start_params = {
+            name: param.data.clone().detach()
+            for name, param in self.model.named_parameters()
+        }
+        self._drift_trajectory_sum = 0.0
+        self._batch_step_count = 0
+
+    def _compute_drift_to_start(self) -> float:
+        """Compute ||x_c^{t,b} - x_c^{t,0}||²"""
+        drift_sq = 0.0
+        for name, param in self.model.named_parameters():
+            if name in self._round_start_params:
+                diff = param.data - self._round_start_params[name]
+                drift_sq += (diff ** 2).sum().item()
+        return drift_sq
+
+    def _accumulate_drift(self):
+        """Accumulate drift after each batch step"""
+        self._batch_step_count += 1
+        # Sample according to interval
+        if self._batch_step_count % self.drift_sample_interval == 0:
+            drift = self._compute_drift_to_start()
+            self._drift_trajectory_sum += drift
+            self._endpoint_drift = drift  # Last computed drift is endpoint
+
+    def _finalize_drift_measurement(self):
+        """Finalize drift measurement at round end"""
+        # Always compute endpoint drift at the very end
+        self._endpoint_drift = self._compute_drift_to_start()
+        # If sampling was used, extrapolate trajectory sum
+        if self.drift_sample_interval > 1:
+            # Approximate: scale by ratio of total steps to sampled steps
+            sampled_steps = self._batch_step_count // self.drift_sample_interval
+            if sampled_steps > 0:
+                self._drift_trajectory_sum = (
+                    self._drift_trajectory_sum * self._batch_step_count / sampled_steps
+                )
+
+    def get_drift_metrics(self) -> dict:
+        """Return drift metrics for server submission"""
+        return {
+            "drift_trajectory_sum": self._drift_trajectory_sum,  # S_n(t)
+            "drift_batch_steps": self._batch_step_count,  # B_{n,t}
+            "drift_endpoint": self._endpoint_drift,  # E_n(t)
+        }
+
     async def _train_default_dataset(self, params: dict):
         self.model.train()
         optimizer = self.get_optimizer(self.server_config)
+
+        # === DRIFT: Snapshot round start params ===
+        if self.enable_drift_measurement:
+            self._snapshot_round_start()
 
         for epoch in range(self.training_params["local_epochs"]):
             total_labels = 0
@@ -148,9 +220,21 @@ class SFLModelTrainer(BaseModelTrainer):
 
                 optimizer.step()
 
+                # === DRIFT: Accumulate after optimizer step ===
+                if self.enable_drift_measurement:
+                    self._accumulate_drift()
+
+        # === DRIFT: Finalize at round end ===
+        if self.enable_drift_measurement:
+            self._finalize_drift_measurement()
+
     async def _train_glue_dataset(self, params: dict):
         self.model.train()
         optimizer = self.get_optimizer(self.server_config)
+
+        # === DRIFT: Snapshot round start params ===
+        if self.enable_drift_measurement:
+            self._snapshot_round_start()
 
         for epoch in range(self.training_params["local_epochs"]):
             for batch in tqdm(self.trainloader, desc="Training Batches"):
@@ -197,8 +281,17 @@ class SFLModelTrainer(BaseModelTrainer):
 
                 optimizer.step()
 
+                # === DRIFT: Accumulate after optimizer step ===
+                if self.enable_drift_measurement:
+                    self._accumulate_drift()
+
+        # === DRIFT: Finalize at round end ===
+        if self.enable_drift_measurement:
+            self._finalize_drift_measurement()
+
     async def train(self, params: dict = None):
         self._reset_g_accumulation()
+        self._reset_drift_measurement()
         if self.server_config.dataset in [
             "cola",
             "sst2",

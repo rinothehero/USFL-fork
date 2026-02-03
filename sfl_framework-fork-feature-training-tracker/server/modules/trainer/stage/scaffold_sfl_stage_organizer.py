@@ -24,6 +24,9 @@ from utils.g_measurement import (
     compute_g_metrics,
 )
 
+# Drift Measurement (SCAFFOLD-style)
+from utils.drift_measurement import DriftMeasurementTracker
+
 if TYPE_CHECKING:
     from server_args import Config
 
@@ -91,6 +94,12 @@ class ScaffoldSFLStageOrganizer(BaseStageOrganizer):
                 measurement_k=measurement_k,
             )
 
+        # Drift Measurement (SCAFFOLD-style)
+        self.drift_tracker = None
+        if getattr(config, "enable_drift_measurement", False):
+            self.drift_tracker = DriftMeasurementTracker()
+            print("[Drift] DriftMeasurementTracker initialized (SCAFFOLD-SFL)")
+
         # SCAFFOLD: Global control variate c (persistent)
         # Per-client control variates c_i are stored client-side
         self.c = {}  # Global control variate (same structure as client model params)
@@ -134,6 +143,10 @@ class ScaffoldSFLStageOrganizer(BaseStageOrganizer):
 
         # SCAFFOLD: Initialize global control variate if first round
         self._initialize_global_control_variate(self.split_models[0])
+
+        # Drift Measurement: Snapshot client model at round start
+        if self.drift_tracker is not None:
+            self.drift_tracker.on_round_start(self.split_models[0])
 
         model_queue = self.global_dict.get("model_queue")
         model_queue.start_insert_mode()
@@ -473,6 +486,23 @@ class ScaffoldSFLStageOrganizer(BaseStageOrganizer):
                 if isinstance(num_samples, dict) and "client_gradient" in num_samples:
                     del num_samples["client_gradient"]
 
+        # Drift Measurement: Collect drift metrics from clients
+        if self.drift_tracker is not None:
+            for item in model_queue.queue:
+                if len(item) >= 3:
+                    client_id, model, num_samples = item[0], item[1], item[2]
+                    if isinstance(num_samples, dict):
+                        drift_trajectory_sum = num_samples.get("drift_trajectory_sum", 0.0)
+                        drift_batch_steps = num_samples.get("drift_batch_steps", 0)
+                        drift_endpoint = num_samples.get("drift_endpoint", 0.0)
+                        if drift_batch_steps > 0:
+                            self.drift_tracker.collect_client_drift(
+                                client_id,
+                                drift_trajectory_sum,
+                                drift_batch_steps,
+                                drift_endpoint,
+                            )
+
         # SCAFFOLD: Collect delta_c from clients and update global c
         delta_c_list = []
         for item in model_queue.queue:
@@ -537,6 +567,17 @@ class ScaffoldSFLStageOrganizer(BaseStageOrganizer):
             aggregated_model = self.aggregator.model_reshape(aggregated_model)
             self.post_round.update_global_model(aggregated_model, self.model)
             print("Updated global model")
+
+        # Drift Measurement: Compute G_drift after aggregation
+        if self.drift_tracker is not None:
+            if hasattr(self.model, "get_split_models"):
+                new_client_model, _ = self.model.get_split_models()
+            else:
+                new_client_model = self.split_models[0]
+
+            drift_result = self.drift_tracker.on_round_end(round_number, new_client_model)
+            if drift_result:
+                self.global_dict.add_event("DRIFT_MEASUREMENT", drift_result.to_dict())
 
         model_queue.clear()
         accuracy = self.post_round.evaluate_global_model(self.model, self.testloader)

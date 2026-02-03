@@ -126,6 +126,16 @@ class USFLStageOrganizer(BaseStageOrganizer):
             self.model_trainer.accumulated_gradients.clear()
             self.model_trainer.gradient_weights.clear()
 
+        # Drift Measurement: Include drift metrics if collected
+        if (
+            hasattr(self.model_trainer, "enable_drift_measurement")
+            and self.model_trainer.enable_drift_measurement
+        ):
+            drift_metrics = self.model_trainer.get_drift_metrics()
+            submit_params["drift_trajectory_sum"] = drift_metrics["drift_trajectory_sum"]
+            submit_params["drift_batch_steps"] = drift_metrics["drift_batch_steps"]
+            submit_params["drift_endpoint"] = drift_metrics["drift_endpoint"]
+
         await self.post_round.submit_model(
             self.api,
             self.model,
