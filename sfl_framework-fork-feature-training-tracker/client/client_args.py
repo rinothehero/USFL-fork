@@ -94,6 +94,9 @@ class ServerConfig:
     oracle_batch_size: Optional[int]
     g_measurement_mode: str  # "single" (1-step) | "k_batch" (first K batches) | "accumulated" (full round average)
     g_measurement_k: int  # Number of batches to collect in k_batch mode (default: 5)
+    # Drift Measurement (SCAFFOLD-style)
+    enable_drift_measurement: bool  # Enable client drift measurement
+    drift_sample_interval: int  # Measure drift every n steps (1 = every step)
     # FitFL
     max_pruning_ratio: int  # Maximum pruning ratio.
     # FitFL
