@@ -149,20 +149,20 @@ if __name__ == "__main__":
         "distributer": "shard_dirichlet",
         "use_additional_epoch": "false",
         "diagnostic_rounds": "10,20,30,40,50,60,70,80,90,100,110,120,130,140,150,160,170,180,190,200,210,220,230,240,250,260,270,280,290,300",
-        "enable_g_measurement": "true",
+        "enable_g_measurement": "false",
         "use_cumulative_usage": "false",
         "usage_decay_factor": "0.95",
         "use_fresh_scoring": "false",
         "freshness_decay_rate": "0.5",
         # Drift Measurement (SCAFFOLD-style)
-        "enable_drift_measurement": "false",
+        "enable_drift_measurement": "true",
         "drift_sample_interval": "1",
     }
 
     # USFL feature groups
     USFL_OPTIONS = {
-        "A": {
-            "method": "scaffold_sfl",
+        "sfl": {
+            "method": "sfl",
             "selector": "uniform",
             "aggregator": "fedavg",
             "dataset": "cifar10",
@@ -170,7 +170,7 @@ if __name__ == "__main__":
             "batch_size": "50",
             "labels_per_client": "2",
             "dirichlet_alpha": "0.3",
-            "gradient_shuffle": "true",
+            "gradient_shuffle": "false",
             "gradient_shuffle_strategy": "random",
             "use_dynamic_batch_scheduler": "false",
             "use_variance_g": "true",
@@ -181,8 +181,100 @@ if __name__ == "__main__":
             # - "single": First batch only (default)
             # - "k_batch": First K batches (set g_measurement_k)
             # - "accumulated": All batches in round
-            "g_measurement_mode": "accumulated",
-            # "g_measurement_k": "5",  # Only used when g_measurement_mode is "k_batch"
+            #"g_measurement_mode": "single",
+            #"g_measurement_k": "5",  # Only used when g_measurement_mode is "k_batch"
+        },
+        "fedcbs": {
+            "method": "sfl",
+            "selector": "fedcbs",
+            "aggregator": "fedavg",
+            "dataset": "cifar10",
+            "model": "resnet18",
+            "batch_size": "50",
+            "labels_per_client": "2",
+            "dirichlet_alpha": "0.3",
+            "gradient_shuffle": "false",
+            "gradient_shuffle_strategy": "random",
+            "use_dynamic_batch_scheduler": "false",
+            "use_variance_g": "true",
+            "balancing_strategy": "target",
+            "balancing_target": "mean",
+            "split_layer": "layer1.1.bn2",
+            # G Measurement options:
+            # - "single": First batch only (default)
+            # - "k_batch": First K batches (set g_measurement_k)
+            # - "accumulated": All batches in round
+            #"g_measurement_mode": "single",
+            #"g_measurement_k": "5",  # Only used when g_measurement_mode is "k_batch"
+        },
+        "mix2sfl": {
+            "method": "mix2sfl",
+            "selector": "uniform",
+            "aggregator": "fedavg",
+            "dataset": "cifar10",
+            "model": "resnet18",
+            "batch_size": "50",
+            "labels_per_client": "2",
+            "dirichlet_alpha": "0.3",
+            "gradient_shuffle": "false",
+            "gradient_shuffle_strategy": "random",
+            "use_dynamic_batch_scheduler": "false",
+            "use_variance_g": "true",
+            "balancing_strategy": "target",
+            "balancing_target": "mean",
+            "split_layer": "layer1.1.bn2",
+            # G Measurement options:
+            # - "single": First batch only (default)
+            # - "k_batch": First K batches (set g_measurement_k)
+            # - "accumulated": All batches in round
+            #"g_measurement_mode": "single",
+            #"g_measurement_k": "5",  # Only used when g_measurement_mode is "k_batch"
+        },
+        "scaffold": {
+            "method": "scaffold_sfl",
+            "selector": "uniform",
+            "aggregator": "fedavg",
+            "dataset": "cifar10",
+            "model": "resnet18",
+            "batch_size": "50",
+            "labels_per_client": "2",
+            "dirichlet_alpha": "0.3",
+            "gradient_shuffle": "false",
+            "gradient_shuffle_strategy": "random",
+            "use_dynamic_batch_scheduler": "false",
+            "use_variance_g": "true",
+            "balancing_strategy": "target",
+            "balancing_target": "mean",
+            "split_layer": "layer1.1.bn2",
+            # G Measurement options:
+            # - "single": First batch only (default)
+            # - "k_batch": First K batches (set g_measurement_k)
+            # - "accumulated": All batches in round
+            #"g_measurement_mode": "single",
+            #"g_measurement_k": "5",  # Only used when g_measurement_mode is "k_batch"
+        },
+        "usfl": {
+            "method": "usfl",
+            "selector": "usfl",
+            "aggregator": "fedavg",
+            "dataset": "cifar10",
+            "model": "resnet18",
+            "batch_size": "500",
+            "labels_per_client": "2",
+            "dirichlet_alpha": "0.3",
+            "gradient_shuffle": "true",
+            "gradient_shuffle_strategy": "random",
+            "use_dynamic_batch_scheduler": "true",
+            "use_variance_g": "true",
+            "balancing_strategy": "target",
+            "balancing_target": "mean",
+            "split_layer": "layer1.1.bn2",
+            # G Measurement options:
+            # - "single": First batch only (default)
+            # - "k_batch": First K batches (set g_measurement_k)
+            # - "accumulated": All batches in round
+            #"g_measurement_mode": "single",
+            #"g_measurement_k": "5",  # Only used when g_measurement_mode is "k_batch"
         },
     }
 
