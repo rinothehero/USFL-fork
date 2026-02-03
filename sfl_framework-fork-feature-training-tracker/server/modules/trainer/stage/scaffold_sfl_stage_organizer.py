@@ -404,7 +404,7 @@ class ScaffoldSFLStageOrganizer(BaseStageOrganizer):
         model_queue.end_insert_mode()
 
         if self.g_measurement_system is not None:
-            import psutil, os, gc, pickle
+            import psutil, os, gc
 
             process = psutil.Process(os.getpid())
             mem_before = process.memory_info().rss / (1024**3)

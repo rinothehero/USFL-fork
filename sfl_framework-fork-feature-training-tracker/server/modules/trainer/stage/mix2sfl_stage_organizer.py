@@ -474,11 +474,20 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
                                 if isinstance(outputs_i, tuple):
                                     if len(outputs_i) != len(outputs_j):
                                         continue
+                                    # Check batch size compatibility
+                                    if any(
+                                        si.shape[0] != sj.shape[0]
+                                        for si, sj in zip(outputs_i, outputs_j)
+                                    ):
+                                        continue
                                     mixed_outputs = tuple(
                                         lam * si + (1.0 - lam) * sj
                                         for si, sj in zip(outputs_i, outputs_j)
                                     )
                                 else:
+                                    # Check batch size compatibility
+                                    if outputs_i.shape[0] != outputs_j.shape[0]:
+                                        continue
                                     mixed_outputs = (
                                         lam * outputs_i + (1.0 - lam) * outputs_j
                                     )
