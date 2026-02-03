@@ -116,6 +116,12 @@ class MultiSFLDriftTracker:
         self._early_delta_norms: List[float] = []
         self._adaptive_epsilon: Optional[float] = None
 
+    def _is_trainable_param(self, name: str) -> bool:
+        """Check if parameter name corresponds to trainable weights (not buffers)"""
+        # Exclude BatchNorm running statistics and tracking buffers
+        buffer_keywords = ("running_mean", "running_var", "num_batches_tracked")
+        return not any(kw in name for kw in buffer_keywords)
+
     def on_round_start(self, master_client_state_dict: dict):
         """
         Save master client model snapshot at round start (x_c^{t,0})
@@ -123,19 +129,21 @@ class MultiSFLDriftTracker:
         Args:
             master_client_state_dict: The master client model state dict
         """
+        # Only save trainable parameters (exclude BatchNorm buffers)
         self._round_start_params = {
             name: param.clone().detach().cpu()
             for name, param in master_client_state_dict.items()
+            if self._is_trainable_param(name)
         }
         self._branch_states.clear()
 
     def _compute_drift_from_start(self, current_state_dict: dict) -> float:
-        """Compute ||x_c^{t,b} - x_c^{t,0}||²"""
+        """Compute ||x_c^{t,b} - x_c^{t,0}||² for trainable parameters only"""
         if not self._round_start_params:
             return 0.0
         drift_sq = 0.0
         for name, param in current_state_dict.items():
-            if name in self._round_start_params:
+            if name in self._round_start_params and self._is_trainable_param(name):
                 if isinstance(param, torch.Tensor):
                     diff = param.cpu() - self._round_start_params[name]
                 else:
