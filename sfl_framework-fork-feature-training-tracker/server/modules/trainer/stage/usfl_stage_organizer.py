@@ -1019,6 +1019,16 @@ class USFLStageOrganizer(BaseStageOrganizer):
                         criterion=server_criterion,
                     )
 
+                    # Scale gradient by number of participating clients
+                    # CE(mean) on concatenated batch divides by total_batch = N * client_batch
+                    # We multiply by N to restore scale to 1/client_batch (same as SFL)
+                    num_participating_clients = len(non_empty_activations)
+                    if num_participating_clients > 1:
+                        if isinstance(grad, tuple):
+                            grad = tuple(g * num_participating_clients for g in grad)
+                        else:
+                            grad = grad * num_participating_clients
+
                     # G Measurement: Collect server gradient
                     if is_diagnostic and server_grad:
                         batch_weight = sum(
