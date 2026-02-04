@@ -213,11 +213,12 @@ class MultiSFLTrainer:
                 f"\n[Round {r + 1}/{self.cfg.num_rounds}] Branch-Client mapping: {mapping}"
             )
 
-            # Drift Measurement: Snapshot master client model at round start
+            # Drift Measurement: Snapshot master client and server models at round start
             if self.drift_tracker is not None:
                 wc_master_sd = self.fed.master_state_dict
+                ws_master_sd = self.main.master_state_dict
                 if wc_master_sd is not None:
-                    self.drift_tracker.on_round_start(wc_master_sd)
+                    self.drift_tracker.on_round_start(wc_master_sd, ws_master_sd)
 
             # G Measurement: Setup PRE-ROUND model and compute Oracle
             is_diagnostic = (
@@ -488,6 +489,11 @@ class MultiSFLTrainer:
                         )
                     )
 
+                    # Drift Measurement: Accumulate server drift after server optimizer step
+                    if self.drift_tracker is not None:
+                        bs = self.main.get_server_branch(b)
+                        self.drift_tracker.accumulate_server_drift(b, bs.model)
+
                     client_stats: ClientUpdateStats = main_client.apply_feature_grad(
                         bc.model,
                         bc.optimizer,
@@ -508,7 +514,10 @@ class MultiSFLTrainer:
 
                 # Drift Measurement: Finalize branch when it completes local steps
                 if self.drift_tracker is not None:
-                    self.drift_tracker.finalize_branch(b, bc.model, client_id=client_id)
+                    bs = self.main.get_server_branch(b)
+                    self.drift_tracker.finalize_branch(
+                        b, bc.model, branch_server_model=bs.model, client_id=client_id
+                    )
 
                 # Normalize by actual steps run
                 grad_norm_sq_list.append(branch_grad_norm_sq / steps_to_run)
@@ -556,11 +565,12 @@ class MultiSFLTrainer:
             self.fed.soft_pull_to_master()
             self.main.soft_pull_to_master()
 
-            # Drift Measurement: Finalize round metrics
+            # Drift Measurement: Finalize round metrics (client + server)
             if self.drift_tracker is not None:
                 wc_master_new = self.fed.master_state_dict
+                ws_master_new = self.main.master_state_dict
                 if wc_master_new is not None:
-                    self.drift_tracker.on_round_end(r + 1, wc_master_new)
+                    self.drift_tracker.on_round_end(r + 1, wc_master_new, ws_master_new)
 
             # G Measurement: Perform measurement using PRE-ROUND models and COLLECTED data
             if (

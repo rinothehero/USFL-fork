@@ -842,9 +842,9 @@ while epoch != epochs:
     user_model.train()
     server_model.train()
 
-    # Drift Measurement: Start of epoch snapshot
+    # Drift Measurement: Start of epoch snapshot (client + server)
     if drift_tracker is not None and not _drift_epoch_started:
-        drift_tracker.on_round_start(userParam)
+        drift_tracker.on_round_start(userParam, server_model.state_dict())
         _drift_epoch_started = True
 
     # select a client
@@ -1108,6 +1108,11 @@ while epoch != epochs:
             finalize_g_measurement(g_measure_state, g_manager, user_parti_num)
 
         optimizer_up.step()
+
+        # Drift Measurement: Accumulate server drift after optimizer step
+        if drift_tracker is not None:
+            drift_tracker.accumulate_server_drift(server_model.state_dict())
+
         if V_Test is True:
             concat_labels_V = copy.deepcopy(concat_labels)
             concat_features_V = copy.deepcopy(concat_features)
@@ -1152,9 +1157,9 @@ while epoch != epochs:
             test_flag = (epoch + 1) % Accu_Test_Frequency == 0
             epoch += 1
 
-            # Drift Measurement: Finalize round
+            # Drift Measurement: Finalize round (client + server)
             if drift_tracker is not None:
-                drift_tracker.on_round_end(epoch, userParam)
+                drift_tracker.on_round_end(epoch, userParam, server_model.state_dict())
                 _drift_epoch_started = False  # Reset for next epoch
 
             if WRTT:
