@@ -123,9 +123,9 @@ class SFLStageOrganizer(BaseStageOrganizer):
             )
         self.split_models = split_models
 
-        # Drift Measurement: Snapshot client model at round start
+        # Drift Measurement: Snapshot client and server models at round start
         if self.drift_tracker is not None:
-            self.drift_tracker.on_round_start(self.split_models[0])
+            self.drift_tracker.on_round_start(self.split_models[0], self.split_models[1])
 
         model_queue = self.global_dict.get("model_queue")
         model_queue.start_insert_mode()
@@ -276,6 +276,10 @@ class SFLStageOrganizer(BaseStageOrganizer):
                     optimizer=server_optimizer,
                     criterion=server_criterion,
                 )
+
+                # Drift Measurement: Accumulate server drift after optimizer.step()
+                if self.drift_tracker is not None:
+                    self.drift_tracker.accumulate_server_drift(current_server_model)
 
                 # G Measurement: Collect server gradient
                 if is_diagnostic and server_grad:
@@ -516,14 +520,17 @@ class SFLStageOrganizer(BaseStageOrganizer):
 
         # Drift Measurement: Compute G_drift after aggregation
         if self.drift_tracker is not None:
-            # Get the new global client model after aggregation
+            # Get the new global client and server models after aggregation
             if hasattr(self.model, "get_split_models"):
-                new_client_model, _ = self.model.get_split_models()
+                new_client_model, new_server_model = self.model.get_split_models()
             else:
-                # For non-split models, use the first part of split_models
+                # For non-split models, use the split_models
                 new_client_model = self.split_models[0]
+                new_server_model = self.split_models[1]
 
-            drift_result = self.drift_tracker.on_round_end(round_number, new_client_model)
+            drift_result = self.drift_tracker.on_round_end(
+                round_number, new_client_model, new_server_model
+            )
             if drift_result:
                 self.global_dict.add_event("DRIFT_MEASUREMENT", drift_result.to_dict())
 
