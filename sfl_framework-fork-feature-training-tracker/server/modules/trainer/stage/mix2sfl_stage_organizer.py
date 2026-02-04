@@ -550,9 +550,23 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
 
                 if cprime:
                     reduce = getattr(self.config, "mix2sfl_gradmix_reduce", "sum")
-                    grad_list = [client_grads[cid] for cid in cprime]
 
-                    if isinstance(grad_list[0], tuple):
+                    # Filter clients with matching batch sizes
+                    matching_cprime = set()
+                    ref_shape = None
+                    for cid in cprime:
+                        if cid not in client_grads:
+                            continue
+                        g = client_grads[cid]
+                        g_shape = g[0].shape[0] if isinstance(g, tuple) else g.shape[0]
+                        if ref_shape is None:
+                            ref_shape = g_shape
+                        if g_shape == ref_shape:
+                            matching_cprime.add(cid)
+
+                    grad_list = [client_grads[cid] for cid in matching_cprime]
+
+                    if grad_list and isinstance(grad_list[0], tuple):
                         summed = []
                         for items in zip(*grad_list):
                             total = torch.zeros_like(items[0])
@@ -560,10 +574,12 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
                                 total += item
                             summed.append(total)
                         broadcast_grad = tuple(summed)
-                    else:
+                    elif grad_list:
                         broadcast_grad = torch.zeros_like(grad_list[0])
                         for g_item in grad_list:
                             broadcast_grad += g_item
+                    else:
+                        broadcast_grad = None
 
                     if reduce == "mean" and len(grad_list) > 0:
                         if isinstance(broadcast_grad, tuple):
@@ -574,10 +590,11 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
                             broadcast_grad = broadcast_grad / float(len(grad_list))
                 else:
                     broadcast_grad = None
+                    matching_cprime = set()
 
                 for act in non_empty_activations:
                     cid = act["client_id"]
-                    if cid in cprime and broadcast_grad is not None:
+                    if cid in matching_cprime and broadcast_grad is not None:
                         await self.in_round.send_gradients(
                             self.connection, broadcast_grad, cid, 0
                         )
