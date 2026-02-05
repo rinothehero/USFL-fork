@@ -235,19 +235,7 @@ class SFLStageOrganizer(BaseStageOrganizer):
 
             # Create persistent optimizer and criterion once per round
             server_model = self.split_models[1].to(self.config.device)
-
-            # Server learning rate: explicit value or default to client_lr * num_clients_per_round
-            server_lr = self.config.server_learning_rate
-            if server_lr is None:
-                server_lr = self.config.learning_rate * self.config.num_clients_per_round
-            print(
-                f"[SFL] Server LR: {server_lr} "
-                f"(client_lr={self.config.learning_rate} x {self.config.num_clients_per_round} clients)"
-            )
-
-            server_optimizer = self.in_round._get_optimizer(
-                server_model, self.config, lr_override=server_lr
-            )
+            server_optimizer = self.in_round._get_optimizer(server_model, self.config)
             server_criterion = self.in_round._get_criterion(self.config)
 
             while True:
