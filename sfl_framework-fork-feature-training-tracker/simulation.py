@@ -159,7 +159,6 @@ if __name__ == "__main__":
         "dataset_path": "./.datasets",
         "server_model_aggregation": "false",
         "split_strategy": "layer_name",
-        "distributer": "shard_dirichlet",
         "use_additional_epoch": "false",
         "diagnostic_rounds": "10,20,30,40,50,60,70,80,90,100,110,120,130,140,150,160,170,180,190,200,210,220,230,240,250,260,270,280,290,300",
         "enable_g_measurement": "false",
@@ -176,12 +175,37 @@ if __name__ == "__main__":
 
     # USFL feature groups
     USFL_OPTIONS = {
-        "sfl": {
+        "sfl_iid": {
+            "distributer": "uniform",
             "method": "sfl",
             "selector": "uniform",
             "aggregator": "fedavg",
             "dataset": "cifar10",
-            "model": "resnet18",
+            "model": "resnet18_flex",
+            "batch_size": "50",
+            #"labels_per_client": "2",
+            #"dirichlet_alpha": "0.3",
+            "gradient_shuffle": "false",
+            "gradient_shuffle_strategy": "random",
+            "use_dynamic_batch_scheduler": "false",
+            "use_variance_g": "true",
+            "balancing_strategy": "target",
+            "balancing_target": "mean",
+            "split_layer": "layer2",
+            # G Measurement options:
+            # - "single": First batch only (default)
+            # - "k_batch": First K batches (set g_measurement_k)
+            # - "accumulated": All batches in round
+            #"g_measurement_mode": "single",
+            #"g_measurement_k": "5",  # Only used when g_measurement_mode is "k_batch"
+        },
+        "sfl_noniid": {
+            "distributer": "shard_dirichlet",
+            "method": "sfl",
+            "selector": "uniform",
+            "aggregator": "fedavg",
+            "dataset": "cifar10",
+            "model": "resnet18_flex",
             "batch_size": "50",
             "labels_per_client": "2",
             "dirichlet_alpha": "0.3",
@@ -189,9 +213,58 @@ if __name__ == "__main__":
             "gradient_shuffle_strategy": "random",
             "use_dynamic_batch_scheduler": "false",
             "use_variance_g": "true",
+            #"balancing_strategy": "target",
+            #"balancing_target": "mean",
+            "split_layer": "layer2",
+            # G Measurement options:
+            # - "single": First batch only (default)
+            # - "k_batch": First K batches (set g_measurement_k)
+            # - "accumulated": All batches in round
+            #"g_measurement_mode": "single",
+            #"g_measurement_k": "5",  # Only used when g_measurement_mode is "k_batch"
+        },
+        "usfl": {
+            "distributer": "shard_dirichlet",
+            "method": "usfl",
+            "selector": "usfl",
+            "aggregator": "fedavg",
+            "dataset": "cifar10",
+            "model": "resnet18_flex",
+            "batch_size": "500",
+            "labels_per_client": "2",
+            "dirichlet_alpha": "0.3",
+            "gradient_shuffle": "true",
+            "gradient_shuffle_strategy": "random",
+            "use_dynamic_batch_scheduler": "true",
+            #"use_variance_g": "true",
             "balancing_strategy": "target",
             "balancing_target": "mean",
-            "split_layer": "layer1.1.bn2",
+            "split_layer": "layer2",
+            # G Measurement options:
+            # - "single": First batch only (default)
+            # - "k_batch": First K batches (set g_measurement_k)
+            # - "accumulated": All batches in round
+            #"g_measurement_mode": "single",
+            #"g_measurement_k": "5",  # Only used when g_measurement_mode is "k_batch"
+        },
+        "sfl_full_10outof10": {
+            "distributer": "shard_dirichlet",
+            "method": "sfl",
+            "selector": "uniform",
+            "aggregator": "fedavg",
+            "dataset": "cifar10",
+            "model": "resnet18_flex",
+            "batch_size": "50",
+            "labels_per_client": "2",
+            "dirichlet_alpha": "0.3",
+            "gradient_shuffle": "false",
+            "gradient_shuffle_strategy": "random",
+            "use_dynamic_batch_scheduler": "false",
+            "use_variance_g": "true",
+            "total_clients": "10",
+            #"balancing_strategy": "target",
+            #"balancing_target": "mean",
+            "split_layer": "layer2",
             # G Measurement options:
             # - "single": First batch only (default)
             # - "k_batch": First K batches (set g_measurement_k)
@@ -268,29 +341,6 @@ if __name__ == "__main__":
             #"g_measurement_mode": "single",
             #"g_measurement_k": "5",  # Only used when g_measurement_mode is "k_batch"
         },
-        "usfl": {
-            "method": "usfl",
-            "selector": "usfl",
-            "aggregator": "fedavg",
-            "dataset": "cifar10",
-            "model": "resnet18",
-            "batch_size": "500",
-            "labels_per_client": "2",
-            "dirichlet_alpha": "0.3",
-            "gradient_shuffle": "true",
-            "gradient_shuffle_strategy": "random",
-            "use_dynamic_batch_scheduler": "true",
-            "use_variance_g": "true",
-            "balancing_strategy": "target",
-            "balancing_target": "mean",
-            "split_layer": "layer1.1.bn2",
-            # G Measurement options:
-            # - "single": First batch only (default)
-            # - "k_batch": First K batches (set g_measurement_k)
-            # - "accumulated": All batches in round
-            #"g_measurement_mode": "single",
-            #"g_measurement_k": "5",  # Only used when g_measurement_mode is "k_batch"
-        },
     }
 
     # Use only USFL_OPTIONS (no parameter sweeps)
@@ -312,8 +362,8 @@ if __name__ == "__main__":
     # combinations = combinations[500:]  # Skip first 500, run 501-900
 
     # Or set start/end manually:
-    START_INDEX = 0  # Start from workload N (0-indexed)
-    END_INDEX = None  # End at workload N (None = run to end)
+    START_INDEX = 3  # Start from workload N (0-indexed)
+    END_INDEX = 4  # End at workload N (None = run to end)
 
     original_total = len(combinations)
     if START_INDEX > 0 or END_INDEX is not None:
