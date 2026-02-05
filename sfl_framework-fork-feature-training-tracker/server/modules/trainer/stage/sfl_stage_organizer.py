@@ -502,6 +502,14 @@ class SFLStageOrganizer(BaseStageOrganizer):
             if isinstance(aggregated_client_model, torch.nn.ModuleDict):
                 aggregated_model = aggregated_client_model
                 aggregated_model.update(aggregated_server_model)
+            elif aggregated_client_model is not None and hasattr(self.model, "get_split_models"):
+                # FlexibleResNet with server_model_aggregation
+                client_model, server_model = self.model.get_split_models()
+                client_model.load_state_dict(aggregated_client_model.state_dict())
+                server_model.load_state_dict(aggregated_server_model.state_dict())
+                if hasattr(self.model, "sync_full_model_from_split"):
+                    self.model.sync_full_model_from_split()
+                print("Updated global model (FlexibleResNet with server aggregation)")
         else:
             aggregated_client_model = self.post_round.aggregate_models(
                 self.aggregator, model_queue
@@ -516,7 +524,8 @@ class SFLStageOrganizer(BaseStageOrganizer):
                 client_model.load_state_dict(aggregated_client_model.state_dict())
                 if hasattr(self.model, "sync_full_model_from_split"):
                     self.model.sync_full_model_from_split()
-                aggregated_model = self.model.get_torch_model()
+                print("Updated global model (FlexibleResNet)")
+                # Don't set aggregated_model - skip model_reshape which expects ModuleDict
 
         self.global_dict.add_event("MODEL_AGGREGATION_END", {"client_ids": client_ids})
 

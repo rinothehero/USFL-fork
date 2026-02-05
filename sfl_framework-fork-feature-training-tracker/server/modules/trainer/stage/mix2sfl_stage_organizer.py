@@ -753,10 +753,15 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
 
         if isinstance(updated_torch_model, torch.nn.ModuleDict):
             updated_torch_model.update(self.split_models[1])
-
-        if updated_torch_model is not None:
-            updated_torch_model = self.aggregator.model_reshape(updated_torch_model)
-            self.post_round.update_global_model(updated_torch_model, self.model)
+            if updated_torch_model is not None:
+                updated_torch_model = self.aggregator.model_reshape(updated_torch_model)
+                self.post_round.update_global_model(updated_torch_model, self.model)
+        elif updated_torch_model is not None and hasattr(self.model, "get_split_models"):
+            # FlexibleResNet: Update client_model directly and sync to full model
+            client_model, _ = self.model.get_split_models()
+            client_model.load_state_dict(updated_torch_model.state_dict())
+            if hasattr(self.model, "sync_full_model_from_split"):
+                self.model.sync_full_model_from_split()
 
         # Drift Measurement: Compute G_drift after aggregation
         if self.drift_tracker is not None:
