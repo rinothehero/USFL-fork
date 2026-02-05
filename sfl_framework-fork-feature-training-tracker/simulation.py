@@ -157,6 +157,8 @@ if __name__ == "__main__":
         # Drift Measurement (SCAFFOLD-style)
         "enable_drift_measurement": "true",
         "drift_sample_interval": "1",
+        # In-round evaluation (training accuracy during training)
+        "enable_inround_evaluation": "false",
     }
 
     # USFL feature groups
@@ -391,6 +393,7 @@ if __name__ == "__main__":
         G_MEASUREMENT_K = workload.get("g_measurement_k", None)
         ENABLE_DRIFT_MEASUREMENT = workload.get("enable_drift_measurement", None)
         DRIFT_SAMPLE_INTERVAL = workload.get("drift_sample_interval", None)
+        ENABLE_INROUND_EVALUATION = workload.get("enable_inround_evaluation", None)
 
         server_command = []
 
@@ -493,6 +496,8 @@ if __name__ == "__main__":
             server_command.extend(["--enable-drift-measurement"])
         if DRIFT_SAMPLE_INTERVAL:
             server_command.extend(["--drift-sample-interval", str(DRIFT_SAMPLE_INTERVAL)])
+        if ENABLE_INROUND_EVALUATION and ENABLE_INROUND_EVALUATION.lower() == "true":
+            server_command.extend(["--enable-inround-evaluation"])
         if NETWORKING_FAIRNESS:
             if NETWORKING_FAIRNESS.lower() == "true":
                 server_command.extend(["-nf"])

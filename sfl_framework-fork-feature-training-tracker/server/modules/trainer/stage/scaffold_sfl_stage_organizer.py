@@ -241,7 +241,10 @@ class ScaffoldSFLStageOrganizer(BaseStageOrganizer):
         total = 0
         total_labels = 0
         training_loss = 0.0
-        metrics = self._load_metrics()
+
+        # Only load metrics if in-round evaluation is enabled
+        enable_inround_eval = getattr(self.config, "enable_inround_evaluation", False)
+        metrics = self._load_metrics() if enable_inround_eval else []
         predictions: list["ndarray"] = []
         references: list["ndarray"] = []
         results: list[dict] = []
@@ -346,14 +349,15 @@ class ScaffoldSFLStageOrganizer(BaseStageOrganizer):
                             f"[G Measurement] Server gradient collected (client={client_id}, batch_size={batch_weight})"
                         )
 
-                # Compute metrics
-                predicted = (
-                    output
-                    if self.config.dataset == "sts-b"
-                    else torch.argmax(output, dim=-1)
-                )
-                predictions.extend(predicted.cpu().numpy())
-                references.extend(activation["labels"].cpu().numpy())
+                # Compute metrics (only if in-round evaluation is enabled)
+                if enable_inround_eval:
+                    predicted = (
+                        output
+                        if self.config.dataset == "sts-b"
+                        else torch.argmax(output, dim=-1)
+                    )
+                    predictions.extend(predicted.cpu().numpy())
+                    references.extend(activation["labels"].cpu().numpy())
 
                 total += 1
                 total_labels += len(activation["labels"])
@@ -390,14 +394,19 @@ class ScaffoldSFLStageOrganizer(BaseStageOrganizer):
         ):
             self.g_measurement_system.finalize_accumulated_round()
 
-        for metric in metrics:
-            result = metric.compute(predictions=predictions, references=references)
-            results.append(result)
-
         epoch_loss = training_loss / float(total) if float(total) != 0 else 0
-        print(
-            f"TRAIN ROUND {round_number}: Loss = {epoch_loss:.4f}, Accuracy = {results}, Total labels = {total_labels}"
-        )
+
+        if enable_inround_eval:
+            for metric in metrics:
+                result = metric.compute(predictions=predictions, references=references)
+                results.append(result)
+            print(
+                f"TRAIN ROUND {round_number}: Loss = {epoch_loss:.4f}, Accuracy = {results}, Total labels = {total_labels}"
+            )
+        else:
+            print(
+                f"TRAIN ROUND {round_number}: Loss = {epoch_loss:.4f}, Total labels = {total_labels}"
+            )
 
     async def _post_round(self, round_number: int):
         model_queue = self.global_dict.get("model_queue")

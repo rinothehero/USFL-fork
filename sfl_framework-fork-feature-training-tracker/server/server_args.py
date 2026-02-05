@@ -191,6 +191,11 @@ class Config:
     drift_sample_interval: int  # Measure drift every n steps (1 = every step, default: 1)
 
     # ==================
+    #  IN-ROUND EVALUATION OPTIONS
+    # ==================
+    enable_inround_evaluation: bool  # Enable training accuracy evaluation during in-round (default: False)
+
+    # ==================
     #  MISSING CLASS SELECTOR OPTIONS
     # ==================
     num_missing_class: int
@@ -1093,6 +1098,12 @@ def parse_args(custom_args=None):
         type=int,
         dest="drift_sample_interval",
         default=1,
+    )
+    parser.add_argument(
+        "--enable-inround-evaluation",
+        help="Enable training accuracy evaluation during in-round (default: False)",
+        action="store_true",
+        dest="enable_inround_evaluation",
     )
 
     parser.set_defaults(networking_fairness=True)
