@@ -125,6 +125,19 @@ async def run_simulation(server_args, client_args_list):
 if __name__ == "__main__":
     import itertools
 
+    # Parse command line arguments for GPU selection
+    # Usage: python simulation.py gpu=0,1,2
+    GPU_DEVICES = None  # None means use all available GPUs
+    for arg in sys.argv[1:]:
+        if arg.startswith("gpu="):
+            gpu_str = arg.split("=")[1]
+            GPU_DEVICES = [int(g.strip()) for g in gpu_str.split(",")]
+            print(f"[GPU] Using specified GPUs: {GPU_DEVICES}")
+            break
+
+    if GPU_DEVICES is None:
+        print(f"[GPU] Using all available GPUs (use 'gpu=0,1' to specify)")
+
     # Fixed base configuration
     BASE_CONFIG = {
         "host": "0.0.0.0",
@@ -408,7 +421,11 @@ if __name__ == "__main__":
         if GLOBAL_EPOCHS:
             server_command.extend(["-gr", GLOBAL_EPOCHS])
         if DEVICE:
-            server_command.extend(["-de", DEVICE])
+            # Use first specified GPU for server, or just "cuda" if using all GPUs
+            if DEVICE == "cuda" and GPU_DEVICES is not None:
+                server_command.extend(["-de", f"cuda:{GPU_DEVICES[0]}"])
+            else:
+                server_command.extend(["-de", DEVICE])
         if TOTAL_CLIENTS:
             server_command.extend(["-nc", TOTAL_CLIENTS])
         if CLIENTS_PER_ROUND:
@@ -505,9 +522,14 @@ if __name__ == "__main__":
                 server_command.extend(["-nnf"])
 
         client_commands = []
-        total_cuda_devices = 0
+        available_gpus = []
         if DEVICE == "cuda":
-            total_cuda_devices = torch.cuda.device_count()
+            if GPU_DEVICES is not None:
+                # Use specified GPUs
+                available_gpus = GPU_DEVICES
+            else:
+                # Use all available GPUs
+                available_gpus = list(range(torch.cuda.device_count()))
 
         if METHOD != "cl":
             client_commands = [
@@ -515,7 +537,7 @@ if __name__ == "__main__":
                     "-cid",
                     str(i),
                     "-d",
-                    f"cuda:{i % total_cuda_devices}" if DEVICE == "cuda" else DEVICE,
+                    f"cuda:{available_gpus[i % len(available_gpus)]}" if DEVICE == "cuda" and available_gpus else DEVICE,
                     "-su",
                     f"localhost:{PORT}",
                 ]
