@@ -356,6 +356,7 @@ if __name__ == "__main__":
         TOTAL_CLIENTS = workload.get("total_clients", None)
         CLIENTS_PER_ROUND = workload.get("clients_per_round", None)
         LEARNING_RATE = workload.get("learning_rate", None)
+        SERVER_LEARNING_RATE = workload.get("server_learning_rate", None)
         MOMENTUM = workload.get("momentum", None)
         BATCH_SIZE = workload.get("batch_size", None)
         DIRICHLET_ALPHA = workload.get("dirichlet_alpha", None)
@@ -421,6 +422,8 @@ if __name__ == "__main__":
             server_command.extend(["-sr", SPLIT_RATIO])
         if LEARNING_RATE:
             server_command.extend(["-lr", LEARNING_RATE])
+        if SERVER_LEARNING_RATE:
+            server_command.extend(["-slr", SERVER_LEARNING_RATE])
         if MOMENTUM:
             server_command.extend(["-mt", MOMENTUM])
         if BATCH_SIZE:

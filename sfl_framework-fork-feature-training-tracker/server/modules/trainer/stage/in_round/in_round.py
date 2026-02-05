@@ -33,17 +33,20 @@ class InRound:
         else:
             raise ValueError(f"Unknown criterion {config.criterion}")
 
-    def _get_optimizer(self, torch_model: "ModuleDict", config: "Config"):
+    def _get_optimizer(
+        self, torch_model: "ModuleDict", config: "Config", lr_override: float = None
+    ):
+        lr = lr_override if lr_override is not None else config.learning_rate
         if config.optimizer == "sgd":
             return optim.SGD(
                 torch_model.parameters(),
-                lr=config.learning_rate,
+                lr=lr,
                 momentum=config.momentum,
             )
         elif config.optimizer == "adam":
-            return optim.Adam(torch_model.parameters(), lr=config.learning_rate)
+            return optim.Adam(torch_model.parameters(), lr=lr)
         elif config.optimizer == "adamw":
-            return optim.AdamW(torch_model.parameters(), lr=config.learning_rate)
+            return optim.AdamW(torch_model.parameters(), lr=lr)
         else:
             raise ValueError(f"Unknown optimizer {config.optimizer}")
 

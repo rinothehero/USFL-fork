@@ -63,6 +63,7 @@ class Config:
     criterion: str  # Loss function (e.g., 'ce' for CrossEntropy, 'mse' for Mean Squared Error).
     optimizer: str  # Optimizer to use (e.g., 'sgd', 'adam').
     learning_rate: float  # Learning rate for the optimizer.
+    server_learning_rate: float  # Server-side learning rate (default: learning_rate * num_clients_per_round).
     momentum: float  # Momentum factor for the optimizer (used in optimizers like SGD).
     local_epochs: int  # Number of local epochs per client.
     global_round: int  # Number of global rounds to be executed.
@@ -348,6 +349,17 @@ def parse_args(custom_args=None):
         type=float,
         dest="learning_rate",
         default=0.001,
+        required=False,
+    )
+
+    parser.add_argument(
+        "-slr",
+        "--server_learning_rate",
+        help="Server model learning rate (default: learning_rate * num_clients_per_round)",
+        action="store",
+        type=float,
+        dest="server_learning_rate",
+        default=None,
         required=False,
     )
 
