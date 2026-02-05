@@ -162,6 +162,14 @@ class DriftMeasurementTracker:
         else:
             self._round_start_server_params = {}
 
+        # Debug: Log parameter counts and model types
+        print(
+            f"[Drift] on_round_start: client_model={type(client_model).__name__} "
+            f"({len(self._round_start_client_params)} params), "
+            f"server_model={type(server_model).__name__ if server_model else 'None'} "
+            f"({len(self._round_start_server_params)} params)"
+        )
+
         # Reset per-round accumulators
         self._client_drifts = {}
         self._server_trajectory_sum = 0.0
@@ -233,8 +241,12 @@ class DriftMeasurementTracker:
         # --- Client drift metrics ---
         # Compute Δx_c^t = x_c^{t+1,0} - x_c^{t,0}
         delta_client_norm_sq = 0.0
+        client_matched_params = 0
+        client_total_params = 0
         for name, param in new_client_model.named_parameters():
+            client_total_params += 1
             if name in self._round_start_client_params:
+                client_matched_params += 1
                 diff = param.data.cpu() - self._round_start_client_params[name]
                 delta_client_norm_sq += (diff ** 2).sum().item()
 
@@ -256,11 +268,21 @@ class DriftMeasurementTracker:
 
         # --- Server drift metrics ---
         delta_server_norm_sq = 0.0
+        server_matched_params = 0
+        server_total_params = 0
         if new_server_model is not None and self._round_start_server_params:
             for name, param in new_server_model.named_parameters():
+                server_total_params += 1
                 if name in self._round_start_server_params:
+                    server_matched_params += 1
                     diff = param.data.cpu() - self._round_start_server_params[name]
                     delta_server_norm_sq += (diff ** 2).sum().item()
+
+        # Debug: Log parameter matching stats
+        print(
+            f"[Drift] on_round_end: client_matched={client_matched_params}/{client_total_params}, "
+            f"server_matched={server_matched_params}/{server_total_params}"
+        )
 
         # G_drift_server = S_server / B_server
         G_drift_server = 0.0

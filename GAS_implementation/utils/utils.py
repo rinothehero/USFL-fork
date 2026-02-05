@@ -112,7 +112,11 @@ def calculate_v_value(
 
 def replace_user(order, k, user_num):
     available_users = set(range(user_num)) - set(order)
-    new_user = np.random.choice(list(available_users))
+    if len(available_users) == 0:
+        # All clients are participating - reuse the same client (reset state)
+        new_user = k
+    else:
+        new_user = np.random.choice(list(available_users))
     order[np.where(order == k)[0][0]] = new_user
     return order
 
