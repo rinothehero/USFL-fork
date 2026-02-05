@@ -838,6 +838,63 @@ for i in range(user_num):
 
 _drift_epoch_started = False  # Track if drift measurement started for this epoch
 
+# Pre-define config and filename for intermediate saving
+_intermediate_timestamp = train_begin_time.strftime("%Y%m%d_%H%M%S")
+_intermediate_json_filename = f"results/results_gas_{selectDataset}_{_intermediate_timestamp}.json"
+os.makedirs("results", exist_ok=True)
+
+_intermediate_config = {
+    "dataset": selectDataset,
+    "model": "ResNet-18" if use_resnet else "AlexNet",
+    "split_layer": split_layer if use_resnet else None,
+    "split_ratio": split_ratio if use_resnet else None,
+    "split_alexnet": split_alexnet if not use_resnet else None,
+    "epochs": epochs,
+    "local_epochs": localEpoch,
+    "users": user_num,
+    "participating": user_parti_num,
+    "batch_size": batchSize,
+    "lr": lr,
+    "momentum": momentum,
+    "weight_decay": weight_decay,
+    "clip_grad": clip_grad,
+    "iid": iid,
+    "dirichlet": dirichlet,
+    "label_dirichlet": label_dirichlet,
+    "alpha": alpha,
+    "shard": shard,
+    "min_require_size": min_require_size,
+    "generate": Generate,
+    "sample_frequency": Sample_Frequency,
+    "v_test": V_Test,
+    "v_test_frequency": V_Test_Frequency,
+    "g_measurement": G_Measurement,
+    "g_measure_frequency": G_Measure_Frequency,
+    "seed": seed_value,
+    "method": "Generative Activation-Aided" if Generate else "Original",
+}
+
+
+def _save_intermediate_results():
+    """Save intermediate results to JSON (overwrites each round)"""
+    results = {
+        "config": _intermediate_config,
+        "current_epoch": epoch,
+        "total_epochs": epochs,
+        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "time_record": time_record,
+        "accuracy": total_accuracy,
+        "v_value": total_v_value,
+        "status": "in_progress" if epoch < epochs else "completed",
+    }
+    if G_Measurement and g_manager is not None:
+        results["g_history"] = g_manager.get_history()
+    if DRIFT_MEASUREMENT and drift_tracker is not None:
+        results["drift_history"] = drift_tracker.get_history()
+    with open(_intermediate_json_filename, "w") as f_json:
+        json.dump(results, f_json, indent=4)
+
+
 while epoch != epochs:
     user_model.train()
     server_model.train()
@@ -1266,6 +1323,9 @@ while epoch != epochs:
                     f"[G Measurement] Epoch {epoch}: capturing async gradients (client/server)"
                 )
 
+            # Save intermediate results after each round
+            _save_intermediate_results()
+
         # select new client
         index = np.where(order == selected_client)[0][0]
         usersParam[index] = userParam
@@ -1397,42 +1457,16 @@ with open(output_filename, "w") as f:
     f.write(f"{begin_time_str} ~ {end_time_str};\n")
     f.write("GAS = [" + total_accuracy_str + "]\n")
 
-# Save results to JSON
+# Save final results to JSON (same file as intermediate, with completed status)
 results = {
-    "config": {
-        "dataset": selectDataset,
-        "model": model_type,
-        "split_layer": split_layer if use_resnet else None,
-        "split_ratio": split_ratio if use_resnet else None,
-        "split_alexnet": split_alexnet if not use_resnet else None,
-        "epochs": epochs,
-        "local_epochs": localEpoch,
-        "users": user_num,
-        "participating": user_parti_num,
-        "batch_size": batchSize,
-        "lr": lr,
-        "momentum": momentum,
-        "weight_decay": weight_decay,
-        "clip_grad": clip_grad,
-        "iid": iid,
-        "dirichlet": dirichlet,
-        "label_dirichlet": label_dirichlet,
-        "alpha": alpha,
-        "shard": shard,
-        "min_require_size": min_require_size,
-        "generate": Generate,
-        "sample_frequency": Sample_Frequency,
-        "v_test": V_Test,
-        "v_test_frequency": V_Test_Frequency,
-        "g_measurement": G_Measurement,
-        "g_measure_frequency": G_Measure_Frequency,
-        "seed": seed_value,
-        "method": selectMethod,
-    },
+    "config": _intermediate_config,
+    "current_epoch": epoch,
+    "total_epochs": epochs,
     "timestamp": end_time_str,
     "time_record": time_record,
     "accuracy": total_accuracy,
     "v_value": total_v_value,
+    "status": "completed",
 }
 if G_Measurement and g_manager is not None:
     results["g_history"] = g_manager.get_history()
@@ -1441,9 +1475,7 @@ if DRIFT_MEASUREMENT and drift_tracker is not None:
     results["drift_history"] = drift_tracker.get_history()
     print(f"\n[Drift Measurement] Final G_drift values: {results['drift_history']['G_drift'][-5:]}")
 
-os.makedirs("results", exist_ok=True)
-json_filename = f"results/results_gas_{selectDataset}_{timestamp_str}.json"
-with open(json_filename, "w") as f_json:
+with open(_intermediate_json_filename, "w") as f_json:
     json.dump(results, f_json, indent=4)
 
-print(f"\nResults saved to {json_filename}")
+print(f"\nResults saved to {_intermediate_json_filename}")
