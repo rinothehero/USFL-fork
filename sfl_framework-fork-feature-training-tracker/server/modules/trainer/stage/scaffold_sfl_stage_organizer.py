@@ -505,11 +505,18 @@ class ScaffoldSFLStageOrganizer(BaseStageOrganizer):
                         drift_batch_steps = num_samples.get("drift_batch_steps", 0)
                         drift_endpoint = num_samples.get("drift_endpoint", 0.0)
                         if drift_batch_steps > 0:
+                            augmented_counts = num_samples.get("augmented_label_counts", {})
+                            client_weight = (
+                                sum(augmented_counts.values())
+                                if augmented_counts
+                                else num_samples.get("dataset_size", 0)
+                            )
                             self.drift_tracker.collect_client_drift(
                                 client_id,
                                 drift_trajectory_sum,
                                 drift_batch_steps,
                                 drift_endpoint,
+                                client_weight=client_weight,
                             )
 
         # SCAFFOLD: Collect delta_c from clients and update global c

@@ -30,9 +30,17 @@ class DriftMetrics:
 
     # Client-side drift (aggregated from all participating clients)
     G_drift_client: float = 0.0  # (1/|P_t|) Σ (S_n / B_n)
+    # Step-weighted variant: ΣS / ΣB (useful when clients have different step counts)
+    G_drift_client_stepweighted: float = 0.0
     G_end_client: float = 0.0  # (1/|P_t|) Σ E_n
+    # In GAS, aggregation is uniform over participating clients, so this equals G_end_client.
+    G_end_client_weighted: float = 0.0
     G_drift_norm_client: float = 0.0  # G_drift_client / (||Δx_c||² + ε)
     delta_client_norm_sq: float = 0.0  # ||x_c^{t+1,0} - x_c^{t,0}||²
+    # Update disagreement around the aggregated update μ (uniform mean in GAS):
+    # D_dir = E[||Δ_i||²] - ||E[Δ_i]||²
+    D_dir_client_weighted: float = 0.0
+    D_rel_client_weighted: float = 0.0
 
     # Server-side drift (single server model)
     G_drift_server: float = 0.0  # S_server / B_server
@@ -51,9 +59,13 @@ class DriftMetrics:
         return {
             # Client metrics
             "G_drift_client": self.G_drift_client,
+            "G_drift_client_stepweighted": self.G_drift_client_stepweighted,
             "G_end_client": self.G_end_client,
+            "G_end_client_weighted": self.G_end_client_weighted,
             "G_drift_norm_client": self.G_drift_norm_client,
             "delta_client_norm_sq": self.delta_client_norm_sq,
+            "D_dir_client_weighted": self.D_dir_client_weighted,
+            "D_rel_client_weighted": self.D_rel_client_weighted,
             # Server metrics
             "G_drift_server": self.G_drift_server,
             "G_end_server": self.G_end_server,
@@ -314,13 +326,18 @@ class DriftMeasurementTracker:
         # G_drift_client = (1/|P_t|) Σ (S_n / B_n)
         G_drift_client = 0.0
         valid_clients = 0
+        sum_S = 0.0
+        sum_B = 0.0
         for state in self._client_states.values():
             if state.batch_steps > 0:
                 G_drift_client += state.trajectory_sum / state.batch_steps
                 valid_clients += 1
+                sum_S += state.trajectory_sum
+                sum_B += state.batch_steps
 
         if valid_clients > 0:
             G_drift_client /= valid_clients
+        G_drift_client_stepweighted = (sum_S / sum_B) if sum_B > 0 else 0.0
 
         # G_end_client = (1/|P_t|) Σ E_n
         G_end_client = sum(s.endpoint_drift for s in self._client_states.values())
@@ -365,6 +382,15 @@ class DriftMeasurementTracker:
             else 0.0
         )
 
+        # --- Update disagreement (uniform mean update in GAS) ---
+        # In GAS, the global client model is updated by uniform averaging over the
+        # participating clients, so:
+        #   D_dir = E[||Δ_i||²] - ||Δ_global||²
+        # where ||Δ_global||² == delta_client_norm_sq.
+        G_end_client_weighted = G_end_client
+        D_dir_client_weighted = G_end_client_weighted - delta_client_norm_sq
+        D_rel_client_weighted = D_dir_client_weighted / (delta_client_norm_sq + epsilon)
+
         # --- Combined metrics ---
         G_drift_total = G_drift_client + G_drift_server
         G_end_total = G_end_client + G_end_server
@@ -372,9 +398,13 @@ class DriftMeasurementTracker:
         result.metrics = DriftMetrics(
             # Client
             G_drift_client=G_drift_client,
+            G_drift_client_stepweighted=G_drift_client_stepweighted,
             G_end_client=G_end_client,
+            G_end_client_weighted=G_end_client_weighted,
             G_drift_norm_client=G_drift_norm_client,
             delta_client_norm_sq=delta_client_norm_sq,
+            D_dir_client_weighted=D_dir_client_weighted,
+            D_rel_client_weighted=D_rel_client_weighted,
             # Server
             G_drift_server=G_drift_server,
             G_end_server=G_end_server,
@@ -404,9 +434,13 @@ class DriftMeasurementTracker:
         return {
             # Client metrics
             "G_drift_client": [m.metrics.G_drift_client for m in self.measurements],
+            "G_drift_client_stepweighted": [m.metrics.G_drift_client_stepweighted for m in self.measurements],
             "G_end_client": [m.metrics.G_end_client for m in self.measurements],
+            "G_end_client_weighted": [m.metrics.G_end_client_weighted for m in self.measurements],
             "G_drift_norm_client": [m.metrics.G_drift_norm_client for m in self.measurements],
             "delta_client_norm_sq": [m.metrics.delta_client_norm_sq for m in self.measurements],
+            "D_dir_client_weighted": [m.metrics.D_dir_client_weighted for m in self.measurements],
+            "D_rel_client_weighted": [m.metrics.D_rel_client_weighted for m in self.measurements],
             # Server metrics
             "G_drift_server": [m.metrics.G_drift_server for m in self.measurements],
             "G_end_server": [m.metrics.G_end_server for m in self.measurements],

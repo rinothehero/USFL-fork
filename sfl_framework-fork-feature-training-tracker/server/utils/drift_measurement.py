@@ -30,9 +30,18 @@ class DriftMetrics:
 
     # Client-side drift (aggregated from all participating clients)
     G_drift_client: float = 0.0  # (1/|P_t|) Σ (S_n / B_n)
+    # Step-weighted variant: ΣS / ΣB (prevents "1 client = 1 vote" distortion when B differs)
+    G_drift_client_stepweighted: float = 0.0
     G_end_client: float = 0.0  # (1/|P_t|) Σ E_n
+    # Client-weighted endpoint drift (weights should match aggregation weights when possible)
+    G_end_client_weighted: float = 0.0
     G_drift_norm_client: float = 0.0  # G_drift_client / (||Δx_c||² + ε)
     delta_client_norm_sq: float = 0.0  # ||x_c^{t+1,0} - x_c^{t,0}||²
+    # Client update disagreement around the aggregated update vector μ:
+    # D_dir = E_w[||Δ_i||²] - ||E_w[Δ_i]||²  (variance identity; weights w should match aggregation)
+    D_dir_client_weighted: float = 0.0
+    # Scale-invariant relative disagreement
+    D_rel_client_weighted: float = 0.0
 
     # Server-side drift (single server model)
     G_drift_server: float = 0.0  # S_server / B_server
@@ -51,9 +60,13 @@ class DriftMetrics:
         return {
             # Client metrics
             "G_drift_client": self.G_drift_client,
+            "G_drift_client_stepweighted": self.G_drift_client_stepweighted,
             "G_end_client": self.G_end_client,
+            "G_end_client_weighted": self.G_end_client_weighted,
             "G_drift_norm_client": self.G_drift_norm_client,
             "delta_client_norm_sq": self.delta_client_norm_sq,
+            "D_dir_client_weighted": self.D_dir_client_weighted,
+            "D_rel_client_weighted": self.D_rel_client_weighted,
             # Server metrics
             "G_drift_server": self.G_drift_server,
             "G_end_server": self.G_end_server,
@@ -115,6 +128,9 @@ class DriftMeasurementTracker:
 
         # Per-client drift data for current round
         self._client_drifts: Dict[int, dict] = {}  # {client_id: {S, B, E}}
+        # Optional per-client weights for fair comparisons (e.g., aggregation weights).
+        # Intended meaning: w_i ∝ "effective" samples used by the client in the round.
+        self._client_weights: Dict[int, float] = {}
 
         # Server drift accumulation for current round
         self._server_trajectory_sum: float = 0.0
@@ -172,6 +188,7 @@ class DriftMeasurementTracker:
 
         # Reset per-round accumulators
         self._client_drifts = {}
+        self._client_weights = {}
         self._server_trajectory_sum = 0.0
         self._server_batch_steps = 0
         self._server_endpoint_drift = 0.0
@@ -197,6 +214,7 @@ class DriftMeasurementTracker:
         drift_trajectory_sum: float,
         drift_batch_steps: int,
         drift_endpoint: float,
+        client_weight: Optional[float] = None,
     ):
         """
         Collect drift scalars from a client.
@@ -212,6 +230,12 @@ class DriftMeasurementTracker:
             "B": drift_batch_steps,
             "E": drift_endpoint,
         }
+        if client_weight is not None:
+            try:
+                self._client_weights[client_id] = float(client_weight)
+            except (TypeError, ValueError):
+                # Keep it absent if the value is not castable.
+                pass
 
     def on_round_end(
         self,
@@ -253,18 +277,51 @@ class DriftMeasurementTracker:
         # G_drift_client = (1/|P_t|) Σ (S_n / B_n)
         G_drift_client = 0.0
         valid_clients = 0
+        sum_S = 0.0
+        sum_B = 0.0
         for client_id, drift in self._client_drifts.items():
             if drift["B"] > 0:
                 G_drift_client += drift["S"] / drift["B"]
                 valid_clients += 1
+                sum_S += drift["S"]
+                sum_B += drift["B"]
 
         if valid_clients > 0:
             G_drift_client /= valid_clients
+        G_drift_client_stepweighted = (sum_S / sum_B) if sum_B > 0 else 0.0
 
         # G_end_client = (1/|P_t|) Σ E_n
         G_end_client = sum(d["E"] for d in self._client_drifts.values())
         if self._client_drifts:
             G_end_client /= len(self._client_drifts)
+
+        # --- Client update disagreement (weighted) ---
+        # Use per-client weights if available, otherwise fall back to uniform weights.
+        # NOTE: This metric assumes the aggregated global client model is a weighted average
+        #       of client models using the same weights (e.g., FedAvg weights).
+        weights = {
+            cid: self._client_weights.get(cid, None) for cid in self._client_drifts.keys()
+        }
+        if all(w is not None for w in weights.values()):
+            weight_sum = sum(float(w) for w in weights.values() if w is not None)
+        else:
+            weight_sum = 0.0
+
+        if weight_sum <= 0.0:
+            # Fallback: uniform weights across participating clients
+            weights = {cid: 1.0 for cid in self._client_drifts.keys()}
+            weight_sum = float(len(weights)) if weights else 0.0
+
+        # Weighted mean of endpoint drift norms: E_w[||Δ_i||²]
+        G_end_client_weighted = 0.0
+        if weight_sum > 0.0:
+            for cid, drift in self._client_drifts.items():
+                w = float(weights.get(cid, 0.0))
+                G_end_client_weighted += (w / weight_sum) * float(drift.get("E", 0.0))
+
+        # Weighted directional disagreement around μ (the aggregated update):
+        # D_dir = E_w[||Δ_i||²] - ||μ||², where ||μ||² == delta_client_norm_sq.
+        D_dir_client_weighted = G_end_client_weighted - delta_client_norm_sq
 
         # --- Server drift metrics ---
         delta_server_norm_sq = 0.0
@@ -318,6 +375,9 @@ class DriftMeasurementTracker:
             else 0.0
         )
 
+        # Relative disagreement (scale-invariant proxy)
+        D_rel_client_weighted = D_dir_client_weighted / (delta_client_norm_sq + epsilon)
+
         # --- Combined metrics ---
         G_drift_total = G_drift_client + G_drift_server
         G_end_total = G_end_client + G_end_server
@@ -325,9 +385,13 @@ class DriftMeasurementTracker:
         result.metrics = DriftMetrics(
             # Client
             G_drift_client=G_drift_client,
+            G_drift_client_stepweighted=G_drift_client_stepweighted,
             G_end_client=G_end_client,
+            G_end_client_weighted=G_end_client_weighted,
             G_drift_norm_client=G_drift_norm_client,
             delta_client_norm_sq=delta_client_norm_sq,
+            D_dir_client_weighted=D_dir_client_weighted,
+            D_rel_client_weighted=D_rel_client_weighted,
             # Server
             G_drift_server=G_drift_server,
             G_end_server=G_end_server,
@@ -366,6 +430,7 @@ class DriftMeasurementTracker:
         self._round_start_client_params = {}
         self._round_start_server_params = {}
         self._client_drifts = {}
+        self._client_weights = {}
         self._server_trajectory_sum = 0.0
         self._server_batch_steps = 0
         self._server_endpoint_drift = 0.0
