@@ -838,6 +838,23 @@ for i in range(user_num):
 
 _drift_epoch_started = False  # Track if drift measurement started for this epoch
 
+# Pre-define dataset name for intermediate saving
+selectDataset = (
+    "cifar10"
+    if cifar
+    else "mnist"
+    if mnist
+    else "fmnist"
+    if fmnist
+    else "cinic"
+    if cinic
+    else "cifar100"
+    if cifar100
+    else "SVHN"
+    if SVHN
+    else "None"
+)
+
 # Pre-define config and filename for intermediate saving
 _intermediate_timestamp = train_begin_time.strftime("%Y%m%d_%H%M%S")
 _intermediate_json_filename = f"results/results_gas_{selectDataset}_{_intermediate_timestamp}.json"
@@ -1361,21 +1378,6 @@ end_time = datetime.datetime.now()
 begin_time_str = train_begin_time.strftime("%Y-%m-%d %H:%M:%S")
 end_time_str = end_time.strftime("%Y-%m-%d %H:%M:%S")
 
-selectDataset = (
-    "cifar10"
-    if cifar
-    else "mnist"
-    if mnist
-    else "fmnist"
-    if fmnist
-    else "cinic"
-    if cinic
-    else "cifar100"
-    if cifar100
-    else "SVHN"
-    if SVHN
-    else "None"
-)
 selectMethod = "Generative Activation-Aided" if Generate else "Original"
 IfCilp = "clip" if clip_grad else "not clip"
 
