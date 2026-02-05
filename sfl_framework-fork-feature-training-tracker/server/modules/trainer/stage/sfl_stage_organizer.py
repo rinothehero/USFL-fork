@@ -124,7 +124,7 @@ class SFLStageOrganizer(BaseStageOrganizer):
         self.split_models = split_models
 
         # Drift Measurement: Snapshot client and server models at round start
-        if self.drift_tracker is not None:
+        if self.drift_tracker is not None and len(self.split_models) >= 2:
             self.drift_tracker.on_round_start(self.split_models[0], self.split_models[1])
 
         model_queue = self.global_dict.get("model_queue")
