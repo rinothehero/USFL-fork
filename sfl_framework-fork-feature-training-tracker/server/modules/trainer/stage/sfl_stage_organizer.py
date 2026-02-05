@@ -510,6 +510,13 @@ class SFLStageOrganizer(BaseStageOrganizer):
             if isinstance(aggregated_client_model, torch.nn.ModuleDict):
                 aggregated_model = aggregated_client_model
                 aggregated_model.update(self.split_models[1])
+            elif aggregated_client_model is not None and hasattr(self.model, "get_split_models"):
+                # FlexibleResNet: Update client_model directly and sync to full model
+                client_model, _ = self.model.get_split_models()
+                client_model.load_state_dict(aggregated_client_model.state_dict())
+                if hasattr(self.model, "sync_full_model_from_split"):
+                    self.model.sync_full_model_from_split()
+                aggregated_model = self.model.get_torch_model()
 
         self.global_dict.add_event("MODEL_AGGREGATION_END", {"client_ids": client_ids})
 
