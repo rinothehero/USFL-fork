@@ -98,6 +98,8 @@ class ServerConfig:
     # Drift Measurement (SCAFFOLD-style)
     enable_drift_measurement: bool  # Enable client drift measurement
     drift_sample_interval: int  # Measure drift every n steps (1 = every step)
+    # In-round evaluation
+    enable_inround_evaluation: bool  # Enable training accuracy evaluation during in-round
     # FitFL
     max_pruning_ratio: int  # Maximum pruning ratio.
     # FitFL
