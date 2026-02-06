@@ -156,6 +156,9 @@ class GlobalDict:
                     "G_end": [m["params"].get("G_end", 0.0) for m in drift_measurements],
                     "G_drift_norm": [m["params"].get("G_drift_norm", 0.0) for m in drift_measurements],
                     "delta_global_norm_sq": [m["params"].get("delta_global_norm_sq", 0.0) for m in drift_measurements],
+                    "A_cos": [m["params"].get("A_cos") for m in drift_measurements],
+                    "M_norm": [m["params"].get("M_norm") for m in drift_measurements],
+                    "n_valid_alignment": [m["params"].get("n_valid_alignment") for m in drift_measurements],
                     # Extra comparison metrics (may be missing on older runs)
                     "G_drift_client_stepweighted": [m["params"].get("G_drift_client_stepweighted") for m in drift_measurements],
                     "G_end_client_weighted": [m["params"].get("G_end_client_weighted") for m in drift_measurements],

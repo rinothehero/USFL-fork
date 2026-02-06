@@ -25,7 +25,8 @@ from typing import Dict, List, Optional, Tuple
 import torch
 import torch.nn as nn
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
+# shared/update_alignment.py lives at repo root: USFL-fork/shared
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 from shared.update_alignment import flatten_delta, compute_update_alignment
 
 
