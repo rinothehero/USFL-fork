@@ -121,6 +121,17 @@ if model_override:
         use_resnet = False
         use_resnet_image_style = False
 
+# Distribution mode overrides (for experiment_core unified runner)
+_iid_override = os.environ.get("GAS_IID")
+if _iid_override is not None:
+    iid = _iid_override.strip().lower() in {"1", "true", "yes", "y"}
+_dirichlet_override = os.environ.get("GAS_DIRICHLET")
+if _dirichlet_override is not None:
+    dirichlet = _dirichlet_override.strip().lower() in {"1", "true", "yes", "y"}
+_label_dirichlet_override = os.environ.get("GAS_LABEL_DIRICHLET")
+if _label_dirichlet_override is not None:
+    label_dirichlet = _label_dirichlet_override.strip().lower() in {"1", "true", "yes", "y"}
+
 batchSize = _env_int("GAS_BATCH_SIZE", batchSize)
 shard = _env_int("GAS_LABELS_PER_CLIENT", shard)
 alpha = _env_float("GAS_DIRICHLET_ALPHA", alpha)

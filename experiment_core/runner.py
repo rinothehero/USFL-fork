@@ -54,10 +54,24 @@ def run_experiment(spec: ExperimentSpec, repo_root: Path) -> RunOutcome:
 
     exit_code = 0
     if mode == "run":
-        proc = subprocess.run(command, cwd=str(cwd), env=env, check=False)
+        proc = subprocess.run(
+            command, cwd=str(cwd), env=env, check=False,
+            capture_output=True, text=True,
+        )
         exit_code = int(proc.returncode)
         if exit_code != 0:
-            raise RuntimeError(f"Experiment command failed with exit code {exit_code}: {' '.join(command)}")
+            err_detail = []
+            if proc.stdout:
+                err_detail.append(f"STDOUT (last 2000 chars):\n{proc.stdout[-2000:]}")
+            if proc.stderr:
+                err_detail.append(f"STDERR (last 2000 chars):\n{proc.stderr[-2000:]}")
+            detail_str = "\n".join(err_detail) if err_detail else "(no output captured)"
+            raise RuntimeError(
+                f"Experiment command failed with exit code {exit_code}:\n"
+                f"  Command: {' '.join(command)}\n"
+                f"  CWD: {cwd}\n"
+                f"{detail_str}"
+            )
 
     explicit_raw = resolve_path(execution.get("raw_result_path"), repo_root)
     raw_result_path = explicit_raw

@@ -11,6 +11,24 @@ def _b(value: bool) -> str:
     return "true" if value else "false"
 
 
+# GAS only supports these models.  Map unified spec names → GAS internal names.
+_GAS_MODEL_MAP: Dict[str, str] = {
+    "resnet18": "resnet18",
+    "resnet18_flex": "resnet18",
+    "resnet18_image_style": "resnet18",
+    "alexnet": "alexnet",
+}
+
+# Map unified distribution mode → GAS internal boolean flags
+_GAS_DISTRIBUTION_MAP: Dict[str, Dict[str, str]] = {
+    "uniform": {"GAS_IID": "true", "GAS_DIRICHLET": "false", "GAS_LABEL_DIRICHLET": "false"},
+    "iid": {"GAS_IID": "true", "GAS_DIRICHLET": "false", "GAS_LABEL_DIRICHLET": "false"},
+    "dirichlet": {"GAS_IID": "false", "GAS_DIRICHLET": "true", "GAS_LABEL_DIRICHLET": "false"},
+    "shard_dirichlet": {"GAS_IID": "false", "GAS_DIRICHLET": "false", "GAS_LABEL_DIRICHLET": "true"},
+    "label": {"GAS_IID": "false", "GAS_DIRICHLET": "false", "GAS_LABEL_DIRICHLET": "false"},
+}
+
+
 class GASAdapter(FrameworkAdapter):
     name = "gas"
 
@@ -21,9 +39,23 @@ class GASAdapter(FrameworkAdapter):
         common = spec["common"]
         dist = common["distribution"]
 
+        # Model mapping with validation
+        model_name = str(common["model"]).lower()
+        gas_model = _GAS_MODEL_MAP.get(model_name)
+        if gas_model is None:
+            supported = ", ".join(sorted(_GAS_MODEL_MAP.keys()))
+            raise ValueError(
+                f"GAS does not support model '{common['model']}'. "
+                f"Supported models: {supported}"
+            )
+
+        # Distribution mode mapping
+        dist_mode = str(dist.get("mode", "shard_dirichlet")).lower()
+        dist_flags = _GAS_DISTRIBUTION_MAP.get(dist_mode, {})
+
         env = {
             "GAS_DATASET": str(common["dataset"]),
-            "GAS_MODEL": "resnet18" if "resnet" in str(common["model"]).lower() else "alexnet",
+            "GAS_MODEL": gas_model,
             "GAS_BATCH_SIZE": str(common["client_batch_size"]),
             "GAS_LABELS_PER_CLIENT": str(dist.get("labels_per_client", 2)),
             "GAS_DIRICHLET_ALPHA": str(dist.get("dirichlet_alpha", 0.3)),
@@ -39,6 +71,9 @@ class GASAdapter(FrameworkAdapter):
             "GAS_DRIFT_MEASUREMENT": _b(bool(common.get("drift", {}).get("enabled", False))),
             "GAS_DRIFT_SAMPLE_INTERVAL": str(common.get("drift", {}).get("sample_interval", 1)),
         }
+
+        # Apply distribution mode flags
+        env.update(dist_flags)
 
         gas_overrides = spec.get("framework_overrides", {}).get("gas_env", {})
         for k, v in gas_overrides.items():
