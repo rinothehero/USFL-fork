@@ -1204,6 +1204,10 @@ while epoch != epochs:
                 selected_client,
                 usersParam[np.where(order == selected_client)[0][0]]
             )
+            drift_tracker.collect_client_delta(
+                selected_client,
+                usersParam[np.where(order == selected_client)[0][0]]
+            )
 
         count_local += 1
         if WRTT is True:  # Record the time of model upload

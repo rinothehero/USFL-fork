@@ -1397,6 +1397,15 @@ class USFLStageOrganizer(BaseStageOrganizer):
                                 drift_endpoint,
                                 client_weight=client_weight,
                             )
+                            # Collect client model state for A_cos alignment
+                            if hasattr(model, 'state_dict'):
+                                self.drift_tracker.collect_client_model(
+                                    client_id, model.state_dict(), client_weight=client_weight
+                                )
+                            elif isinstance(model, dict):
+                                self.drift_tracker.collect_client_model(
+                                    client_id, model, client_weight=client_weight
+                                )
         # ===== END DRIFT MEASUREMENT COLLECTION =====
 
         client_ids = [model[0] for model in model_queue.queue]

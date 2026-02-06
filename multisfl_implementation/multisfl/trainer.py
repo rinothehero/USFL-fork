@@ -518,6 +518,9 @@ class MultiSFLTrainer:
                     self.drift_tracker.finalize_branch(
                         b, bc.model, branch_server_model=bs.model, client_id=client_id
                     )
+                    self.drift_tracker.collect_branch_delta(b, bc.model.state_dict())
+                    bs_for_delta = self.main.get_server_branch(b)
+                    self.drift_tracker.collect_branch_server_delta(b, bs_for_delta.model.state_dict())
 
                 # Normalize by actual steps run
                 grad_norm_sq_list.append(branch_grad_norm_sq / steps_to_run)

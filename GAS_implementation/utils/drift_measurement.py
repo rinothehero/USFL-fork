@@ -19,9 +19,14 @@ Usage:
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import torch
 import copy
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+from shared.update_alignment import flatten_delta, compute_update_alignment
 
 
 @dataclass
@@ -55,6 +60,11 @@ class DriftMetrics:
     num_clients: int = 0
     server_steps: int = 0
 
+    # Update Alignment (A_cos)
+    A_cos: float = float("nan")
+    M_norm: float = 0.0
+    n_valid_alignment: int = 0
+
     def to_dict(self) -> dict:
         return {
             # Client metrics
@@ -82,6 +92,10 @@ class DriftMetrics:
             # Counts
             "num_clients": self.num_clients,
             "server_steps": self.server_steps,
+            # Update Alignment
+            "A_cos": self.A_cos,
+            "M_norm": self.M_norm,
+            "n_valid_alignment": self.n_valid_alignment,
         }
 
 
@@ -165,6 +179,9 @@ class DriftMeasurementTracker:
         # Historical measurements
         self.measurements: List[RoundDriftMeasurement] = []
 
+        # Client deltas for A_cos computation
+        self._client_deltas: List[Tuple[int, torch.Tensor]] = []
+
         # For adaptive epsilon
         self._early_delta_norms: List[float] = []
         self._adaptive_epsilon: Optional[float] = None
@@ -205,6 +222,7 @@ class DriftMeasurementTracker:
 
         # Reset per-round accumulators
         self._client_states.clear()
+        self._client_deltas = []
         self._server_trajectory_sum = 0.0
         self._server_batch_steps = 0
         self._server_endpoint_drift = 0.0
@@ -287,6 +305,12 @@ class DriftMeasurementTracker:
                 state.trajectory_sum = (
                     state.trajectory_sum * state.batch_steps / sampled_steps
                 )
+
+    def collect_client_delta(self, client_id: int, client_state_dict: dict):
+        """Compute and store Δ_i = θ_end - θ_start for A_cos computation."""
+        delta = flatten_delta(client_state_dict, self._round_start_client_params)
+        if delta is not None:
+            self._client_deltas.append((client_id, delta))
 
     def on_round_end(
         self,
@@ -395,6 +419,9 @@ class DriftMeasurementTracker:
         G_drift_total = G_drift_client + G_drift_server
         G_end_total = G_end_client + G_end_server
 
+        # Update Alignment (A_cos + M_norm)
+        alignment = compute_update_alignment(self._client_deltas)
+
         result.metrics = DriftMetrics(
             # Client
             G_drift_client=G_drift_client,
@@ -416,6 +443,10 @@ class DriftMeasurementTracker:
             # Counts
             num_clients=len(self._client_states),
             server_steps=self._server_batch_steps,
+            # Update Alignment
+            A_cos=alignment.A_cos,
+            M_norm=alignment.M_norm,
+            n_valid_alignment=alignment.n_valid,
         )
 
         self.measurements.append(result)
@@ -424,7 +455,8 @@ class DriftMeasurementTracker:
             f"[Drift] Round {round_number}: "
             f"Client(G_drift={G_drift_client:.6f}, G_end={G_end_client:.6f}) "
             f"Server(G_drift={G_drift_server:.6f}, G_end={G_end_server:.6f}, steps={self._server_batch_steps}) "
-            f"Total(G_drift={G_drift_total:.6f})"
+            f"Total(G_drift={G_drift_total:.6f}) "
+            f"A_cos={alignment.A_cos:.4f}"
         )
 
         return result
@@ -454,6 +486,9 @@ class DriftMeasurementTracker:
             "G_end": [m.metrics.G_end_client for m in self.measurements],
             "G_drift_norm": [m.metrics.G_drift_norm_client for m in self.measurements],
             "delta_global_norm_sq": [m.metrics.delta_client_norm_sq for m in self.measurements],
+            # Update Alignment
+            "A_cos": [m.metrics.A_cos for m in self.measurements],
+            "M_norm": [m.metrics.M_norm for m in self.measurements],
             # Per-round details
             "per_round": [m.to_dict() for m in self.measurements],
         }
@@ -463,6 +498,7 @@ class DriftMeasurementTracker:
         self._round_start_client_params = {}
         self._round_start_server_params = {}
         self._client_states.clear()
+        self._client_deltas = []
         self._server_trajectory_sum = 0.0
         self._server_batch_steps = 0
         self._server_endpoint_drift = 0.0

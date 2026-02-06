@@ -19,9 +19,14 @@ Usage:
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
+import os
+import sys
 import torch
 import torch.nn as nn
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+from shared.update_alignment import flatten_delta, compute_update_alignment
 
 
 @dataclass
@@ -47,6 +52,13 @@ class DriftMetrics:
     num_branches: int = 0
     server_steps: int = 0
 
+    # Update alignment metrics
+    A_cos_client: float = float("nan")
+    M_norm_client: float = 0.0
+    A_cos_server: float = float("nan")
+    M_norm_server: float = 0.0
+    n_valid_alignment: int = 0
+
     def to_dict(self) -> dict:
         return {
             # Client metrics
@@ -71,6 +83,12 @@ class DriftMetrics:
             "num_clients": self.num_branches,
             "num_branches": self.num_branches,
             "server_steps": self.server_steps,
+            # Update alignment
+            "A_cos_client": self.A_cos_client,
+            "M_norm_client": self.M_norm_client,
+            "A_cos_server": self.A_cos_server,
+            "M_norm_server": self.M_norm_server,
+            "n_valid_alignment": self.n_valid_alignment,
         }
 
 
@@ -160,6 +178,10 @@ class MultiSFLDriftTracker:
         self._early_delta_norms: List[float] = []
         self._adaptive_epsilon: Optional[float] = None
 
+        # For update alignment (A_cos) computation
+        self._branch_deltas: List[Tuple[int, torch.Tensor]] = []
+        self._branch_server_deltas: List[Tuple[int, torch.Tensor]] = []
+
     def _is_trainable_param(self, name: str) -> bool:
         """Check if parameter name corresponds to trainable weights (not buffers)"""
         # Exclude BatchNorm running statistics and tracking buffers
@@ -197,6 +219,8 @@ class MultiSFLDriftTracker:
         # Reset per-round accumulators
         self._branch_client_states.clear()
         self._branch_server_states.clear()
+        self._branch_deltas = []
+        self._branch_server_deltas = []
 
     def _compute_drift_from_start(
         self,
@@ -307,6 +331,18 @@ class MultiSFLDriftTracker:
             server_state.endpoint_drift = self._compute_drift_from_start(
                 current_server_sd, self._round_start_server_params
             )
+
+    def collect_branch_delta(self, branch_id: int, branch_client_state_dict: dict):
+        """Compute and store client Δ_b for A_cos computation."""
+        delta = flatten_delta(branch_client_state_dict, self._round_start_client_params)
+        if delta is not None:
+            self._branch_deltas.append((branch_id, delta))
+
+    def collect_branch_server_delta(self, branch_id: int, branch_server_state_dict: dict):
+        """Compute and store server Δ_b for A_cos computation."""
+        delta = flatten_delta(branch_server_state_dict, self._round_start_server_params)
+        if delta is not None:
+            self._branch_server_deltas.append((branch_id, delta))
 
     def on_round_end(
         self,
@@ -419,6 +455,11 @@ class MultiSFLDriftTracker:
         G_drift_total = G_drift_client + G_drift_server
         G_end_total = G_end_client + G_end_server
 
+        # Update Alignment (A_cos + M_norm) — client side
+        alignment_client = compute_update_alignment(self._branch_deltas)
+        # Update Alignment — server side (unique to MultiSFL)
+        alignment_server = compute_update_alignment(self._branch_server_deltas)
+
         result.metrics = DriftMetrics(
             # Client
             G_drift_client=G_drift_client,
@@ -436,6 +477,12 @@ class MultiSFLDriftTracker:
             # Counts
             num_branches=len(self._branch_client_states),
             server_steps=total_server_steps,
+            # Update alignment
+            A_cos_client=alignment_client.A_cos,
+            M_norm_client=alignment_client.M_norm,
+            A_cos_server=alignment_server.A_cos,
+            M_norm_server=alignment_server.M_norm,
+            n_valid_alignment=alignment_client.n_valid,
         )
 
         self.measurements.append(result)
@@ -444,7 +491,8 @@ class MultiSFLDriftTracker:
             f"[Drift] Round {round_number}: "
             f"Client(G_drift={G_drift_client:.6f}, G_end={G_end_client:.6f}) "
             f"Server(G_drift={G_drift_server:.6f}, G_end={G_end_server:.6f}, steps={total_server_steps}) "
-            f"Total(G_drift={G_drift_total:.6f})"
+            f"Total(G_drift={G_drift_total:.6f}) "
+            f"A_cos(c={alignment_client.A_cos:.4f}, s={alignment_server.A_cos:.4f})"
         )
 
         return result
@@ -470,6 +518,11 @@ class MultiSFLDriftTracker:
             "G_end": [m.metrics.G_end_client for m in self.measurements],
             "G_drift_norm": [m.metrics.G_drift_norm_client for m in self.measurements],
             "delta_global_norm_sq": [m.metrics.delta_client_norm_sq for m in self.measurements],
+            # Update alignment
+            "A_cos_client": [m.metrics.A_cos_client for m in self.measurements],
+            "M_norm_client": [m.metrics.M_norm_client for m in self.measurements],
+            "A_cos_server": [m.metrics.A_cos_server for m in self.measurements],
+            "M_norm_server": [m.metrics.M_norm_server for m in self.measurements],
             # Per-round details
             "per_round": [m.to_dict() for m in self.measurements],
         }
@@ -480,6 +533,8 @@ class MultiSFLDriftTracker:
         self._round_start_server_params = {}
         self._branch_client_states.clear()
         self._branch_server_states.clear()
+        self._branch_deltas = []
+        self._branch_server_deltas = []
         self.measurements = []
         self._early_delta_norms = []
         self._adaptive_epsilon = None

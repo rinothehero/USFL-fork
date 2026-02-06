@@ -17,11 +17,16 @@ Usage:
 4. on_round_end(): Compute G metrics
 """
 
+import os
+import sys
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
+from shared.update_alignment import flatten_delta, compute_update_alignment
 
 
 @dataclass
@@ -53,6 +58,11 @@ class DriftMetrics:
     G_drift_total: float = 0.0  # G_drift_client + G_drift_server
     G_end_total: float = 0.0  # G_end_client + G_end_server
 
+    # Update alignment (A_cos) metrics
+    A_cos: float = float("nan")
+    M_norm: float = 0.0
+    n_valid_alignment: int = 0
+
     num_clients: int = 0
     server_steps: int = 0
 
@@ -80,6 +90,10 @@ class DriftMetrics:
             "G_end": self.G_end_client,
             "G_drift_norm": self.G_drift_norm_client,
             "delta_global_norm_sq": self.delta_client_norm_sq,
+            # Update alignment
+            "A_cos": self.A_cos,
+            "M_norm": self.M_norm,
+            "n_valid_alignment": self.n_valid_alignment,
             # Counts
             "num_clients": self.num_clients,
             "server_steps": self.server_steps,
@@ -131,6 +145,10 @@ class DriftMeasurementTracker:
         # Optional per-client weights for fair comparisons (e.g., aggregation weights).
         # Intended meaning: w_i ∝ "effective" samples used by the client in the round.
         self._client_weights: Dict[int, float] = {}
+
+        # Update alignment (A_cos) accumulators
+        self._client_deltas: List[Tuple[int, torch.Tensor]] = []
+        self._alignment_weights: Dict[int, float] = {}
 
         # Server drift accumulation for current round
         self._server_trajectory_sum: float = 0.0
@@ -189,6 +207,8 @@ class DriftMeasurementTracker:
         # Reset per-round accumulators
         self._client_drifts = {}
         self._client_weights = {}
+        self._client_deltas = []
+        self._alignment_weights = {}
         self._server_trajectory_sum = 0.0
         self._server_batch_steps = 0
         self._server_endpoint_drift = 0.0
@@ -236,6 +256,24 @@ class DriftMeasurementTracker:
             except (TypeError, ValueError):
                 # Keep it absent if the value is not castable.
                 pass
+
+    def collect_client_model(
+        self,
+        client_id: int,
+        state_dict: dict,
+        client_weight: float = None,
+    ):
+        """
+        Collect a client's post-training state_dict for A_cos computation.
+
+        Computes Δ_i = flatten(θ_end - θ_start) and stores it for later
+        pairwise cosine alignment calculation.
+        """
+        delta = flatten_delta(state_dict, self._round_start_client_params)
+        if delta is not None:
+            self._client_deltas.append((client_id, delta))
+        if client_weight is not None:
+            self._alignment_weights[client_id] = float(client_weight)
 
     def on_round_end(
         self,
@@ -382,6 +420,12 @@ class DriftMeasurementTracker:
         G_drift_total = G_drift_client + G_drift_server
         G_end_total = G_end_client + G_end_server
 
+        # --- Update alignment (A_cos) ---
+        alignment = compute_update_alignment(
+            self._client_deltas,
+            weights=self._alignment_weights if self._alignment_weights else None,
+        )
+
         result.metrics = DriftMetrics(
             # Client
             G_drift_client=G_drift_client,
@@ -400,6 +444,10 @@ class DriftMeasurementTracker:
             # Combined
             G_drift_total=G_drift_total,
             G_end_total=G_end_total,
+            # Update alignment
+            A_cos=alignment.A_cos,
+            M_norm=alignment.M_norm,
+            n_valid_alignment=alignment.n_valid,
             # Counts
             num_clients=len(self._client_drifts),
             server_steps=self._server_batch_steps,
@@ -412,7 +460,8 @@ class DriftMeasurementTracker:
             f"[Drift] Round {round_number}: "
             f"Client(G_drift={G_drift_client:.6f}, G_end={G_end_client:.6f}) "
             f"Server(G_drift={G_drift_server:.6f}, G_end={G_end_server:.6f}, steps={self._server_batch_steps}) "
-            f"Total(G_drift={G_drift_total:.6f})"
+            f"Total(G_drift={G_drift_total:.6f}) "
+            f"A_cos={alignment.A_cos:.6f} M_norm={alignment.M_norm:.6f} (n_valid={alignment.n_valid})"
         )
 
         return result
@@ -431,6 +480,8 @@ class DriftMeasurementTracker:
         self._round_start_server_params = {}
         self._client_drifts = {}
         self._client_weights = {}
+        self._client_deltas = []
+        self._alignment_weights = {}
         self._server_trajectory_sum = 0.0
         self._server_batch_steps = 0
         self._server_endpoint_drift = 0.0
