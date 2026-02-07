@@ -104,21 +104,45 @@ with open(path, 'w') as f:
 
 _get_history_runs() {
     # Usage: _get_history_runs [pending|collected|all]
-    # Prints: run_name<TAB>assignments_csv<TAB>status  per line
+    # Prints: run_name<TAB>assignments_csv<TAB>status<TAB>timestamp<TAB>branch per line
+    # Merges multiple entries with same run_name (deduped assignments, latest status)
     local filter="${1:-pending}"
     python3 -c "
 import json, sys, os
+from collections import OrderedDict
 path = sys.argv[1]
 filt = sys.argv[2]
 if not os.path.exists(path):
     sys.exit(0)
 with open(path) as f:
     history = json.load(f)
+# Merge entries by run_name
+merged = OrderedDict()
 for rec in history:
-    if filt != 'all' and rec['status'] != filt:
+    rn = rec['run_name']
+    if rn not in merged:
+        merged[rn] = {
+            'run_name': rn,
+            'assignments': list(rec['assignments']),
+            'status': rec['status'],
+            'timestamp': rec.get('timestamp', ''),
+            'branch': rec.get('branch', ''),
+        }
+    else:
+        # Merge assignments (dedup)
+        existing = set(merged[rn]['assignments'])
+        for a in rec['assignments']:
+            if a not in existing:
+                merged[rn]['assignments'].append(a)
+                existing.add(a)
+        # Keep 'collected' if any entry is collected, else latest status
+        if rec['status'] == 'collected':
+            merged[rn]['status'] = 'collected'
+for m in merged.values():
+    if filt != 'all' and m['status'] != filt:
         continue
-    assignments = ','.join(rec['assignments'])
-    print(f\"{rec['run_name']}\t{assignments}\t{rec['status']}\t{rec.get('timestamp','')}\t{rec.get('branch','')}\")
+    assignments = ','.join(m['assignments'])
+    print(f\"{m['run_name']}\t{assignments}\t{m['status']}\t{m['timestamp']}\t{m['branch']}\")
 " "$HISTORY_FILE" "$filter"
 }
 
@@ -354,15 +378,35 @@ cmd_run() {
     local branch
     branch=$(get_deploy_branch)
 
+    # Generate shared RUN_NAME early (needed for session naming)
+    local _run_name
+    if [[ -n "$run_name_override" ]]; then
+        _run_name="$run_name_override"
+    else
+        local _ds _alpha _rounds _ts
+        _ds=$(python3 -c "import json; c=json.load(open('experiment_configs/common.json')); print(c.get('dataset','cifar10'))")
+        _alpha=$(python3 -c "import json; c=json.load(open('experiment_configs/common.json')); print(c.get('alpha',0.3))")
+        _rounds=$(python3 -c "import json; c=json.load(open('experiment_configs/common.json')); print(c.get('rounds',100))")
+        _ts=$(date +%Y%m%d_%H%M%S)
+        _run_name="${_ds}_a${_alpha}_r${_rounds}_${_ts}"
+    fi
+    # run_id = HHMMSS from run_name (e.g., "222446" from "cifar10_a0.3_r100_20260207_222446")
+    local _run_id="${_run_name##*_}"
+
     # Batch mode: per-experiment tmux sessions
     echo "── Execution Plan ──"
     echo "  Branch: $branch"
+    if [[ -n "$run_name_override" ]]; then
+        echo "  Run:    $_run_name (reusing)"
+    else
+        echo "  Run:    $_run_name"
+    fi
     for entry in "${ASSIGNMENTS[@]}"; do
         local method="${entry%%:*}"
         local rest="${entry#*:}"
         local server="${rest%%:*}"
         local gpu="${rest#*:}"
-        echo "  $method → $server GPU $gpu  (tmux: ${tmux_session}-${method})"
+        echo "  $method → $server GPU $gpu  (tmux: ${tmux_session}-${method}-${_run_id})"
     done
     echo ""
 
@@ -374,7 +418,7 @@ cmd_run() {
         local server="${rest%%:*}"
         local ssh_host
         ssh_host=$(get_server_field "$server" "ssh_host")
-        local session_name="${tmux_session}-${method}"
+        local session_name="${tmux_session}-${method}-${_run_id}"
         # shellcheck disable=SC2029
         if ssh -o ConnectTimeout=5 "$ssh_host" "tmux has-session -t '$session_name' 2>/dev/null" 2>/dev/null; then
             echo "  WARNING: tmux '$session_name' already running on $server"
@@ -418,19 +462,6 @@ cmd_run() {
     done
     echo ""
 
-    # Generate shared RUN_NAME from common.json so all experiments land in the same results dir
-    local _run_name
-    if [[ -n "$run_name_override" ]]; then
-        _run_name="$run_name_override"
-        echo "  (reusing run name: $_run_name)"
-    else
-        local _ds _alpha _rounds _ts
-        _ds=$(python3 -c "import json; c=json.load(open('experiment_configs/common.json')); print(c.get('dataset','cifar10'))")
-        _alpha=$(python3 -c "import json; c=json.load(open('experiment_configs/common.json')); print(c.get('alpha',0.3))")
-        _rounds=$(python3 -c "import json; c=json.load(open('experiment_configs/common.json')); print(c.get('rounds',100))")
-        _ts=$(date +%Y%m%d_%H%M%S)
-        _run_name="${_ds}_a${_alpha}_r${_rounds}_${_ts}"
-    fi
     echo "  Run name: $_run_name"
     echo "  Results:  results/$_run_name/"
     echo ""
@@ -462,8 +493,8 @@ cmd_run() {
             scp -q "$spec_file" "$ssh_host:$remote_repo/$remote_spec"
             rm -f "$spec_file"
 
-            # Kill existing session if present
-            local session_name="${tmux_session}-${method}"
+            # Kill existing session if present (exact name match)
+            local session_name="${tmux_session}-${method}-${_run_id}"
             # shellcheck disable=SC2029
             ssh "$ssh_host" "tmux kill-session -t '$session_name' 2>/dev/null || true"
 
@@ -471,7 +502,7 @@ cmd_run() {
             # shellcheck disable=SC2029
             ssh "$ssh_host" "cd $remote_repo && \
                 tmux new-session -d -s '$session_name' \
-                'bash remote_run.sh $conda_env $remote_spec 2>&1 | tee experiment_${method}.log'"
+                'bash remote_run.sh $conda_env $remote_spec 2>&1 | tee experiment_${method}-${_run_id}.log'"
 
             echo "[$server] $method → GPU $gpu (tmux: $session_name)"
         ) &
@@ -544,16 +575,25 @@ cmd_status() {
         else
             echo "  Experiments:"
             for sess in $sessions; do
-                local exp_name="${sess#${tmux_session}-}"
+                local sess_suffix="${sess#${tmux_session}-}"
+                # sess_suffix is "method-run_id" (e.g., "sfl-222446") or legacy "method"
                 local log_line=""
                 # shellcheck disable=SC2029
                 log_line=$(ssh "$ssh_host" \
-                    "cd $remote_repo && tail -1 experiment_${exp_name}.log 2>/dev/null" 2>/dev/null \
+                    "cd $remote_repo && tail -1 experiment_${sess_suffix}.log 2>/dev/null" 2>/dev/null \
                     || echo "")
+                # Fallback: try legacy log name (without run_id)
+                if [[ -z "$log_line" ]]; then
+                    local method_only="${sess_suffix%-*}"
+                    # shellcheck disable=SC2029
+                    log_line=$(ssh "$ssh_host" \
+                        "cd $remote_repo && tail -1 experiment_${method_only}.log 2>/dev/null" 2>/dev/null \
+                        || echo "")
+                fi
                 if [[ -n "$log_line" ]]; then
-                    echo "    $exp_name: RUNNING  ← $log_line"
+                    echo "    $sess_suffix: RUNNING  ← $log_line"
                 else
-                    echo "    $exp_name: RUNNING"
+                    echo "    $sess_suffix: RUNNING"
                 fi
             done
         fi
@@ -585,11 +625,27 @@ cmd_logs() {
     remote_repo=$(get_server_field "$server" "remote_repo")
 
     if [[ -n "$method" ]]; then
-        echo "Tailing: experiment_${method}.log on $server"
+        # Try exact match first (e.g., "sfl-222446"), then glob for method prefix (e.g., "sfl")
+        # shellcheck disable=SC2029
+        local log_file
+        log_file=$(ssh "$ssh_host" "cd $remote_repo && \
+            if [ -f experiment_${method}.log ]; then echo experiment_${method}.log; \
+            else ls -t experiment_${method}-*.log 2>/dev/null | head -1; fi" 2>/dev/null)
+
+        if [[ -z "$log_file" ]]; then
+            echo "No log file found for '$method' on $server."
+            echo ""
+            echo "Available logs:"
+            # shellcheck disable=SC2029
+            ssh "$ssh_host" "cd $remote_repo && ls -1 experiment_*.log 2>/dev/null" \
+                | while IFS= read -r f; do echo "  $f"; done
+            return
+        fi
+        echo "Tailing: $log_file on $server"
         echo "(Ctrl+C to stop)"
         echo ""
         # shellcheck disable=SC2029
-        ssh "$ssh_host" "cd $remote_repo && tail -f experiment_${method}.log" 2>/dev/null
+        ssh "$ssh_host" "cd $remote_repo && tail -f $log_file" 2>/dev/null
     else
         # List available experiment logs
         echo "Available experiment logs on $server:"
@@ -629,7 +685,24 @@ cmd_attach() {
         return
     fi
 
-    local session_name="${tmux_session}-${method}"
+    # Find matching session: try exact match, then prefix match
+    local session_name=""
+    # shellcheck disable=SC2029
+    session_name=$(ssh -o ConnectTimeout=5 "$ssh_host" \
+        "tmux ls 2>/dev/null | grep '^${tmux_session}-${method}' | cut -d: -f1 | head -1" 2>/dev/null \
+        || echo "")
+
+    if [[ -z "$session_name" ]]; then
+        echo "No session found matching '$method' on $server."
+        echo ""
+        echo "Active sessions:"
+        # shellcheck disable=SC2029
+        ssh -o ConnectTimeout=5 "$ssh_host" \
+            "tmux ls 2>/dev/null | grep '^${tmux_session}-'" 2>/dev/null \
+            | while IFS= read -r line; do echo "  $line"; done
+        return
+    fi
+
     echo "Attaching to $session_name on $ssh_host..."
     echo "(Ctrl+B D to detach)"
     echo ""
@@ -729,14 +802,14 @@ cmd_collect() {
     if [[ -n "$target_run" ]]; then
         echo "── Collecting: $target_run ──"
 
-        # Try to find servers from history first
+        # Try to find servers from history first (already merged by run_name)
         local found_in_history=false
         local assignments_csv=""
         while IFS=$'\t' read -r rn ac st ts br; do
             if [[ "$rn" == "$target_run" ]]; then
                 found_in_history=true
                 assignments_csv="$ac"
-                break
+                break  # safe: _get_history_runs already merged duplicates
             fi
         done < <(_get_history_runs "all")
 
@@ -1027,27 +1100,33 @@ else:
         fi
     fi
 
-    # Look up assignments for this run
-    local assignments_json
-    assignments_json=$(python3 -c "
+    # Look up assignments for this run (merge all history entries with same run_name)
+    local assignment_list
+    assignment_list=$(python3 -c "
 import json
 with open('$history_file') as f:
     history = json.load(f)
 matches = [r for r in history if r.get('run_name') == '$run_name']
-if matches:
-    import json as j
-    print(j.dumps(matches[-1]))
-else:
-    print('')
+if not matches:
+    exit(1)
+seen = set()
+for m in matches:
+    for a in m.get('assignments', []):
+        if a not in seen:
+            seen.add(a)
+            print(a)
 ")
 
-    if [[ -z "$assignments_json" ]]; then
+    if [[ -z "$assignment_list" ]]; then
         die "Run '$run_name' not found in deploy history."
     fi
 
     local tmux_session
     tmux_session=$(get_global_field "tmux_session")
     tmux_session="${tmux_session:-usfl-exp}"
+
+    # run_id from run_name (HHMMSS)
+    local run_id="${run_name##*_}"
 
     echo "── Run: $run_name ──"
     echo ""
@@ -1056,15 +1135,6 @@ else:
     local crashed=0
     local done_count=0
     local total=0
-
-    # Parse assignments: ["method:server:gpu", ...]
-    local assignment_list
-    assignment_list=$(echo "$assignments_json" | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-for a in data.get('assignments', []):
-    print(a)
-")
 
     while IFS= read -r entry; do
         [[ -z "$entry" ]] && continue
@@ -1083,22 +1153,37 @@ for a in data.get('assignments', []):
         remote_repo=$(get_server_field "$server" "remote_repo")
 
         total=$((total + 1))
-        local sess="${tmux_session}-${method}"
 
-        # Check if tmux session exists
+        # Try new naming first (method-run_id), fall back to legacy (method-only)
+        local sess="${tmux_session}-${method}-${run_id}"
+        local log_name="experiment_${method}-${run_id}.log"
+
         # shellcheck disable=SC2029
         local has_session
         has_session=$(ssh -o ConnectTimeout=5 "$ssh_host" \
             "tmux has-session -t '$sess' 2>/dev/null && echo 'yes' || echo 'no'" 2>/dev/null \
             || echo "no")
 
+        # Fallback to legacy session name
+        if [[ "$has_session" != "yes" ]]; then
+            local legacy_sess="${tmux_session}-${method}"
+            # shellcheck disable=SC2029
+            has_session=$(ssh -o ConnectTimeout=5 "$ssh_host" \
+                "tmux has-session -t '$legacy_sess' 2>/dev/null && echo 'yes' || echo 'no'" 2>/dev/null \
+                || echo "no")
+            if [[ "$has_session" == "yes" ]]; then
+                sess="$legacy_sess"
+                log_name="experiment_${method}.log"
+            fi
+        fi
+
         if [[ "$has_session" == "yes" ]]; then
             # Session exists — check if crashed or running
             local fail_count
             # shellcheck disable=SC2029
             fail_count=$(ssh "$ssh_host" \
-                "cd $remote_repo && tail -20 experiment_${method}.log 2>/dev/null | grep -c 'FAIL (exit='" 2>/dev/null \
-                || echo "0")
+                "cd $remote_repo && { tail -20 $log_name 2>/dev/null | grep -c 'FAIL (exit=' || true; }" 2>/dev/null)
+            fail_count="${fail_count:-0}"
             if [[ "$fail_count" -gt 0 ]]; then
                 echo "  $method on $server: CRASHED"
                 crashed=$((crashed + 1))
@@ -1107,7 +1192,7 @@ for a in data.get('assignments', []):
                 local last_line
                 # shellcheck disable=SC2029
                 last_line=$(ssh "$ssh_host" \
-                    "cd $remote_repo && tail -1 experiment_${method}.log 2>/dev/null" 2>/dev/null \
+                    "cd $remote_repo && tail -1 $log_name 2>/dev/null" 2>/dev/null \
                     || echo "")
                 echo "  $method on $server: RUNNING  ← $last_line"
                 running=$((running + 1))
