@@ -1,0 +1,7 @@
+{
+  "_description": "GAS: gradient quality-based client selection.",
+  "use_variance_g": false,
+  "use_full_epochs": false,
+  "use_sfl_transform": false,
+  "torchvision_init": false
+}

@@ -1,0 +1,10 @@
+{
+  "_description": "USFL: SFL + data balancing + gradient shuffle + dynamic batch scheduler.",
+  "selector": "usfl",
+  "aggregator": "fedavg",
+  "gradient_shuffle": true,
+  "gradient_shuffle_strategy": "random",
+  "balancing_strategy": "target",
+  "balancing_target": "mean",
+  "use_dynamic_batch_scheduler": true
+}

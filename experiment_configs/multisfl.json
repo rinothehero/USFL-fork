@@ -1,0 +1,9 @@
+{
+  "_description": "MultiSFL: multi-branch SFL with knowledge replay.",
+  "branches": 3,
+  "lr_server": 0.001,
+  "alpha_master_pull": 0.1,
+  "p_update": "abs_ratio",
+  "enable_g_measurement": true,
+  "g_measurement_mode": "single"
+}

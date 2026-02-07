@@ -6,3 +6,5 @@
 *.json
 *.pyc
 git-ai
+!experiment_configs/*.json
+!experiment_configs/**/*.json

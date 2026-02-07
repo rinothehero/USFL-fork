@@ -1,0 +1,6 @@
+{
+  "_description": "SFL: base Split Federated Learning. No extra features.",
+  "selector": "uniform",
+  "aggregator": "fedavg",
+  "server_model_aggregation": false
+}

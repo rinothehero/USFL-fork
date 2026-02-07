@@ -1,0 +1,12 @@
+{
+  "dataset": "cifar10",
+  "model": "resnet18_flex",
+  "rounds": 100,
+  "alpha": 0.3,
+  "labels_per_client": 2,
+  "total_clients": 100,
+  "clients_per_round": 10,
+  "local_epochs": 5,
+  "learning_rate": 0.001,
+  "split_layer": "layer2"
+}

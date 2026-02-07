@@ -1,0 +1,7 @@
+{
+  "_description": "SCAFFOLD-SFL: SCAFFOLD control variates on split FL.",
+  "selector": "uniform",
+  "aggregator": "fedavg",
+  "server_model_aggregation": true,
+  "server_learning_rate": 0.01
+}
