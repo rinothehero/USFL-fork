@@ -8,6 +8,13 @@ from ..normalization import normalize_sfl
 
 
 class SFLAdapter(FrameworkAdapter):
+    """
+    SFL/USFL/SCAFFOLD adapter.
+
+    Delegates to experiment_core.sfl_runner which calls simulation.py's
+    run_simulation() directly (in-process asyncio), matching how the
+    framework is designed to run.
+    """
     name = "sfl"
 
     def default_cwd(self, repo_root: Path) -> Path:
@@ -22,78 +29,20 @@ class SFLAdapter(FrameworkAdapter):
         if execution.get("command"):
             return [str(x) for x in execution["command"]]
 
-        common = spec["common"]
-        dist = common["distribution"]
+        # _spec_path is injected by run_experiment.py before reaching here.
+        spec_path = execution.get("_spec_path", "spec.json")
 
-        method = str(spec.get("method", "sfl"))
-        selector_default = "usfl" if method == "usfl" else "uniform"
-        batch_size = (
-            int(common["server_batch_size"]) if method == "usfl" else int(common["client_batch_size"])
-        )
+        # Use absolute script path (not -m) because runner.py sets CWD to the
+        # SFL framework directory, where experiment_core isn't importable.
+        # sfl_runner.py handles its own sys.path setup internally.
+        sfl_runner_script = repo_root / "experiment_core" / "sfl_runner.py"
 
         cmd = [
             str(execution.get("python", "python")),
-            "server/main.py",
-            "--dataset", str(common["dataset"]),
-            "--model", str(common["model"]),
-            "--method", method,
-            "--criterion", "ce",
-            "--optimizer", "sgd",
-            "--learning_rate", str(common["learning_rate"]),
-            "--momentum", str(common["momentum"]),
-            "--local-epochs", str(common["local_epochs"]),
-            "--global-round", str(common["rounds"]),
-            "--batch-size", str(batch_size),
-            "--device", str(common["device"]),
-            "--selector", str(spec.get("framework_overrides", {}).get("selector", selector_default)),
-            "--aggregator", str(spec.get("framework_overrides", {}).get("aggregator", "fedavg")),
-            "--distributer", str(dist["mode"]),
-            "--num-clients", str(common["total_clients"]),
-            "--num-clients-per-round", str(common["clients_per_round"]),
-            "--split-strategy", "layer_name",
-            "--split-layer", str(common["split_layer"]),
-            "--seed", str(common["seed"]),
+            str(sfl_runner_script),
+            "--spec", str(spec_path),
+            "--repo-root", str(repo_root),
         ]
-
-        if dist.get("dirichlet_alpha") is not None:
-            cmd.extend(["--dirichlet-alpha", str(dist["dirichlet_alpha"])])
-        if dist.get("labels_per_client") is not None:
-            cmd.extend(["--labels-per-client", str(dist["labels_per_client"])])
-        if dist.get("min_require_size") is not None:
-            cmd.extend(["--min-require-size", str(dist["min_require_size"])])
-
-        if common.get("drift", {}).get("enabled", False):
-            cmd.append("--enable-drift-measurement")
-            cmd.extend([
-                "--drift-sample-interval",
-                str(common.get("drift", {}).get("sample_interval", 1)),
-            ])
-
-        if common.get("enable_g_measurement", False):
-            cmd.append("--enable-g-measurement")
-        if common.get("use_variance_g", False):
-            cmd.append("--use-variance-g")
-        if common.get("g_measurement_mode"):
-            cmd.extend(["--g-measurement-mode", str(common["g_measurement_mode"])])
-        if common.get("g_measurement_k"):
-            cmd.extend(["--g-measurement-k", str(common["g_measurement_k"])])
-        if common.get("g_measure_frequency"):
-            cmd.extend(["--g-measure-frequency", str(common["g_measure_frequency"])])
-
-        sfl_overrides = spec.get("framework_overrides", {}).get("sfl_args", {})
-        for k, v in sfl_overrides.items():
-            flag = k if str(k).startswith("-") else f"--{k}"
-            if isinstance(v, bool):
-                if v:
-                    cmd.append(flag)
-            elif isinstance(v, (list, tuple)):
-                cmd.append(flag)
-                cmd.extend([str(x) for x in v])
-            else:
-                cmd.extend([flag, str(v)])
-
-        extra = spec.get("framework_overrides", {}).get("extra_cli", [])
-        cmd.extend([str(x) for x in extra])
 
         return cmd
 

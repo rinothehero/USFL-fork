@@ -27,6 +27,11 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     spec = load_spec(args.spec)
+    # Inject resolved spec file path so adapters (e.g. SFL) can reference
+    # the on-disk spec when building subprocess commands.
+    spec.raw.setdefault("execution", {})["_spec_path"] = str(
+        Path(args.spec).resolve()
+    )
     outcome = run_experiment(spec, Path(args.repo_root).resolve())
 
     print("[experiment_core] done")
