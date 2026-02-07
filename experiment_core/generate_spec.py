@@ -107,7 +107,7 @@ def build_common_spec(common_path: Path) -> Dict[str, Any]:
 
 def build_overrides(method: str, cfg: Dict[str, Any]) -> Dict[str, Any]:
     """Convert per-method config dict into framework-specific overrides."""
-    cfg = {k: v for k, v in cfg.items() if not k.startswith("_")}
+    cfg = {k: v for k, v in cfg.items() if not k.startswith("_") and v is not None}
     fw = FRAMEWORK_MAP[method]
 
     if fw == "sfl":

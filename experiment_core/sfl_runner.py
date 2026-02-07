@@ -174,6 +174,8 @@ def spec_to_workload(spec: Dict[str, Any]) -> Dict[str, str]:
     # Per-method sfl_args overrides
     sfl_args = overrides.get("sfl_args", {})
     for k, v in sfl_args.items():
+        if v is None:
+            continue  # skip null values from JSON config
         config_key = k.replace("-", "_")
         if isinstance(v, bool):
             if v:

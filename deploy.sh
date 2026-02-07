@@ -268,6 +268,7 @@ cmd_run() {
 
     local interactive=false
     local server_flag=""
+    local run_name_override=""
     local remaining_args=()
 
     # Parse run flags
@@ -277,6 +278,7 @@ cmd_run() {
             --server) server_flag="$2"; shift 2 ;;
             --methods|--gpus) remaining_args+=("$1" "$2"); shift 2 ;;
             --no-push) local no_push=true; shift ;;
+            --run-name) run_name_override="$2"; shift 2 ;;
             *) remaining_args+=("$1"); shift ;;
         esac
     done
@@ -417,12 +419,18 @@ cmd_run() {
     echo ""
 
     # Generate shared RUN_NAME from common.json so all experiments land in the same results dir
-    local _ds _alpha _rounds _ts _run_name
-    _ds=$(python3 -c "import json; c=json.load(open('experiment_configs/common.json')); print(c.get('dataset','cifar10'))")
-    _alpha=$(python3 -c "import json; c=json.load(open('experiment_configs/common.json')); print(c.get('alpha',0.3))")
-    _rounds=$(python3 -c "import json; c=json.load(open('experiment_configs/common.json')); print(c.get('rounds',100))")
-    _ts=$(date +%Y%m%d_%H%M%S)
-    _run_name="${_ds}_a${_alpha}_r${_rounds}_${_ts}"
+    local _run_name
+    if [[ -n "$run_name_override" ]]; then
+        _run_name="$run_name_override"
+        echo "  (reusing run name: $_run_name)"
+    else
+        local _ds _alpha _rounds _ts
+        _ds=$(python3 -c "import json; c=json.load(open('experiment_configs/common.json')); print(c.get('dataset','cifar10'))")
+        _alpha=$(python3 -c "import json; c=json.load(open('experiment_configs/common.json')); print(c.get('alpha',0.3))")
+        _rounds=$(python3 -c "import json; c=json.load(open('experiment_configs/common.json')); print(c.get('rounds',100))")
+        _ts=$(date +%Y%m%d_%H%M%S)
+        _run_name="${_ds}_a${_alpha}_r${_rounds}_${_ts}"
+    fi
     echo "  Run name: $_run_name"
     echo "  Results:  results/$_run_name/"
     echo ""
@@ -1154,6 +1162,7 @@ Run Usage:
   ./deploy.sh run --server server-a --methods "usfl sfl" --gpus "0 1"
   ./deploy.sh run -i --server server-a          # 대화형 모드
   ./deploy.sh run --no-push usfl@server-a:0     # git push 스킵
+  ./deploy.sh run --run-name <name> usfl@s:0    # 기존 run에 실험 추가/재실행
 
 Monitor:
   ./deploy.sh status                # 모든 서버의 실험 현황
