@@ -82,6 +82,7 @@ class Config:
     # ==================
     model_path: str  # File path to save/load the model.
     dataset_path: str  # File path to the dataset location.
+    result_output_dir: str  # Directory for result JSON files (empty = CWD).
 
     # ==================
     #  METHOD OPTIONS
@@ -419,6 +420,16 @@ def parse_args(custom_args=None):
         type=int,
         dest="glue_max_seq_length",
         default=128,
+        required=False,
+    )
+
+    parser.add_argument(
+        "--result-output-dir",
+        help="Directory for result JSON files (empty = CWD)",
+        action="store",
+        type=str,
+        dest="result_output_dir",
+        default="",
         required=False,
     )
 

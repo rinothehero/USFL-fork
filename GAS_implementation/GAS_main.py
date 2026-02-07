@@ -886,8 +886,9 @@ selectDataset = (
 
 # Pre-define config and filename for intermediate saving
 _intermediate_timestamp = train_begin_time.strftime("%Y%m%d_%H%M%S")
-_intermediate_json_filename = f"results/results_gas_{selectDataset}_{_intermediate_timestamp}.json"
-os.makedirs("results", exist_ok=True)
+_result_output_dir = os.environ.get("GAS_RESULT_OUTPUT_DIR", "results")
+os.makedirs(_result_output_dir, exist_ok=True)
+_intermediate_json_filename = os.path.join(_result_output_dir, f"results_gas_{selectDataset}_{_intermediate_timestamp}.json")
 
 _intermediate_config = {
     "dataset": selectDataset,
@@ -1417,7 +1418,7 @@ IfCilp = "clip" if clip_grad else "not clip"
 
 # Generate filename with timestamp
 timestamp_str = end_time.strftime("%Y%m%d_%H%M%S")
-output_filename = f"GAS_main_{timestamp_str}.txt"
+output_filename = os.path.join(_result_output_dir, f"GAS_main_{timestamp_str}.txt")
 
 with open(output_filename, "w") as f:
     # ===== Configuration Summary =====

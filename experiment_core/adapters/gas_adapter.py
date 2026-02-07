@@ -93,6 +93,11 @@ class GASAdapter(FrameworkAdapter):
         # Apply distribution mode flags
         env.update(dist_flags)
 
+        # Result output directory (from batch_runner)
+        result_output_dir = spec.get("execution", {}).get("result_output_dir", "")
+        if result_output_dir:
+            env["GAS_RESULT_OUTPUT_DIR"] = result_output_dir
+
         gas_overrides = spec.get("framework_overrides", {}).get("gas_env", {})
         for k, v in gas_overrides.items():
             env[str(k)] = str(v)
@@ -129,6 +134,16 @@ class GASAdapter(FrameworkAdapter):
         if explicit:
             p = Path(explicit)
             return p if p.is_absolute() else (repo_root / p).resolve()
+
+        # Check unified result_output_dir first
+        result_output_dir = execution.get("result_output_dir", "")
+        if result_output_dir:
+            d = Path(result_output_dir)
+            if not d.is_absolute():
+                d = (repo_root / d).resolve()
+            found = self._newest_matching(d, "results_gas_*.json", started_epoch)
+            if found:
+                return found
 
         cwd = Path(execution.get("cwd") or self.default_cwd(repo_root))
         pattern = execution.get("raw_result_glob") or "results/results_gas_*.json"

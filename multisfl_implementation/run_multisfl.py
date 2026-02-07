@@ -116,6 +116,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu"
     )
+    parser.add_argument("--result_output_dir", type=str, default="results",
+                        help="Directory for result JSON files")
     parser.add_argument("--num_classes", type=int, default=10)
 
     parser.add_argument("--synthetic_train_size", type=int, default=5000)
@@ -510,8 +512,8 @@ def main():
         results["drift_history"] = trainer.drift_tracker.get_history()
         print(f"\n[Drift Measurement] Final G_drift values: {results['drift_history']['G_drift'][-5:]}")
 
-    os.makedirs("results", exist_ok=True)
-    filename = f"results/results_multisfl_{args.dataset}_{args.partition}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    os.makedirs(args.result_output_dir, exist_ok=True)
+    filename = os.path.join(args.result_output_dir, f"results_multisfl_{args.dataset}_{args.partition}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
     with open(filename, "w") as f:
         json.dump(results, f, indent=4)
 

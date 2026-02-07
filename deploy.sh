@@ -326,6 +326,17 @@ cmd_run() {
     done
     echo ""
 
+    # Generate shared RUN_NAME from common.json so all experiments land in the same results dir
+    local _ds _alpha _rounds _ts _run_name
+    _ds=$(python3 -c "import json; c=json.load(open('experiment_configs/common.json')); print(c.get('dataset','cifar10'))")
+    _alpha=$(python3 -c "import json; c=json.load(open('experiment_configs/common.json')); print(c.get('alpha',0.3))")
+    _rounds=$(python3 -c "import json; c=json.load(open('experiment_configs/common.json')); print(c.get('rounds',100))")
+    _ts=$(date +%Y%m%d_%H%M%S)
+    _run_name="${_ds}_a${_alpha}_r${_rounds}_${_ts}"
+    echo "  Run name: $_run_name"
+    echo "  Results:  results/$_run_name/"
+    echo ""
+
     # Phase 2: Per-experiment tmux sessions (parallel)
     local pids=()
     for entry in "${ASSIGNMENTS[@]}"; do
@@ -339,12 +350,13 @@ cmd_run() {
             remote_repo=$(get_server_field "$server" "remote_repo")
             conda_env=$(get_server_field "$server" "conda_env")
 
-            # Generate single-experiment spec
+            # Generate single-experiment spec with shared output dir
             local spec_file="/tmp/usfl_spec_${method}_$$.json"
             python3 -m experiment_core.generate_spec \
                 --config-dir experiment_configs \
                 --methods "$method" \
                 --gpu-map "{\"$method\":$gpu}" \
+                --output-dir "results/$_run_name" \
                 --output "$spec_file"
 
             # Transfer spec to server
@@ -575,13 +587,15 @@ cmd_collect() {
         echo "  Latest: $dirname"
 
         if [[ "$local_mode" == true ]]; then
-            local local_dst="./results/${dirname}_${server}"
-            echo "  rsync → $local_dst"
+            # Merge into single local dir (same run_name from different servers)
+            local local_dst="./results/${dirname}"
+            echo "  rsync → $local_dst  (from $server)"
             mkdir -p "$local_dst"
             rsync -avz --progress "$ssh_host:$latest" "$local_dst/"
         else
-            local gdrive_dst="${gdrive_remote}/${dirname}_${server}"
-            echo "  rclone → $gdrive_dst"
+            # Upload to single GDrive folder (same run_name)
+            local gdrive_dst="${gdrive_remote}/${dirname}"
+            echo "  rclone → $gdrive_dst  (from $server)"
             # shellcheck disable=SC2029
             ssh "$ssh_host" "rclone copy '$latest' '$gdrive_dst' -P"
         fi

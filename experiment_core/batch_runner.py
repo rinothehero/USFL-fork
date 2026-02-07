@@ -82,6 +82,7 @@ def _build_single_spec(
         "execution": {
             "mode": "run",
             "normalized_output": norm_path,
+            "result_output_dir": str(output_dir),
         },
         "framework_overrides": exp.get("overrides", {}),
     }

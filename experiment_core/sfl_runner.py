@@ -61,7 +61,17 @@ _VALUE_FLAGS = {
     "g_measurement_mode": "--g-measurement-mode",
     "g_measurement_k": "--g-measurement-k",
     "drift_sample_interval": "--drift-sample-interval",
+    "result_output_dir": "--result-output-dir",
     "delete_fraction_of_data": "-df",
+    # Mix2SFL
+    "mix2sfl_smashmix_enabled": "--mix2sfl-smashmix-enabled",
+    "mix2sfl_smashmix_ns_ratio": "--mix2sfl-smashmix-ns-ratio",
+    "mix2sfl_smashmix_lambda_dist": "--mix2sfl-smashmix-lambda-dist",
+    "mix2sfl_smashmix_beta_alpha": "--mix2sfl-smashmix-beta-alpha",
+    "mix2sfl_gradmix_enabled": "--mix2sfl-gradmix-enabled",
+    "mix2sfl_gradmix_phi": "--mix2sfl-gradmix-phi",
+    "mix2sfl_gradmix_reduce": "--mix2sfl-gradmix-reduce",
+    "mix2sfl_gradmix_cprime_selection": "--mix2sfl-gradmix-cprime-selection",
 }
 
 # store_true flags: append only when value is "true"
@@ -155,6 +165,11 @@ def spec_to_workload(spec: Dict[str, Any]) -> Dict[str, str]:
         workload["drift_sample_interval"] = str(
             common.get("drift", {}).get("sample_interval", 1)
         )
+
+    # Result output directory (from batch_runner)
+    result_output_dir = spec.get("execution", {}).get("result_output_dir", "")
+    if result_output_dir:
+        workload["result_output_dir"] = result_output_dir
 
     # Per-method sfl_args overrides
     sfl_args = overrides.get("sfl_args", {})

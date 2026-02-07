@@ -58,6 +58,16 @@ class SFLAdapter(FrameworkAdapter):
             p = Path(explicit)
             return p if p.is_absolute() else (repo_root / p).resolve()
 
+        # Check unified result_output_dir first
+        result_output_dir = execution.get("result_output_dir", "")
+        if result_output_dir:
+            d = Path(result_output_dir)
+            if not d.is_absolute():
+                d = (repo_root / d).resolve()
+            found = self._newest_matching(d, "result-*.json", started_epoch)
+            if found:
+                return found
+
         cwd = Path(execution.get("cwd") or self.default_cwd(repo_root))
         pattern = execution.get("raw_result_glob") or "result-*.json"
         return self._newest_matching(cwd, pattern, started_epoch)

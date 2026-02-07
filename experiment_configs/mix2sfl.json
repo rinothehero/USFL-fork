@@ -1,0 +1,34 @@
+{
+  "_description": "Mix2SFL: SmashMix + GradMix on Parallel Split Learning.",
+
+  "selector": "uniform",
+  "aggregator": "fedavg",
+
+  "_section_smashmix": "=== SmashMix: mix activations between clients ===",
+
+  "_mix2sfl_smashmix_enabled": "Enable SmashMix activation mixing.",
+  "mix2sfl_smashmix_enabled": true,
+
+  "_mix2sfl_smashmix_ns_ratio": "Partner ratio per step (ns = floor(|C| * ratio)).",
+  "mix2sfl_smashmix_ns_ratio": 0.2,
+
+  "_mix2sfl_smashmix_lambda_dist": "Lambda distribution: uniform | beta.",
+  "mix2sfl_smashmix_lambda_dist": "uniform",
+
+  "_mix2sfl_smashmix_beta_alpha": "Alpha for beta distribution (when lambda_dist=beta).",
+  "mix2sfl_smashmix_beta_alpha": 1.0,
+
+  "_section_gradmix": "=== GradMix: mix gradients across clients ===",
+
+  "_mix2sfl_gradmix_enabled": "Enable GradMix gradient mixing.",
+  "mix2sfl_gradmix_enabled": true,
+
+  "_mix2sfl_gradmix_phi": "GradMix ratio phi (|C'|/|C|).",
+  "mix2sfl_gradmix_phi": 0.5,
+
+  "_mix2sfl_gradmix_reduce": "Reduction for C' gradients: sum | mean.",
+  "mix2sfl_gradmix_reduce": "sum",
+
+  "_mix2sfl_gradmix_cprime_selection": "C' selection strategy: random_each_step | fixed.",
+  "mix2sfl_gradmix_cprime_selection": "random_each_step"
+}

@@ -86,6 +86,11 @@ class MultiSFLAdapter(FrameworkAdapter):
             "--use_torchvision_init", _str_bool(bool(common.get("use_torchvision_init", False))),
         ]
 
+        # Result output directory (from batch_runner)
+        result_output_dir = execution.get("result_output_dir", "")
+        if result_output_dir:
+            cmd.extend(["--result_output_dir", result_output_dir])
+
         if overrides.get("branches") is not None:
             cmd.extend(["--branches", str(overrides["branches"])])
         if common.get("use_full_epochs", False):
@@ -107,6 +112,16 @@ class MultiSFLAdapter(FrameworkAdapter):
         if explicit:
             p = Path(explicit)
             return p if p.is_absolute() else (repo_root / p).resolve()
+
+        # Check unified result_output_dir first
+        result_output_dir = execution.get("result_output_dir", "")
+        if result_output_dir:
+            d = Path(result_output_dir)
+            if not d.is_absolute():
+                d = (repo_root / d).resolve()
+            found = self._newest_matching(d, "results_multisfl_*.json", started_epoch)
+            if found:
+                return found
 
         cwd = Path(execution.get("cwd") or self.default_cwd(repo_root))
         pattern = execution.get("raw_result_glob") or "results/results_multisfl_*.json"

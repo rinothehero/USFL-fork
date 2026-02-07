@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from collections import deque
 from typing import TYPE_CHECKING
@@ -125,6 +126,12 @@ class GlobalDict:
         parts.append(self.timestamp)
 
         filename = "-".join(parts) + ".json"
+
+        # Use result_output_dir if configured, otherwise save to CWD
+        result_dir = getattr(self.config, "result_output_dir", "")
+        if result_dir:
+            os.makedirs(result_dir, exist_ok=True)
+            filename = os.path.join(result_dir, filename)
 
         with open(filename, "w") as f:
             g_measurements = []

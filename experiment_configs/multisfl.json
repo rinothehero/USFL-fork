@@ -1,48 +1,32 @@
 {
   "_description": "MultiSFL: multi-branch SFL with knowledge replay and adaptive sampling.",
   "_note": "Shared params (clip_grad, clip_grad_max_norm, use_sfl_transform, use_torchvision_init, use_full_epochs, g_measure_frequency, g_oracle_mode) are in common.json.",
-
   "_section_branch": "=== Branch Architecture ===",
-
   "_branches": "Number of branch servers. Default: same as clients_per_round.",
-  "branches": 3,
-
+  "branches": 10,
   "_lr_server": "Server-side learning rate (separate from client lr in common.json).",
   "lr_server": 0.001,
-
   "_alpha_master_pull": "Weight for pulling branches toward master model. 0.0=no pull, 1.0=full replacement.",
   "alpha_master_pull": 0.1,
-
   "_section_scheduler": "=== Sampling Proportion Scheduler (p_r): controls replay vs. fresh data ratio ===",
-
   "_p_update": "Update strategy: paper (original) | abs_ratio (ratio of absolute FGN) | one_plus_delta (with clipping).",
-  "p_update": "abs_ratio",
-
+  "p_update": "paper",
   "_p0": "Initial sampling proportion at round 0.",
   "p0": 0.01,
-
   "_p_min": "Minimum sampling proportion (prevents replay starvation).",
   "p_min": 0.01,
-
   "_p_max": "Maximum sampling proportion (caps budget growth).",
   "p_max": 0.5,
-
   "_gamma": "Exponential decay weight for ScoreVectorTracker (fresher label dists weighted higher).",
   "gamma": 0.5,
-
   "_delta_clip": "Max clipping value for delta in 'one_plus_delta' mode.",
   "delta_clip": 0.2,
-
   "eps": 1e-12,
-
   "_section_replay": "=== Knowledge Replay System ===",
-
   "_replay_budget_mode": "batch: per-batch budget | local_dataset: full client dataset budget.",
   "replay_budget_mode": "local_dataset",
-
   "_replay_min_total": "Minimum total replay samples per branch (0 = no minimum).",
   "replay_min_total": 0,
-
   "_max_assistant_trials": "Max trials to collect replay data from assistant clients per branch.",
   "max_assistant_trials": 20
 }
