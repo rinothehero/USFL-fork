@@ -262,27 +262,27 @@ cmd_run() {
     local branch
     branch=$(get_deploy_branch)
 
-    # Batch mode: per-server parallel execution
+    # Batch mode: per-experiment tmux sessions
     echo "── Execution Plan ──"
     echo "  Branch: $branch"
-    for server in $(get_unique_servers); do
-        local methods
-        methods=$(methods_for_server "$server")
-        echo "  $server:"
-        for m in $methods; do
-            local gpu
-            gpu=$(gpu_for_method "$m")
-            echo "    $m → GPU $gpu"
-        done
+    for entry in "${ASSIGNMENTS[@]}"; do
+        local method="${entry%%:*}"
+        local rest="${entry#*:}"
+        local server="${rest%%:*}"
+        local gpu="${rest#*:}"
+        echo "  $method → $server GPU $gpu  (tmux: ${tmux_session}-${method})"
     done
     echo ""
 
     # Check for existing tmux sessions BEFORE starting
     local has_conflict=false
-    for server in $(get_unique_servers); do
+    for entry in "${ASSIGNMENTS[@]}"; do
+        local method="${entry%%:*}"
+        local rest="${entry#*:}"
+        local server="${rest%%:*}"
         local ssh_host
         ssh_host=$(get_server_field "$server" "ssh_host")
-        local session_name="${tmux_session}-${server}"
+        local session_name="${tmux_session}-${method}"
         # shellcheck disable=SC2029
         if ssh -o ConnectTimeout=5 "$ssh_host" "tmux has-session -t '$session_name' 2>/dev/null" 2>/dev/null; then
             echo "  WARNING: tmux '$session_name' already running on $server"
@@ -307,64 +307,63 @@ cmd_run() {
         return
     fi
 
-    local pids=()
+    # Phase 1: Git sync (once per server, sequential)
+    echo ""
     for server in $(get_unique_servers); do
+        validate_server "$server"
+        local ssh_host remote_repo
+        ssh_host=$(get_server_field "$server" "ssh_host")
+        remote_repo=$(get_server_field "$server" "remote_repo")
+
+        echo "[$server] Syncing branch $branch..."
+        # shellcheck disable=SC2029
+        ssh "$ssh_host" "cd $remote_repo && \
+            git stash -q 2>/dev/null || true && \
+            git fetch -q && \
+            git checkout $branch -q && \
+            git reset --hard origin/$branch -q"
+        echo "[$server] Synced."
+    done
+    echo ""
+
+    # Phase 2: Per-experiment tmux sessions (parallel)
+    local pids=()
+    for entry in "${ASSIGNMENTS[@]}"; do
+        local method="${entry%%:*}"
+        local rest="${entry#*:}"
+        local server="${rest%%:*}"
+        local gpu="${rest#*:}"
         (
-            validate_server "$server"
             local ssh_host remote_repo conda_env
             ssh_host=$(get_server_field "$server" "ssh_host")
             remote_repo=$(get_server_field "$server" "remote_repo")
             conda_env=$(get_server_field "$server" "conda_env")
 
-            local methods
-            methods=$(methods_for_server "$server")
-            local methods_arr=($methods)
-
-            # Build GPU map JSON
-            local gpu_json="{"
-            local first=true
-            for m in "${methods_arr[@]}"; do
-                local gpu
-                gpu=$(gpu_for_method "$m")
-                if [[ "$first" == true ]]; then
-                    first=false
-                else
-                    gpu_json+=","
-                fi
-                gpu_json+="\"$m\":$gpu"
-            done
-            gpu_json+="}"
-
-            echo "[$server] Generating batch_spec..."
-            local spec_file="/tmp/usfl_spec_${server}_$$.json"
+            # Generate single-experiment spec
+            local spec_file="/tmp/usfl_spec_${method}_$$.json"
             python3 -m experiment_core.generate_spec \
                 --config-dir experiment_configs \
-                --methods "${methods_arr[@]}" \
-                --gpu-map "$gpu_json" \
+                --methods "$method" \
+                --gpu-map "{\"$method\":$gpu}" \
                 --output "$spec_file"
 
-            echo "[$server] Transferring spec to $ssh_host..."
-            scp -q "$spec_file" "$ssh_host:$remote_repo/batch_spec.json"
+            # Transfer spec to server
+            local remote_spec="batch_spec_${method}.json"
+            scp -q "$spec_file" "$ssh_host:$remote_repo/$remote_spec"
             rm -f "$spec_file"
 
-            echo "[$server] Starting experiments..."
-            local session_name="${tmux_session}-${server}"
-
             # Kill existing session if present
+            local session_name="${tmux_session}-${method}"
             # shellcheck disable=SC2029
             ssh "$ssh_host" "tmux kill-session -t '$session_name' 2>/dev/null || true"
 
-            # Sync branch: stash local changes, checkout, pull
+            # Start experiment in its own tmux session
             # shellcheck disable=SC2029
             ssh "$ssh_host" "cd $remote_repo && \
-                git stash -q 2>/dev/null || true && \
-                git fetch -q && \
-                git checkout $branch -q && \
-                git reset --hard origin/$branch -q && \
                 tmux new-session -d -s '$session_name' \
-                'bash remote_run.sh $conda_env batch_spec.json 2>&1 | tee experiment.log'"
+                'bash remote_run.sh $conda_env $remote_spec 2>&1 | tee experiment_${method}.log'"
 
-            echo "[$server] Started: ${methods_arr[*]}"
+            echo "[$server] $method → GPU $gpu (tmux: $session_name)"
         ) &
         pids+=($!)
     done
@@ -379,15 +378,15 @@ cmd_run() {
 
     echo ""
     if [[ "$failed" == true ]]; then
-        echo "Some servers failed to start. Check output above."
+        echo "Some experiments failed to start. Check output above."
     else
         echo "=========================================="
         echo "  All experiments started!"
         echo "=========================================="
         echo ""
-        echo "  Monitor:   ./deploy.sh status"
-        echo "  Logs:      ./deploy.sh logs <server> [method]"
-        echo "  Attach:    ./deploy.sh attach <server>"
+        echo "  Status:    ./deploy.sh status"
+        echo "  Attach:    ./deploy.sh attach <server> <method>"
+        echo "  Logs:      ./deploy.sh logs <server> <method>"
         echo "  Collect:   ./deploy.sh collect"
         echo "=========================================="
     fi
@@ -417,24 +416,33 @@ cmd_status() {
 
         local remote_repo
         remote_repo=$(get_server_field "$server" "remote_repo")
-        local session_name="${tmux_session}-${server}"
 
         echo "── $server ($ssh_host) ──"
 
-        # Check tmux session
+        # Discover all experiment tmux sessions on this server
+        local sessions=""
         # shellcheck disable=SC2029
-        local status_str
-        status_str=$(ssh -o ConnectTimeout=5 "$ssh_host" \
-            "tmux has-session -t '$session_name' 2>/dev/null && echo 'RUNNING' || echo 'IDLE'" 2>/dev/null \
-            || echo "UNREACHABLE")
-        echo "  Status: $status_str"
+        sessions=$(ssh -o ConnectTimeout=5 "$ssh_host" \
+            "tmux ls 2>/dev/null | grep '^${tmux_session}-' | cut -d: -f1" 2>/dev/null \
+            || echo "")
 
-        if [[ "$status_str" == "RUNNING" ]]; then
-            # Show last 3 lines of log
-            echo "  Recent log:"
-            # shellcheck disable=SC2029
-            ssh "$ssh_host" "cd $remote_repo && tail -3 experiment.log 2>/dev/null" 2>/dev/null \
-                | while IFS= read -r line; do echo "    $line"; done
+        if [[ -z "$sessions" ]]; then
+            echo "  Experiments: (none running)"
+        else
+            echo "  Experiments:"
+            for sess in $sessions; do
+                local exp_name="${sess#${tmux_session}-}"
+                local log_line=""
+                # shellcheck disable=SC2029
+                log_line=$(ssh "$ssh_host" \
+                    "cd $remote_repo && tail -1 experiment_${exp_name}.log 2>/dev/null" 2>/dev/null \
+                    || echo "")
+                if [[ -n "$log_line" ]]; then
+                    echo "    $exp_name: RUNNING  ← $log_line"
+                else
+                    echo "    $exp_name: RUNNING"
+                fi
+            done
         fi
 
         # GPU utilization
@@ -464,26 +472,20 @@ cmd_logs() {
     remote_repo=$(get_server_field "$server" "remote_repo")
 
     if [[ -n "$method" ]]; then
-        # Tail specific method log
-        local latest
-        # shellcheck disable=SC2029
-        latest=$(ssh "$ssh_host" "ls -td $remote_repo/results/*/ 2>/dev/null | head -1")
-        if [[ -n "$latest" ]]; then
-            echo "Tailing: $latest/logs/${method}.log"
-            echo "(Ctrl+C to stop)"
-            echo ""
-            # shellcheck disable=SC2029
-            ssh "$ssh_host" "tail -f '$latest/logs/${method}.log'" 2>/dev/null
-        else
-            echo "No results directory found."
-        fi
-    else
-        # Tail main experiment log
-        echo "Tailing: experiment.log on $server"
+        echo "Tailing: experiment_${method}.log on $server"
         echo "(Ctrl+C to stop)"
         echo ""
         # shellcheck disable=SC2029
-        ssh "$ssh_host" "cd $remote_repo && tail -f experiment.log" 2>/dev/null
+        ssh "$ssh_host" "cd $remote_repo && tail -f experiment_${method}.log" 2>/dev/null
+    else
+        # List available experiment logs
+        echo "Available experiment logs on $server:"
+        # shellcheck disable=SC2029
+        ssh "$ssh_host" "cd $remote_repo && ls -1 experiment_*.log 2>/dev/null" \
+            | while IFS= read -r f; do echo "  $f"; done
+        echo ""
+        echo "Usage: ./deploy.sh logs $server <method>"
+        echo "  Or:  ./deploy.sh attach $server <method>  (live tmux session)"
     fi
 }
 
@@ -493,15 +495,28 @@ cmd_attach() {
     require_config
     require_jq
 
-    local server="${1:?Usage: ./deploy.sh attach <server>}"
+    local server="${1:?Usage: ./deploy.sh attach <server> <method>}"
+    local method="${2:-}"
     validate_server "$server"
 
     local ssh_host tmux_session
     ssh_host=$(get_server_field "$server" "ssh_host")
     tmux_session=$(get_global_field "tmux_session")
     tmux_session="${tmux_session:-usfl-exp}"
-    local session_name="${tmux_session}-${server}"
 
+    if [[ -z "$method" ]]; then
+        # List available sessions on this server
+        echo "Active experiment sessions on $server:"
+        # shellcheck disable=SC2029
+        ssh -o ConnectTimeout=5 "$ssh_host" \
+            "tmux ls 2>/dev/null | grep '^${tmux_session}-'" 2>/dev/null \
+            | while IFS= read -r line; do echo "  $line"; done
+        echo ""
+        echo "Usage: ./deploy.sh attach $server <method>"
+        return
+    fi
+
+    local session_name="${tmux_session}-${method}"
     echo "Attaching to $session_name on $ssh_host..."
     echo "(Ctrl+B D to detach)"
     echo ""
@@ -620,11 +635,13 @@ cmd_help() {
     cat <<'EOF'
 deploy.sh — 멀티 GPU 서버 실험 자동화
 
+각 실험은 독립 tmux 세션에서 실행됩니다.
+
 Commands:
-  run       실험 실행 (push → pull → tmux에서 실행)
-  status    전체 서버 상태 확인
-  logs      실시간 로그 보기
-  attach    tmux 세션 접속
+  run       실험 실행 (push → pull → 실험별 tmux 세션 생성)
+  status    전체 서버/실험 상태 확인
+  attach    실험 tmux 세션 접속 (실시간 로그)
+  logs      실험 로그 파일 tail
   collect   결과 수집 (Google Drive 또는 로컬)
   servers   등록된 서버 목록 + GPU 상태
 
@@ -634,10 +651,13 @@ Run Usage:
   ./deploy.sh run -i --server server-a          # 대화형 모드
   ./deploy.sh run --no-push usfl@server-a:0     # git push 스킵
 
+Monitor:
+  ./deploy.sh status                # 모든 서버의 실험 현황
+  ./deploy.sh attach server-a sfl   # sfl 실험 tmux 접속 (실시간)
+  ./deploy.sh attach server-a       # 세션 목록 보기
+  ./deploy.sh logs server-a sfl     # sfl 로그 파일 tail
+
 Other:
-  ./deploy.sh status
-  ./deploy.sh logs server-a [method]
-  ./deploy.sh attach server-a
   ./deploy.sh collect              # Google Drive 업로드
   ./deploy.sh collect --local      # 로컬 rsync
 
