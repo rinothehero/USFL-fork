@@ -83,6 +83,9 @@ echo ""
 
 START_TIME=$(date +%s)
 
+# Disable Python output buffering so logs stream in real-time through pipes
+export PYTHONUNBUFFERED=1
+
 if [ "$MODE" == "--interactive" ]; then
     echo "[Mode] Interactive — launching run_experiments.sh"
     echo ""
