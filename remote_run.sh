@@ -58,8 +58,11 @@ if [ "$_conda_found" = false ]; then
     exit 1
 fi
 
+# Temporarily disable -u: conda activate scripts may reference unbound variables
+set +u
 eval "$(conda shell.bash hook)"
 conda activate "$CONDA_ENV"
+set -u
 unset _conda_found
 
 echo ""
