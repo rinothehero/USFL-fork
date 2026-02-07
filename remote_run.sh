@@ -17,6 +17,14 @@ REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 cd "$REPO_ROOT"
 
+# Source shell profile to get conda in PATH (tmux non-login shells skip this)
+for rc in "$HOME/.bash_profile" "$HOME/.bashrc" "$HOME/.profile"; do
+    if [ -f "$rc" ]; then
+        source "$rc" 2>/dev/null || true
+        break
+    fi
+done
+
 # Conda activation (supports both conda and mamba)
 if command -v conda &>/dev/null; then
     eval "$(conda shell.bash hook)"
@@ -26,6 +34,9 @@ elif command -v mamba &>/dev/null; then
     mamba activate "$CONDA_ENV"
 else
     echo "Error: conda/mamba not found"
+    echo "  Searched: conda, mamba"
+    echo "  Sourced:  ~/.bash_profile, ~/.bashrc, ~/.profile"
+    echo "  PATH:     $PATH"
     exit 1
 fi
 

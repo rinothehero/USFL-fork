@@ -249,7 +249,11 @@ cmd_run() {
         fi
 
         # shellcheck disable=SC2029
-        ssh -t "$ssh_host" "cd $remote_repo && git fetch -q && git checkout $branch && git pull origin $branch && \
+        ssh -t "$ssh_host" "cd $remote_repo && \
+            git stash -q 2>/dev/null || true && \
+            git fetch -q && \
+            git checkout $branch -q && \
+            git reset --hard origin/$branch && \
             tmux new-session -s '$session_name' \
             'bash remote_run.sh $conda_env --interactive 2>&1 | tee experiment.log'"
         return
@@ -350,9 +354,13 @@ cmd_run() {
             # shellcheck disable=SC2029
             ssh "$ssh_host" "tmux kill-session -t '$session_name' 2>/dev/null || true"
 
-            # Sync branch and start
+            # Sync branch: stash local changes, checkout, pull
             # shellcheck disable=SC2029
-            ssh "$ssh_host" "cd $remote_repo && git fetch -q && git checkout $branch && git pull -q origin $branch && \
+            ssh "$ssh_host" "cd $remote_repo && \
+                git stash -q 2>/dev/null || true && \
+                git fetch -q && \
+                git checkout $branch -q && \
+                git reset --hard origin/$branch -q && \
                 tmux new-session -d -s '$session_name' \
                 'bash remote_run.sh $conda_env batch_spec.json 2>&1 | tee experiment.log'"
 
