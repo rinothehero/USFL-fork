@@ -26,69 +26,89 @@ Each track has its own implementation with specialized features for Non-IID data
 - `sfl_framework-fork-feature-training-tracker/`: Unified framework supporting SFL, USFL, and 11+ other methods
 - `GAS_implementation/`: Standalone GAS method implementation
 - `multisfl_implementation/`: Multi-branch SFL architecture
+- `experiment_core/`: Unified experiment pipeline (adapters, spec generation, batch runner)
+- `experiment_configs/`: Shared `common.json` + per-method config JSONs
+- `shared/`: Cross-framework utilities (update alignment metrics)
 
 ## Project Structure
 
 ```
 USFL-fork/
-├── sfl_framework-fork-feature-training-tracker/  # Track 1 & 2: Unified Framework
-│   ├── simulation.py          # Primary entry point (configure method: sfl/usfl)
-│   ├── emulation.py            # Real process execution mode
-│   ├── result_parser.py        # Parse experiment results
+├── deploy.sh                  # Multi-GPU server deployment automation
+├── deploy/                    # Deployment supporting files
+│   ├── remote_run.sh          # Remote experiment wrapper (runs on GPU servers)
+│   ├── setup_rclone_gdrive.sh # Google Drive rclone setup for servers
+│   └── deploy_servers.json    # Server inventory configuration
+│
+├── experiment_core/           # Unified experiment framework
+│   ├── __init__.py
+│   ├── generate_spec.py       # Config → batch_spec.json generator
+│   ├── batch_runner.py        # Multi-experiment batch execution
+│   ├── runner.py              # Single-experiment orchestrator
+│   ├── run_experiment.py      # CLI entry point
+│   ├── sfl_runner.py          # SFL bridge (spec → simulation.py in-process)
+│   ├── spec.py                # Experiment spec dataclass
+│   ├── normalization.py       # Result normalization (unified JSON format)
+│   ├── test_adapters.py       # Adapter validation tests
+│   └── adapters/              # Framework-specific integration
+│       ├── __init__.py
+│       ├── base.py            # Base adapter interface
+│       ├── sfl_adapter.py     # SFL/USFL/SCAFFOLD/MIX2SFL
+│       ├── gas_adapter.py     # GAS (env vars)
+│       └── multisfl_adapter.py # MultiSFL (CLI args)
+│
+├── experiment_configs/        # Experiment configuration
+│   ├── common.json            # Shared params (dataset, model, rounds, alpha, G, drift)
+│   ├── sfl.json               # SFL-specific overrides
+│   ├── usfl.json              # USFL-specific overrides
+│   ├── sfl_iid.json           # SFL with IID data
+│   ├── scaffold.json          # SCAFFOLD_SFL config
+│   ├── mix2sfl.json           # Mix2SFL config
+│   ├── gas.json               # GAS-specific params
+│   └── multisfl.json          # MultiSFL-specific params
+│
+├── shared/                    # Cross-framework utilities
+│   ├── __init__.py
+│   └── update_alignment.py    # A_cos & M_norm computation
+│
+├── docs/                      # Documentation
+│   ├── DEAD_CODE_AUDIT.md     # Dead code audit report across all frameworks
+│   ├── G_MEASUREMENT_GUIDE.md
+│   ├── METRICS_REFERENCE.md   # Complete metrics reference (G, drift, alignment, etc.)
+│   ├── SCAFFOLD_SFL_USAGE.md
+│   └── UPDATE_ALIGNMENT_DOCS.md
+│
+├── sfl_framework-fork-feature-training-tracker/  # Track 1 & 2: SFL/USFL
+│   ├── simulation.py          # Primary entry point
 │   ├── server/
-│   │   ├── server_args.py     # Configuration dataclass (Config)
-│   │   ├── simulation_server.py
+│   │   ├── server_args.py     # Config dataclass
 │   │   └── modules/
 │   │       ├── dataset/       # CIFAR, MNIST, GLUE datasets
 │   │       ├── model/         # ResNet, VGG, AlexNet, DistilBERT
 │   │       └── trainer/
-│   │           ├── aggregator/     # FedAvg, USFL aggregation
-│   │           ├── seletor/        # Client selection (uniform, usfl)
-│   │           ├── distributer/    # Data distribution strategies
-│   │           ├── splitter/       # Model splitting strategies
-│   │           ├── scheduler/      # Dynamic batch scheduling (USFL)
-│   │           │   └── batch_scheduler.py  ★ USFL
-│   │           ├── stage/          # Stage organizers
-│   │           │   ├── fl_stage_organizer.py
-│   │           │   ├── sfl_stage_organizer.py      ★ Track 1
-│   │           │   └── usfl_stage_organizer.py     ★ Track 2 (1148 lines)
-│   │           └── utils/
-│   │               ├── usfl_logger.py
-│   │               └── training_tracker.py
+│   │           ├── aggregator/ # FedAvg, USFL aggregation
+│   │           ├── seletor/    # Client selection (uniform, usfl)
+│   │           ├── distributer/# Data distribution strategies
+│   │           ├── splitter/   # Model splitting strategies
+│   │           ├── scheduler/  # Dynamic batch scheduling (USFL)
+│   │           ├── stage/      # Stage organizers (sfl, usfl, scaffold, mix2sfl)
+│   │           └── utils/      # Training tracker, USFL logger
 │   ├── client/
-│   │   ├── simulation_client.py
 │   │   └── modules/
-│   │       ├── dataset/
-│   │       │   └── maskable_dataset.py  ★ USFL balancing
+│   │       ├── dataset/maskable_dataset.py  ★ USFL balancing
 │   │       └── trainer/
-│   │           ├── model_trainer/usfl_model_trainer.py  ★ USFL
-│   │           └── stage/usfl_stage_organizer.py
+│   │           ├── model_trainer/  # Per-method client trainers
+│   │           └── stage/          # Client-side stage organizers
 │   └── docs/
 │       └── COMPREHENSIVE_GUIDE.md  # 950-line Korean USFL specification
 │
 ├── GAS_implementation/         # Track 3: GAS Method
-│   ├── GAS_main.py            # Main entry point (single file)
-│   └── utils/
-│       ├── g_measurement.py   # G-score computation
-│       ├── utils.py           # V-value, adjustment, feature sampling
-│       ├── network.py         # Model definitions & splitting
-│       ├── dataset.py         # Data partitioning
-│       ├── AlexNet_Split/     # AlexNet split configurations
-│       └── VGG16_split/       # VGG16 split configurations
+│   ├── GAS_main.py            # Single-file implementation
+│   └── utils/                 # G-score, models, data, drift
 │
 └── multisfl_implementation/    # Track 4: MultiSFL
     ├── run_multisfl.py        # Main entry point
-    ├── exp.sh                 # Experiment shell script
-    └── multisfl/
-        ├── trainer.py         # MultiSFLTrainer (orchestration)
-        ├── servers.py         # MainServer, FedServer
-        ├── client.py          # Multi-branch client
-        ├── models.py          # Model splitting & initialization
-        ├── data.py            # Dataset partitioning
-        ├── replay.py          # Knowledge replay system
-        ├── scheduler.py       # Sampling proportion scheduler
-        ├── g_measurement.py   # Gradient quality metrics
-        └── config.py          # Configuration dataclass
+    └── multisfl/              # Multi-branch SFL package
 ```
 
 **Note:** The main framework directory has a long name (`sfl_framework-fork-feature-training-tracker`) - this is intentional and should be preserved.
@@ -134,7 +154,7 @@ cd sfl_framework-fork-feature-training-tracker
 python simulation.py
 ```
 
-**Documentation:** See `docs/COMPREHENSIVE_GUIDE.md` (950 lines, Korean) for complete USFL specification.
+**Documentation:** See `sfl_framework-fork-feature-training-tracker/docs/COMPREHENSIVE_GUIDE.md` (950 lines, Korean) for complete USFL specification.
 
 ### Track 3: GAS (Gradient Adjustment Scheme)
 
@@ -233,10 +253,23 @@ python run_multisfl.py \
     --branches 3 \
     --batch_size 50 \
     --local_steps 5
-
-# Or use the shell script
-./exp.sh
 ```
+
+## Deployment
+
+Distributed experiments across GPU servers are managed by `deploy.sh`:
+
+```bash
+./deploy.sh run usfl@server-a:0 gas@server-b:1   # Deploy experiments
+./deploy.sh status                                 # Check all servers
+./deploy.sh collect --local                        # Collect results
+./deploy.sh kill <run_name>                        # Kill a running experiment
+./deploy.sh check <run_name>                       # Check experiment status
+```
+
+The deployment pipeline: `deploy.sh` → SSH → `deploy/remote_run.sh` (conda activation) → `experiment_core/batch_runner.py` (batch execution) → per-experiment adapters.
+
+Server inventory is configured in `deploy/deploy_servers.json`. Deploy history is tracked in `deploy/.deploy_history.json` (auto-generated, not tracked by git).
 
 ## Running Experiments
 
@@ -275,6 +308,23 @@ USFL_OPTIONS = {
     },
 }
 ```
+
+### Unified Experiment Pipeline
+
+The preferred way to run experiments across all frameworks:
+
+```bash
+# Generate experiment spec from configs
+python -m experiment_core.generate_spec
+
+# Run a batch of experiments
+python -m experiment_core.batch_runner --spec <spec.json> --repo-root .
+
+# Or run a single experiment
+python -m experiment_core.run_experiment --spec <spec.json>
+```
+
+The pipeline reads from `experiment_configs/common.json` (shared parameters) plus method-specific JSONs (e.g., `usfl.json`, `gas.json`). Adapters translate unified config into each framework's native format (CLI args for SFL/MultiSFL, env vars for GAS).
 
 ### Emulation Mode
 
@@ -574,11 +624,9 @@ Parses experiment logs and generates summary statistics.
 - Verify `SamplingProportionScheduler` adjustments
 - Ensure `alpha_master_pull` prevents branch drift
 
-### Logging
-
 ## Language Note
 
-The comprehensive guide (`docs/COMPREHENSIVE_GUIDE.md`) is written in Korean and contains the complete technical specification of USFL (950 lines). Refer to it for detailed algorithmic explanations, mathematical formulas, and implementation specifics.
+The comprehensive guide (`sfl_framework-fork-feature-training-tracker/docs/COMPREHENSIVE_GUIDE.md`) is written in Korean and contains the complete technical specification of USFL (950 lines). Refer to it for detailed algorithmic explanations, mathematical formulas, and implementation specifics.
 
 ## Dependencies
 
