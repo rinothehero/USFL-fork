@@ -61,6 +61,7 @@ _VALUE_FLAGS = {
     "g_measurement_mode": "--g-measurement-mode",
     "g_measurement_k": "--g-measurement-k",
     "drift_sample_interval": "--drift-sample-interval",
+    "delete_fraction_of_data": "-df",
 }
 
 # store_true flags: append only when value is "true"
@@ -78,6 +79,15 @@ _STORE_TRUE_FLAGS = {
     "networking_fairness": "-nf",
     "enable_concatenation": "-ec",
     "enable_logit_adjustment": "-ela",
+}
+
+# store_false flags: append when value is "false"
+# Needed for args whose argparse default is True (e.g., networking_fairness).
+_STORE_FALSE_FLAGS = {
+    "networking_fairness": "-nnf",
+    "enable_concatenation": "-nec",
+    "enable_logit_adjustment": "-nela",
+    "gradient_shuffle": "-ngs",
 }
 
 
@@ -167,6 +177,9 @@ def workload_to_server_args(workload: Dict[str, str]) -> List[str]:
         if key in _STORE_TRUE_FLAGS:
             if str(value).lower() == "true":
                 args.append(_STORE_TRUE_FLAGS[key])
+            elif key in _STORE_FALSE_FLAGS:
+                # Explicitly disable (needed when argparse default is True)
+                args.append(_STORE_FALSE_FLAGS[key])
             continue
 
         if key in _VALUE_FLAGS:
