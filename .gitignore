@@ -5,8 +5,11 @@
 *.txt
 *.json
 *.pyc
+__pycache__/
+.ruff_cache/
+results/
 git-ai
 !experiment_configs/*.json
 !experiment_configs/**/*.json
-!deploy_servers.json
+!deploy/deploy_servers.json
 data/
