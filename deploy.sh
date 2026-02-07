@@ -60,12 +60,8 @@ validate_server() {
 # ========================= Git Push =========================
 
 get_deploy_branch() {
-    local branch
-    branch=$(get_global_field "git_branch")
-    if [[ -z "$branch" ]]; then
-        branch=$(git branch --show-current 2>/dev/null || echo "main")
-    fi
-    echo "$branch"
+    # Source of truth: current local branch
+    git branch --show-current 2>/dev/null || echo "main"
 }
 
 do_git_push() {
@@ -73,17 +69,6 @@ do_git_push() {
     branch=$(get_deploy_branch)
 
     echo "── Git Push (branch: $branch) ──"
-
-    # Ensure we're on the right branch locally
-    local current
-    current=$(git branch --show-current 2>/dev/null || echo "")
-    if [[ -n "$current" && "$current" != "$branch" ]]; then
-        echo "  Warning: local branch is '$current', deploy branch is '$branch'"
-        read -rp "  Switch to '$branch'? [Y/n] " switch_confirm
-        if [[ ! "$switch_confirm" =~ ^[Nn] ]]; then
-            git checkout "$branch"
-        fi
-    fi
 
     if git diff --quiet HEAD 2>/dev/null && git diff --cached --quiet 2>/dev/null; then
         echo "  No uncommitted changes."

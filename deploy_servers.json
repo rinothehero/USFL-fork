@@ -25,6 +25,5 @@
     }
   },
   "gdrive_rclone_remote": "",
-  "tmux_session": "usfl-exp",
-  "git_branch": "feat/G_drift"
+  "tmux_session": "usfl-exp"
 }
