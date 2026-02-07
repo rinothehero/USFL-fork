@@ -156,7 +156,6 @@ def generate_batch_spec(
         gpu_map: Method name → GPU index (None = CPU)
         output_dir: Results output directory (auto-generated if None)
         method_configs_dir: Override directory for per-method configs
-                           (used by run_experiments.sh for temp-modified configs)
     """
     common_path = config_dir / "common.json"
     common = build_common_spec(common_path)

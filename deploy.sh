@@ -18,8 +18,8 @@ set -euo pipefail
 ###############################################################################
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CONFIG_FILE="$SCRIPT_DIR/deploy_servers.json"
-HISTORY_FILE="$SCRIPT_DIR/.deploy_history.json"
+CONFIG_FILE="$SCRIPT_DIR/deploy/deploy_servers.json"
+HISTORY_FILE="$SCRIPT_DIR/deploy/.deploy_history.json"
 
 # ========================= Helpers =========================
 
@@ -84,22 +84,73 @@ with open(path, 'w') as f:
 " "$HISTORY_FILE" "$run_name" "$branch" "$assignments_json"
 }
 
-_mark_collected() {
-    # Usage: _mark_collected <run_name>
-    local run_name="$1"
+_mark_history_status() {
+    # Usage: _mark_history_status <run_name> <status>
+    local run_name="$1" new_status="$2"
     python3 -c "
 import json, sys, os
-path, target = sys.argv[1], sys.argv[2]
+path, target, status = sys.argv[1], sys.argv[2], sys.argv[3]
 if not os.path.exists(path):
     sys.exit(0)
 with open(path) as f:
     history = json.load(f)
 for rec in history:
     if rec['run_name'] == target:
-        rec['status'] = 'collected'
+        rec['status'] = status
 with open(path, 'w') as f:
     json.dump(history, f, indent=2)
-" "$HISTORY_FILE" "$run_name"
+" "$HISTORY_FILE" "$run_name" "$new_status"
+}
+
+_mark_collected() {
+    # Alias for backward compat
+    _mark_history_status "$1" "collected"
+}
+
+_is_run_complete() {
+    # Check if ALL experiments for a run have finished (no active tmux sessions).
+    # Usage: _is_run_complete <run_name> <assignments_csv>
+    # Returns 0 (true) if complete, 1 (false) if still running
+    local run_name="$1" assignments_csv="$2"
+    local run_id="${run_name##*_}"
+
+    local tmux_session
+    tmux_session=$(get_global_field "tmux_session")
+    tmux_session="${tmux_session:-usfl-exp}"
+
+    local IFS=","
+    for entry in $assignments_csv; do
+        local method="${entry%%:*}"
+        local rest="${entry#*:}"
+        local server="${rest%%:*}"
+
+        local ssh_host
+        ssh_host=$(get_server_field "$server" "ssh_host")
+        if [[ -z "$ssh_host" || "$ssh_host" == "YOUR_SSH_ALIAS"* ]]; then
+            continue
+        fi
+
+        # Check new naming (method-run_id), then legacy (method-only)
+        local sess="${tmux_session}-${method}-${run_id}"
+        # shellcheck disable=SC2029
+        local has_session
+        has_session=$(ssh -o ConnectTimeout=5 "$ssh_host" \
+            "tmux has-session -t '$sess' 2>/dev/null && echo 'yes' || echo 'no'" 2>/dev/null \
+            || echo "no")
+
+        if [[ "$has_session" != "yes" ]]; then
+            local legacy_sess="${tmux_session}-${method}"
+            # shellcheck disable=SC2029
+            has_session=$(ssh -o ConnectTimeout=5 "$ssh_host" \
+                "tmux has-session -t '$legacy_sess' 2>/dev/null && echo 'yes' || echo 'no'" 2>/dev/null \
+                || echo "no")
+        fi
+
+        if [[ "$has_session" == "yes" ]]; then
+            return 1  # at least one experiment is still running
+        fi
+    done
+    return 0  # all done
 }
 
 _get_history_runs() {
@@ -135,11 +186,16 @@ for rec in history:
             if a not in existing:
                 merged[rn]['assignments'].append(a)
                 existing.add(a)
-        # Keep 'collected' if any entry is collected, else latest status
-        if rec['status'] == 'collected':
-            merged[rn]['status'] = 'collected'
+        # Priority: collected > partial > pending
+        cur = merged[rn]['status']
+        new = rec['status']
+        prio = {'pending': 0, 'partial': 1, 'collected': 2}
+        if prio.get(new, 0) > prio.get(cur, 0):
+            merged[rn]['status'] = new
 for m in merged.values():
-    if filt != 'all' and m['status'] != filt:
+    if filt == 'pending' and m['status'] not in ('pending', 'partial'):
+        continue
+    elif filt != 'all' and filt != 'pending' and m['status'] != filt:
         continue
     assignments = ','.join(m['assignments'])
     print(f\"{m['run_name']}\t{assignments}\t{m['status']}\t{m['timestamp']}\t{m['branch']}\")
@@ -371,7 +427,7 @@ cmd_run() {
             git checkout $branch -q && \
             git reset --hard origin/$branch && \
             tmux new-session -s '$session_name' \
-            'bash remote_run.sh $conda_env --interactive 2>&1 | tee experiment.log'"
+            'bash deploy/remote_run.sh $conda_env --interactive 2>&1 | tee experiment.log'"
         return
     fi
 
@@ -502,7 +558,7 @@ cmd_run() {
             # shellcheck disable=SC2029
             ssh "$ssh_host" "cd $remote_repo && \
                 tmux new-session -d -s '$session_name' \
-                'bash remote_run.sh $conda_env $remote_spec 2>&1 | tee experiment_${method}-${_run_id}.log'"
+                'bash deploy/remote_run.sh $conda_env $remote_spec 2>&1 | tee experiment_${method}-${_run_id}.log'"
 
             echo "[$server] $method → GPU $gpu (tmux: $session_name)"
         ) &
@@ -830,9 +886,15 @@ cmd_collect() {
         fi
 
         if [[ "$collected" == true ]]; then
-            _mark_collected "$target_run"
             echo ""
-            echo "Done. Marked as collected."
+            # Check if all experiments are actually done before marking collected
+            if [[ "$found_in_history" == true ]] && ! _is_run_complete "$target_run" "$assignments_csv"; then
+                _mark_history_status "$target_run" "partial"
+                echo "Done (partial). Some experiments still running — will re-collect on next './deploy.sh collect'."
+            else
+                _mark_collected "$target_run"
+                echo "Done. All experiments finished — marked as collected."
+            fi
         else
             echo ""
             echo "No results found for '$target_run' on any server."
@@ -861,8 +923,14 @@ cmd_collect() {
         done
 
         if [[ "$run_collected" == true ]]; then
-            _mark_collected "$rn"
-            collected_count=$((collected_count + 1))
+            # Check if all experiments are done before marking collected
+            if _is_run_complete "$rn" "$asgn_csv"; then
+                _mark_collected "$rn"
+                collected_count=$((collected_count + 1))
+            else
+                _mark_history_status "$rn" "partial"
+                echo "    (partial — some experiments still running)"
+            fi
         else
             echo "    (no results found on any server)"
         fi

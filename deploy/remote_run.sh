@@ -13,7 +13,7 @@ set -euo pipefail
 
 CONDA_ENV="${1:?Usage: remote_run.sh <conda_env> <spec_path|--interactive>}"
 MODE="${2:---interactive}"
-REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 cd "$REPO_ROOT"
 
@@ -87,9 +87,10 @@ START_TIME=$(date +%s)
 export PYTHONUNBUFFERED=1
 
 if [ "$MODE" == "--interactive" ]; then
-    echo "[Mode] Interactive — launching run_experiments.sh"
+    echo "[Mode] Interactive — conda activated, dropping to shell"
+    echo "  Use: python -m experiment_core.batch_runner --spec <spec.json> --repo-root ."
     echo ""
-    ./run_experiments.sh
+    exec bash
 else
     SPEC_PATH="$MODE"
     if [ ! -f "$SPEC_PATH" ]; then
