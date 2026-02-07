@@ -79,6 +79,7 @@ class ServerConfig:
     # ==================
     model_path: str  # File path to save/load the model.
     dataset_path: str  # File path to the dataset location.
+    result_output_dir: str  # Directory for result JSON files (empty = CWD).
 
     # ==================
     #  METHOD OPTIONS

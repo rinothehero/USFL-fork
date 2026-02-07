@@ -838,6 +838,299 @@ cmd_servers() {
     done
 }
 
+# ========================= Kill =========================
+
+cmd_kill() {
+    require_config
+    require_jq
+
+    local mode="interactive"
+    local target_server=""
+    local target_method=""
+
+    case "${1:-}" in
+        --all)    mode="all" ;;
+        "") mode="interactive" ;;
+        *)
+            target_server="$1"
+            validate_server "$target_server"
+            target_method="${2:-}"
+            mode="targeted"
+            ;;
+    esac
+
+    local tmux_session
+    tmux_session=$(get_global_field "tmux_session")
+    tmux_session="${tmux_session:-usfl-exp}"
+
+    # Collect all sessions first
+    local sess_list=()    # "server|exp_name|ssh_host|sess_name|last_log"
+    for server in $(list_servers); do
+        if [[ "$mode" == "targeted" && "$server" != "$target_server" ]]; then
+            continue
+        fi
+
+        local ssh_host remote_repo
+        ssh_host=$(get_server_field "$server" "ssh_host")
+        remote_repo=$(get_server_field "$server" "remote_repo")
+        if [[ -z "$ssh_host" || "$ssh_host" == "YOUR_SSH_ALIAS"* ]]; then
+            continue
+        fi
+
+        local sessions=""
+        sessions=$(ssh -o ConnectTimeout=5 "$ssh_host" \
+            "tmux ls 2>/dev/null | grep '^${tmux_session}-' | cut -d: -f1" 2>/dev/null \
+            || echo "")
+
+        if [[ -z "$sessions" ]]; then
+            continue
+        fi
+
+        for sess in $sessions; do
+            local exp_name="${sess#${tmux_session}-}"
+
+            if [[ "$mode" == "targeted" && -n "$target_method" && "$exp_name" != "$target_method" ]]; then
+                continue
+            fi
+
+            local last_log=""
+            # shellcheck disable=SC2029
+            last_log=$(ssh "$ssh_host" \
+                "cd $remote_repo && tail -1 experiment_${exp_name}.log 2>/dev/null" 2>/dev/null \
+                || echo "(no log)")
+
+            sess_list+=("${server}|${exp_name}|${ssh_host}|${sess}|${last_log}")
+        done
+    done
+
+    if [[ ${#sess_list[@]} -eq 0 ]]; then
+        echo "No experiment sessions found."
+        return
+    fi
+
+    # Interactive mode: show numbered list and ask
+    if [[ "$mode" == "interactive" ]]; then
+        echo "Active experiment sessions:"
+        echo ""
+        local i=1
+        for entry in "${sess_list[@]}"; do
+            IFS='|' read -r sv exp _ _ log <<< "$entry"
+            echo "  $i) $exp on $sv"
+            echo "     └─ $log"
+            i=$((i + 1))
+        done
+        echo ""
+        echo "Options: 'all' to kill all, comma-separated numbers (e.g. 1,2,3), or 'q' to cancel"
+        read -rp "Kill which sessions? " choice
+
+        if [[ "$choice" == "q" || -z "$choice" ]]; then
+            echo "Cancelled."
+            return
+        fi
+
+        local killed=0
+        if [[ "$choice" == "all" ]]; then
+            for entry in "${sess_list[@]}"; do
+                IFS='|' read -r sv exp ssh_h sess _ <<< "$entry"
+                echo "  KILL $exp on $sv"
+                # shellcheck disable=SC2029
+                ssh "$ssh_h" "tmux kill-session -t '$sess'" 2>/dev/null || true
+                killed=$((killed + 1))
+            done
+        else
+            # Parse comma-separated numbers
+            IFS=',' read -ra nums <<< "$choice"
+            for num in "${nums[@]}"; do
+                num=$(echo "$num" | tr -d ' ')
+                if [[ "$num" =~ ^[0-9]+$ ]] && [[ "$num" -ge 1 ]] && [[ "$num" -le ${#sess_list[@]} ]]; then
+                    local idx=$((num - 1))
+                    IFS='|' read -r sv exp ssh_h sess _ <<< "${sess_list[$idx]}"
+                    echo "  KILL $exp on $sv"
+                    # shellcheck disable=SC2029
+                    ssh "$ssh_h" "tmux kill-session -t '$sess'" 2>/dev/null || true
+                    killed=$((killed + 1))
+                else
+                    echo "  Invalid: $num (skipped)"
+                fi
+            done
+        fi
+
+        echo ""
+        echo "Killed $killed session(s)."
+        return
+    fi
+
+    # --all mode: confirm then kill everything
+    if [[ "$mode" == "all" ]]; then
+        echo "Will kill ALL ${#sess_list[@]} experiment session(s):"
+        for entry in "${sess_list[@]}"; do
+            IFS='|' read -r sv exp _ _ _ <<< "$entry"
+            echo "  $exp on $sv"
+        done
+        echo ""
+        read -rp "Continue? [y/N] " confirm
+        if [[ ! "$confirm" =~ ^[Yy] ]]; then
+            echo "Cancelled."
+            return
+        fi
+    fi
+
+    # Targeted or --all (after confirm): kill matching sessions
+    local killed=0
+    for entry in "${sess_list[@]}"; do
+        IFS='|' read -r sv exp ssh_h sess _ <<< "$entry"
+        echo "  KILL $exp on $sv"
+        # shellcheck disable=SC2029
+        ssh "$ssh_h" "tmux kill-session -t '$sess'" 2>/dev/null || true
+        killed=$((killed + 1))
+    done
+    echo ""
+    echo "Killed $killed session(s)."
+}
+
+# ========================= Check Run =========================
+
+cmd_check() {
+    require_config
+    require_jq
+
+    local run_name="${1:-}"
+    local history_file="$SCRIPT_DIR/.deploy_history.json"
+
+    if [[ ! -f "$history_file" ]]; then
+        die "No deploy history found. Run './deploy.sh run' first."
+    fi
+
+    # If no run_name given, use latest pending run
+    if [[ -z "$run_name" ]]; then
+        run_name=$(python3 -c "
+import json
+with open('$history_file') as f:
+    history = json.load(f)
+pending = [r for r in history if r.get('status') == 'pending']
+if pending:
+    print(pending[-1]['run_name'])
+else:
+    print('')
+")
+        if [[ -z "$run_name" ]]; then
+            echo "No pending runs in history. Use './deploy.sh collect --list' to see all."
+            return
+        fi
+    fi
+
+    # Look up assignments for this run
+    local assignments_json
+    assignments_json=$(python3 -c "
+import json
+with open('$history_file') as f:
+    history = json.load(f)
+matches = [r for r in history if r.get('run_name') == '$run_name']
+if matches:
+    import json as j
+    print(j.dumps(matches[-1]))
+else:
+    print('')
+")
+
+    if [[ -z "$assignments_json" ]]; then
+        die "Run '$run_name' not found in deploy history."
+    fi
+
+    local tmux_session
+    tmux_session=$(get_global_field "tmux_session")
+    tmux_session="${tmux_session:-usfl-exp}"
+
+    echo "── Run: $run_name ──"
+    echo ""
+
+    local running=0
+    local crashed=0
+    local done_count=0
+    local total=0
+
+    # Parse assignments: ["method:server:gpu", ...]
+    local assignment_list
+    assignment_list=$(echo "$assignments_json" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for a in data.get('assignments', []):
+    print(a)
+")
+
+    while IFS= read -r entry; do
+        [[ -z "$entry" ]] && continue
+        local method="${entry%%:*}"
+        local rest="${entry#*:}"
+        local server="${rest%%:*}"
+
+        local ssh_host
+        ssh_host=$(get_server_field "$server" "ssh_host")
+        if [[ -z "$ssh_host" ]]; then
+            echo "  $method on $server: UNKNOWN (server not configured)"
+            continue
+        fi
+
+        local remote_repo
+        remote_repo=$(get_server_field "$server" "remote_repo")
+
+        total=$((total + 1))
+        local sess="${tmux_session}-${method}"
+
+        # Check if tmux session exists
+        # shellcheck disable=SC2029
+        local has_session
+        has_session=$(ssh -o ConnectTimeout=5 "$ssh_host" \
+            "tmux has-session -t '$sess' 2>/dev/null && echo 'yes' || echo 'no'" 2>/dev/null \
+            || echo "no")
+
+        if [[ "$has_session" == "yes" ]]; then
+            # Session exists — check if crashed or running
+            local fail_count
+            # shellcheck disable=SC2029
+            fail_count=$(ssh "$ssh_host" \
+                "cd $remote_repo && tail -20 experiment_${method}.log 2>/dev/null | grep -c 'FAIL (exit='" 2>/dev/null \
+                || echo "0")
+            if [[ "$fail_count" -gt 0 ]]; then
+                echo "  $method on $server: CRASHED"
+                crashed=$((crashed + 1))
+            else
+                # Show last log line for context
+                local last_line
+                # shellcheck disable=SC2029
+                last_line=$(ssh "$ssh_host" \
+                    "cd $remote_repo && tail -1 experiment_${method}.log 2>/dev/null" 2>/dev/null \
+                    || echo "")
+                echo "  $method on $server: RUNNING  ← $last_line"
+                running=$((running + 1))
+            fi
+        else
+            # Session gone — check if results exist
+            local has_results
+            # shellcheck disable=SC2029
+            has_results=$(ssh "$ssh_host" \
+                "test -f $remote_repo/results/$run_name/${method}.normalized.json && echo 'yes' || echo 'no'" 2>/dev/null \
+                || echo "no")
+            if [[ "$has_results" == "yes" ]]; then
+                echo "  $method on $server: DONE"
+                done_count=$((done_count + 1))
+            else
+                echo "  $method on $server: EXITED (no results)"
+                crashed=$((crashed + 1))
+            fi
+        fi
+    done <<< "$assignment_list"
+
+    echo ""
+    echo "Total: $total  |  Done: $done_count  |  Running: $running  |  Crashed: $crashed"
+
+    if [[ $running -eq 0 && $crashed -eq 0 ]]; then
+        echo "All experiments completed. Ready to collect."
+    elif [[ $running -eq 0 ]]; then
+        echo "No experiments running. $crashed crashed — fix and rerun with --run-name."
+    fi
+}
+
 # ========================= Help =========================
 
 cmd_help() {
@@ -849,6 +1142,8 @@ deploy.sh — 멀티 GPU 서버 실험 자동화
 Commands:
   run       실험 실행 (push → pull → 실험별 tmux 세션 생성)
   status    전체 서버/실험 상태 확인
+  check     특정 배포의 실험 완료 여부 확인
+  kill      crashed/전체 실험 세션 종료
   attach    실험 tmux 세션 접속 (실시간 로그)
   logs      실험 로그 파일 tail
   collect   결과 수집 (Google Drive 또는 로컬)
@@ -865,6 +1160,16 @@ Monitor:
   ./deploy.sh attach server-a sfl   # sfl 실험 tmux 접속 (실시간)
   ./deploy.sh attach server-a       # 세션 목록 보기
   ./deploy.sh logs server-a sfl     # sfl 로그 파일 tail
+
+Kill:
+  ./deploy.sh kill                 # 세션 목록 → 번호 선택하여 종료
+  ./deploy.sh kill --all           # 모든 실험 세션 종료 (확인 필요)
+  ./deploy.sh kill <server>        # 특정 서버 세션 모두 종료
+  ./deploy.sh kill <server> <method>  # 특정 실험 세션 종료
+
+Check:
+  ./deploy.sh check                # 최근 pending 배포의 실험 상태
+  ./deploy.sh check <run_name>     # 특정 배포의 실험 상태
 
 Collect:
   ./deploy.sh collect              # pending 실행 결과 수집 (GDrive)
@@ -887,6 +1192,8 @@ shift || true
 case "$COMMAND" in
     run)     cmd_run "$@" ;;
     status)  cmd_status "$@" ;;
+    check)   cmd_check "$@" ;;
+    kill)    cmd_kill "$@" ;;
     logs)    cmd_logs "$@" ;;
     attach)  cmd_attach "$@" ;;
     collect) cmd_collect "$@" ;;
