@@ -28,12 +28,12 @@ from typing import Any, Dict, List, Optional
 # ── Framework/method routing tables ──────────────────────────────────
 
 FRAMEWORK_MAP = {
-    "sfl": "sfl", "usfl": "sfl", "scaffold": "sfl", "mix2sfl": "sfl",
+    "sfl": "sfl", "sfl_iid": "sfl", "usfl": "sfl", "scaffold": "sfl", "mix2sfl": "sfl",
     "gas": "gas", "multisfl": "multisfl",
 }
 
 METHOD_NAME_MAP = {
-    "sfl": "sfl", "usfl": "usfl", "scaffold": "scaffold_sfl", "mix2sfl": "mix2sfl",
+    "sfl": "sfl", "sfl_iid": "sfl", "usfl": "usfl", "scaffold": "scaffold_sfl", "mix2sfl": "mix2sfl",
     "gas": "gas", "multisfl": "multisfl",
 }
 

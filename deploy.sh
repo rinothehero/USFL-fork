@@ -10,13 +10,16 @@ set -euo pipefail
 #   ./deploy.sh status                                  # 전체 상태 확인
 #   ./deploy.sh logs server-a [method]                  # 실시간 로그
 #   ./deploy.sh attach server-a                         # tmux 접속
-#   ./deploy.sh collect                                 # GDrive 업로드
+#   ./deploy.sh collect                                 # pending 결과 수집
 #   ./deploy.sh collect --local                         # 로컬 rsync
+#   ./deploy.sh collect <run_name>                      # 특정 실행 수집
+#   ./deploy.sh collect --list                          # 배포 이력
 #   ./deploy.sh servers                                 # 서버 목록 + GPU 상태
 ###############################################################################
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/deploy_servers.json"
+HISTORY_FILE="$SCRIPT_DIR/.deploy_history.json"
 
 # ========================= Helpers =========================
 
@@ -46,6 +49,93 @@ get_global_field() {
 
 list_servers() {
     jq -r '.servers | keys[]' "$CONFIG_FILE"
+}
+
+# ========================= Deploy History =========================
+
+_append_history() {
+    # Usage: _append_history <run_name> <branch> <assignment1> [assignment2 ...]
+    local run_name="$1" branch="$2"
+    shift 2
+    # Build assignments JSON array from remaining args
+    local assignments_json
+    assignments_json=$(python3 -c "
+import json, sys
+print(json.dumps(sys.argv[1:]))
+" "$@")
+    python3 -c "
+import json, sys, os
+from datetime import datetime
+path = sys.argv[1]
+rec = {
+    'run_name': sys.argv[2],
+    'timestamp': datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),
+    'branch': sys.argv[3],
+    'assignments': json.loads(sys.argv[4]),
+    'status': 'pending',
+}
+history = []
+if os.path.exists(path):
+    with open(path) as f:
+        history = json.load(f)
+history.append(rec)
+with open(path, 'w') as f:
+    json.dump(history, f, indent=2)
+" "$HISTORY_FILE" "$run_name" "$branch" "$assignments_json"
+}
+
+_mark_collected() {
+    # Usage: _mark_collected <run_name>
+    local run_name="$1"
+    python3 -c "
+import json, sys, os
+path, target = sys.argv[1], sys.argv[2]
+if not os.path.exists(path):
+    sys.exit(0)
+with open(path) as f:
+    history = json.load(f)
+for rec in history:
+    if rec['run_name'] == target:
+        rec['status'] = 'collected'
+with open(path, 'w') as f:
+    json.dump(history, f, indent=2)
+" "$HISTORY_FILE" "$run_name"
+}
+
+_get_history_runs() {
+    # Usage: _get_history_runs [pending|collected|all]
+    # Prints: run_name<TAB>assignments_csv<TAB>status  per line
+    local filter="${1:-pending}"
+    python3 -c "
+import json, sys, os
+path = sys.argv[1]
+filt = sys.argv[2]
+if not os.path.exists(path):
+    sys.exit(0)
+with open(path) as f:
+    history = json.load(f)
+for rec in history:
+    if filt != 'all' and rec['status'] != filt:
+        continue
+    assignments = ','.join(rec['assignments'])
+    print(f\"{rec['run_name']}\t{assignments}\t{rec['status']}\t{rec.get('timestamp','')}\t{rec.get('branch','')}\")
+" "$HISTORY_FILE" "$filter"
+}
+
+_servers_from_assignments() {
+    # Extract unique server names from comma-separated assignment string
+    # Input: "sfl:xsailor5:0,usfl:xsailor4:0"
+    local assignments_csv="$1"
+    local seen=""
+    local IFS=","
+    for entry in $assignments_csv; do
+        local rest="${entry#*:}"
+        local srv="${rest%%:*}"
+        case " $seen " in
+            *" $srv "*) ;;
+            *) seen="$seen $srv"; echo "$srv" ;;
+        esac
+    done
 }
 
 validate_server() {
@@ -392,6 +482,9 @@ cmd_run() {
     if [[ "$failed" == true ]]; then
         echo "Some experiments failed to start. Check output above."
     else
+        # Record deployment in history
+        _append_history "$_run_name" "$branch" "${ASSIGNMENTS[@]}"
+
         echo "=========================================="
         echo "  All experiments started!"
         echo "=========================================="
@@ -537,13 +630,79 @@ cmd_attach() {
 
 # ========================= Collect =========================
 
+_collect_run_from_server() {
+    # Usage: _collect_run_from_server <server> <run_name> <local_mode> [gdrive_remote]
+    local server="$1" run_name="$2" local_mode="$3" gdrive_remote="${4:-}"
+    local ssh_host remote_repo
+    ssh_host=$(get_server_field "$server" "ssh_host")
+    remote_repo=$(get_server_field "$server" "remote_repo")
+
+    if [[ -z "$ssh_host" || "$ssh_host" == "YOUR_SSH_ALIAS"* ]]; then
+        return 1
+    fi
+
+    local remote_dir="$remote_repo/results/$run_name"
+    # shellcheck disable=SC2029
+    local exists
+    exists=$(ssh -o ConnectTimeout=5 "$ssh_host" \
+        "test -d '$remote_dir' && echo yes || echo no" 2>/dev/null || echo "no")
+
+    if [[ "$exists" != "yes" ]]; then
+        echo "    $server: results/$run_name/ not found"
+        return 1
+    fi
+
+    if [[ "$local_mode" == true ]]; then
+        local local_dst="./results/${run_name}"
+        echo "    $server: rsync → $local_dst"
+        mkdir -p "$local_dst"
+        rsync -avz --progress "$ssh_host:$remote_dir/" "$local_dst/"
+    else
+        local gdrive_dst="${gdrive_remote}/${run_name}"
+        echo "    $server: rclone → $gdrive_dst"
+        # shellcheck disable=SC2029
+        ssh "$ssh_host" "rclone copy '$remote_dir/' '$gdrive_dst' -P"
+    fi
+    return 0
+}
+
 cmd_collect() {
     require_config
     require_jq
 
     local local_mode=false
-    if [[ "${1:-}" == "--local" ]]; then
-        local_mode=true
+    local filter="pending"
+    local target_run=""
+    local show_list=false
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --local) local_mode=true; shift ;;
+            --all)   filter="all"; shift ;;
+            --list)  show_list=true; shift ;;
+            -*)      die "Unknown option: $1" ;;
+            *)       target_run="$1"; shift ;;
+        esac
+    done
+
+    # --list: show deploy history and exit
+    if [[ "$show_list" == true ]]; then
+        echo "=========================================="
+        echo "  Deploy History"
+        echo "=========================================="
+        echo ""
+        if [[ ! -f "$HISTORY_FILE" ]]; then
+            echo "  No history yet. Run './deploy.sh run' to start experiments."
+            return
+        fi
+        printf "  %-44s %-10s %-24s %s\n" "RUN NAME" "STATUS" "TIMESTAMP" "ASSIGNMENTS"
+        printf "  %-44s %-10s %-24s %s\n" "--------" "------" "---------" "-----------"
+        while IFS=$'\t' read -r rn asgn st ts br; do
+            printf "  %-44s %-10s %-24s %s\n" "$rn" "$st" "$ts" "$asgn"
+        done < <(_get_history_runs "all")
+        echo ""
+        return
     fi
 
     local gdrive_remote
@@ -558,52 +717,88 @@ cmd_collect() {
     echo "=========================================="
     echo ""
 
-    for server in $(list_servers); do
-        local ssh_host
-        ssh_host=$(get_server_field "$server" "ssh_host")
-        if [[ -z "$ssh_host" || "$ssh_host" == "YOUR_SSH_ALIAS"* ]]; then
-            continue
-        fi
+    # Case 1: Specific run_name given
+    if [[ -n "$target_run" ]]; then
+        echo "── Collecting: $target_run ──"
 
-        local remote_repo
-        remote_repo=$(get_server_field "$server" "remote_repo")
+        # Try to find servers from history first
+        local found_in_history=false
+        local assignments_csv=""
+        while IFS=$'\t' read -r rn ac st ts br; do
+            if [[ "$rn" == "$target_run" ]]; then
+                found_in_history=true
+                assignments_csv="$ac"
+                break
+            fi
+        done < <(_get_history_runs "all")
 
-        echo "── $server ──"
-
-        # Find latest results directory
-        # shellcheck disable=SC2029
-        local latest
-        latest=$(ssh -o ConnectTimeout=5 "$ssh_host" \
-            "ls -td $remote_repo/results/*/ 2>/dev/null | head -1" 2>/dev/null || echo "")
-
-        if [[ -z "$latest" ]]; then
-            echo "  No results found."
-            echo ""
-            continue
-        fi
-
-        local dirname
-        dirname=$(basename "$latest")
-        echo "  Latest: $dirname"
-
-        if [[ "$local_mode" == true ]]; then
-            # Merge into single local dir (same run_name from different servers)
-            local local_dst="./results/${dirname}"
-            echo "  rsync → $local_dst  (from $server)"
-            mkdir -p "$local_dst"
-            rsync -avz --progress "$ssh_host:$latest" "$local_dst/"
+        local collected=false
+        if [[ "$found_in_history" == true ]]; then
+            for server in $(_servers_from_assignments "$assignments_csv"); do
+                if _collect_run_from_server "$server" "$target_run" "$local_mode" "$gdrive_remote"; then
+                    collected=true
+                fi
+            done
         else
-            # Upload to single GDrive folder (same run_name)
-            local gdrive_dst="${gdrive_remote}/${dirname}"
-            echo "  rclone → $gdrive_dst  (from $server)"
-            # shellcheck disable=SC2029
-            ssh "$ssh_host" "rclone copy '$latest' '$gdrive_dst' -P"
+            echo "  (not in history — searching all servers)"
+            for server in $(list_servers); do
+                if _collect_run_from_server "$server" "$target_run" "$local_mode" "$gdrive_remote"; then
+                    collected=true
+                fi
+            done
         fi
 
-        echo ""
-    done
+        if [[ "$collected" == true ]]; then
+            _mark_collected "$target_run"
+            echo ""
+            echo "Done. Marked as collected."
+        else
+            echo ""
+            echo "No results found for '$target_run' on any server."
+        fi
+        return
+    fi
 
-    echo "Done."
+    # Case 2: Collect from history (pending or all)
+    if [[ ! -f "$HISTORY_FILE" ]]; then
+        echo "  No deploy history. Run './deploy.sh run' first,"
+        echo "  or specify a run name: ./deploy.sh collect <run_name>"
+        return
+    fi
+
+    local run_count=0
+    local collected_count=0
+    while IFS=$'\t' read -r rn asgn_csv st ts br; do
+        run_count=$((run_count + 1))
+        echo "── $rn ($st) ──"
+
+        local run_collected=false
+        for server in $(_servers_from_assignments "$asgn_csv"); do
+            if _collect_run_from_server "$server" "$rn" "$local_mode" "$gdrive_remote"; then
+                run_collected=true
+            fi
+        done
+
+        if [[ "$run_collected" == true ]]; then
+            _mark_collected "$rn"
+            collected_count=$((collected_count + 1))
+        else
+            echo "    (no results found on any server)"
+        fi
+        echo ""
+    done < <(_get_history_runs "$filter")
+
+    if [[ "$run_count" -eq 0 ]]; then
+        if [[ "$filter" == "pending" ]]; then
+            echo "  No pending runs to collect."
+            echo "  Use --all to re-collect previously collected runs,"
+            echo "  or --list to see deploy history."
+        else
+            echo "  No runs in history."
+        fi
+    else
+        echo "Done. Collected $collected_count / $run_count run(s)."
+    fi
 }
 
 # ========================= Servers =========================
@@ -671,9 +866,12 @@ Monitor:
   ./deploy.sh attach server-a       # 세션 목록 보기
   ./deploy.sh logs server-a sfl     # sfl 로그 파일 tail
 
-Other:
-  ./deploy.sh collect              # Google Drive 업로드
-  ./deploy.sh collect --local      # 로컬 rsync
+Collect:
+  ./deploy.sh collect              # pending 실행 결과 수집 (GDrive)
+  ./deploy.sh collect --local      # pending 실행 결과 수집 (로컬 rsync)
+  ./deploy.sh collect <run_name>   # 특정 실행 결과 수집
+  ./deploy.sh collect --all        # 모든 실행 결과 재수집 (collected 포함)
+  ./deploy.sh collect --list       # 배포 이력 보기
 
 Setup:
   1. Edit deploy_servers.json with your server details

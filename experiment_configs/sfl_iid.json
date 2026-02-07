@@ -1,0 +1,8 @@
+{
+  "_description": "SFL-IID: base Split Federated Learning with IID (uniform) data distribution.",
+
+  "selector": "uniform",
+  "aggregator": "fedavg",
+  "server_model_aggregation": false,
+  "distributer": "uniform"
+}
