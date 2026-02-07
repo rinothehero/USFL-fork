@@ -17,28 +17,50 @@ REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 cd "$REPO_ROOT"
 
-# Source shell profile to get conda in PATH (tmux non-login shells skip this)
-for rc in "$HOME/.bash_profile" "$HOME/.bashrc" "$HOME/.profile"; do
-    if [ -f "$rc" ]; then
-        source "$rc" 2>/dev/null || true
-        break
-    fi
-done
+# Conda activation
+# Note: ~/.bashrc often has "if not interactive, return" guard at the top,
+# so sourcing it from a script won't reach the conda init block.
+# Instead, we directly source conda's init script or find the binary.
+_conda_found=false
 
-# Conda activation (supports both conda and mamba)
+# Method 1: conda already in PATH
 if command -v conda &>/dev/null; then
-    eval "$(conda shell.bash hook)"
-    conda activate "$CONDA_ENV"
-elif command -v mamba &>/dev/null; then
+    _conda_found=true
+fi
+
+# Method 2: source conda.sh directly (bypasses bashrc interactive guard)
+if [ "$_conda_found" = false ]; then
+    for conda_prefix in \
+        "$HOME/anaconda3" \
+        "$HOME/miniconda3" \
+        "$HOME/miniforge3" \
+        "/opt/conda" \
+        "$HOME/.conda"; do
+        if [ -f "$conda_prefix/etc/profile.d/conda.sh" ]; then
+            source "$conda_prefix/etc/profile.d/conda.sh"
+            _conda_found=true
+            break
+        fi
+    done
+fi
+
+# Method 3: mamba
+if [ "$_conda_found" = false ] && command -v mamba &>/dev/null; then
     eval "$(mamba shell.bash hook)"
     mamba activate "$CONDA_ENV"
-else
+    _conda_found=true
+fi
+
+if [ "$_conda_found" = false ]; then
     echo "Error: conda/mamba not found"
-    echo "  Searched: conda, mamba"
-    echo "  Sourced:  ~/.bash_profile, ~/.bashrc, ~/.profile"
-    echo "  PATH:     $PATH"
+    echo "  Searched: conda in PATH, ~/anaconda3, ~/miniconda3, ~/miniforge3, /opt/conda"
+    echo "  PATH: $PATH"
     exit 1
 fi
+
+eval "$(conda shell.bash hook)"
+conda activate "$CONDA_ENV"
+unset _conda_found
 
 echo ""
 echo "=========================================="
