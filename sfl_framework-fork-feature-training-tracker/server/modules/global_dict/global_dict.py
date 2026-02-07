@@ -159,18 +159,33 @@ class GlobalDict:
             drift_history = None
             if drift_measurements:
                 drift_history = {
+                    # Client metrics (full names)
+                    "G_drift_client": [m["params"].get("G_drift_client", 0.0) for m in drift_measurements],
+                    "G_drift_client_stepweighted": [m["params"].get("G_drift_client_stepweighted") for m in drift_measurements],
+                    "G_end_client": [m["params"].get("G_end_client", 0.0) for m in drift_measurements],
+                    "G_end_client_weighted": [m["params"].get("G_end_client_weighted") for m in drift_measurements],
+                    "G_drift_norm_client": [m["params"].get("G_drift_norm_client", 0.0) for m in drift_measurements],
+                    "delta_client_norm_sq": [m["params"].get("delta_client_norm_sq", 0.0) for m in drift_measurements],
+                    "D_dir_client_weighted": [m["params"].get("D_dir_client_weighted") for m in drift_measurements],
+                    "D_rel_client_weighted": [m["params"].get("D_rel_client_weighted") for m in drift_measurements],
+                    # Server metrics
+                    "G_drift_server": [m["params"].get("G_drift_server", 0.0) for m in drift_measurements],
+                    "G_end_server": [m["params"].get("G_end_server", 0.0) for m in drift_measurements],
+                    "G_drift_norm_server": [m["params"].get("G_drift_norm_server", 0.0) for m in drift_measurements],
+                    "delta_server_norm_sq": [m["params"].get("delta_server_norm_sq", 0.0) for m in drift_measurements],
+                    # Combined
+                    "G_drift_total": [m["params"].get("G_drift_total", 0.0) for m in drift_measurements],
+                    "G_end_total": [m["params"].get("G_end_total", 0.0) for m in drift_measurements],
+                    # Legacy compatibility (client-only aliases)
                     "G_drift": [m["params"].get("G_drift", 0.0) for m in drift_measurements],
                     "G_end": [m["params"].get("G_end", 0.0) for m in drift_measurements],
                     "G_drift_norm": [m["params"].get("G_drift_norm", 0.0) for m in drift_measurements],
                     "delta_global_norm_sq": [m["params"].get("delta_global_norm_sq", 0.0) for m in drift_measurements],
+                    # Update alignment
                     "A_cos": [m["params"].get("A_cos") for m in drift_measurements],
                     "M_norm": [m["params"].get("M_norm") for m in drift_measurements],
                     "n_valid_alignment": [m["params"].get("n_valid_alignment") for m in drift_measurements],
-                    # Extra comparison metrics (may be missing on older runs)
-                    "G_drift_client_stepweighted": [m["params"].get("G_drift_client_stepweighted") for m in drift_measurements],
-                    "G_end_client_weighted": [m["params"].get("G_end_client_weighted") for m in drift_measurements],
-                    "D_dir_client_weighted": [m["params"].get("D_dir_client_weighted") for m in drift_measurements],
-                    "D_rel_client_weighted": [m["params"].get("D_rel_client_weighted") for m in drift_measurements],
+                    # Per-round details
                     "per_round": [m["params"] for m in drift_measurements],
                 }
 
