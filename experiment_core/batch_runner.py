@@ -41,6 +41,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -92,14 +93,25 @@ def _build_single_spec(
     return spec
 
 
+def _tee_output(proc: subprocess.Popen, name: str, log_path: Path) -> None:
+    """파이프에서 읽어 파일 + stdout 양쪽에 출력 (백그라운드 스레드)."""
+    with open(log_path, "w", encoding="utf-8") as fh:
+        assert proc.stdout is not None
+        for line in iter(proc.stdout.readline, ""):
+            fh.write(line)
+            fh.flush()
+            sys.stdout.write(f"[{name}] {line}")
+            sys.stdout.flush()
+
+
 def _run_one(
     spec: Dict[str, Any],
     name: str,
     gpu: Optional[int],
     repo_root: Path,
     log_dir: Path,
-) -> subprocess.Popen:
-    """단일 실험을 subprocess로 시작. Popen 객체 반환."""
+) -> Dict[str, Any]:
+    """단일 실험을 subprocess로 시작. proc + tee 스레드 반환."""
     # spec을 임시 파일로 저장
     spec_path = log_dir / f"{name}.spec.json"
     spec_path.write_text(json.dumps(spec, indent=2), encoding="utf-8")
@@ -115,15 +127,21 @@ def _run_one(
         env["CUDA_VISIBLE_DEVICES"] = str(gpu)
 
     log_file = log_dir / f"{name}.log"
-    fh = open(log_file, "w", encoding="utf-8")
 
     proc = subprocess.Popen(
         cmd, env=env,
-        stdout=fh, stderr=subprocess.STDOUT,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         cwd=str(repo_root),
+        text=True, bufsize=1,
     )
 
-    return proc
+    tee_thread = threading.Thread(
+        target=_tee_output, args=(proc, name, log_file),
+        daemon=True,
+    )
+    tee_thread.start()
+
+    return {"proc": proc, "thread": tee_thread}
 
 
 def run_batch(batch_spec_path: str, repo_root: Path) -> None:
@@ -157,10 +175,10 @@ def run_batch(batch_spec_path: str, repo_root: Path) -> None:
         gpu = exp.get("gpu")
         spec = _build_single_spec(common, exp, output_dir)
 
-        proc = _run_one(spec, name, gpu, repo_root, log_dir)
+        handle = _run_one(spec, name, gpu, repo_root, log_dir)
         gpu_str = f"GPU {gpu}" if gpu is not None else "CPU"
-        print(f"  [{name}] started (PID={proc.pid}, {gpu_str})")
-        procs.append({"name": name, "proc": proc, "gpu": gpu, "start": time.time()})
+        print(f"  [{name}] started (PID={handle['proc'].pid}, {gpu_str})")
+        procs.append({"name": name, "gpu": gpu, "start": time.time(), **handle})
 
     print()
     print("[batch_runner] Waiting for all experiments to finish...")
@@ -171,6 +189,7 @@ def run_batch(batch_spec_path: str, repo_root: Path) -> None:
     for item in procs:
         proc = item["proc"]
         proc.wait()
+        item["thread"].join(timeout=5)
         elapsed = time.time() - item["start"]
         status = "OK" if proc.returncode == 0 else f"FAIL (exit={proc.returncode})"
         results.append({
