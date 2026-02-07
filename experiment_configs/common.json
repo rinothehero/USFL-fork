@@ -1,12 +1,73 @@
 {
+  "_description": "Common parameters shared across all 5 methods (SFL, USFL, SCAFFOLD, GAS, MultiSFL).",
+
+  "_dataset": "cifar10 | fmnist | mnist | cinic | cifar100 | svhn",
   "dataset": "cifar10",
+
+  "_model": "resnet18_flex | resnet18 | resnet18_image_style | alexnet | vgg11 | distilbert",
   "model": "resnet18_flex",
+
+  "_rounds": "Total global communication rounds.",
   "rounds": 100,
+
+  "_alpha": "Dirichlet concentration. Lower = more Non-IID. (0.1: extreme, 0.3: moderate, 10.0: near-IID)",
   "alpha": 0.3,
+
+  "_labels_per_client": "Number of distinct classes each client holds (shard_dirichlet distributer).",
   "labels_per_client": 2,
+
   "total_clients": 100,
   "clients_per_round": 10,
   "local_epochs": 5,
   "learning_rate": 0.001,
-  "split_layer": "layer2"
+
+  "_split_layer": "Model split point. e.g. layer1 | layer1.1.bn2 | layer2 (ResNet18).",
+  "split_layer": "layer2",
+
+  "_section_training": "=== Training Options (shared across frameworks) ===",
+
+  "_weight_decay": "L2 regularization. Currently supported by GAS only; SFL/MultiSFL ignore.",
+  "weight_decay": 0.0,
+
+  "_clip_grad": "Enable gradient clipping. Supported by GAS and MultiSFL; SFL ignores.",
+  "clip_grad": false,
+
+  "_clip_grad_max_norm": "Max norm for gradient clipping (used when clip_grad is true).",
+  "clip_grad_max_norm": 10.0,
+
+  "_use_sfl_transform": "true: ToTensor-only (no augment) | false: standard augmentation. Supported by GAS/MultiSFL.",
+  "use_sfl_transform": false,
+
+  "_use_torchvision_init": "Load torchvision ResNet18 weights for split model init. Supported by GAS/MultiSFL.",
+  "use_torchvision_init": false,
+
+  "_use_full_epochs": "true: iterate entire dataset per round | false: fixed local_epochs steps. Supported by GAS/MultiSFL.",
+  "use_full_epochs": false,
+
+  "_section_g": "=== G Measurement (gradient dissimilarity) ===",
+
+  "_enable_g_measurement": "Enable 3-perspective G measurement (client/server/split).",
+  "enable_g_measurement": true,
+
+  "_g_measurement_mode": "single: 1st step only | k_batch: first K batches | accumulated: full round average.",
+  "g_measurement_mode": "single",
+
+  "_g_measurement_k": "Number of batches to collect in k_batch mode.",
+  "g_measurement_k": 5,
+
+  "_use_variance_g": "true: variance-based G (std of per-client scores) | false: distance-based (default).",
+  "use_variance_g": false,
+
+  "_g_measure_frequency": "Measure G every N rounds. All frameworks use frequency-based timing.",
+  "g_measure_frequency": 10,
+
+  "_g_oracle_mode": "global: single global model oracle | individual: per-model oracle then average.",
+  "g_oracle_mode": "global",
+
+  "_section_drift": "=== Drift Measurement (SCAFFOLD-style client trajectory tracking) ===",
+
+  "enable_drift_measurement": true,
+
+  "_drift_sample_interval": "Accumulate drift every N local steps. 1 = every step.",
+  "drift_sample_interval": 1
 }

@@ -176,9 +176,7 @@ class Config:
     #  G MEASUREMENT OPTIONS
     # ==================
     enable_g_measurement: bool  # Enable gradient dissimilarity (G) measurement
-    diagnostic_rounds: (
-        str  # Comma-separated list of rounds to run G measurement (e.g., "1,3,5")
-    )
+    g_measure_frequency: int  # Measure G every N rounds (frequency-based)
     use_variance_g: bool
     oracle_batch_size: Optional[int]
     g_measurement_mode: str  # "single" (1-step) | "k_batch" (first K batches) | "accumulated" (full round average)
@@ -360,7 +358,7 @@ def parse_args(custom_args=None):
 
     parser.add_argument(
         "-slr",
-        "--server_learning_rate",
+        "--server-learning-rate",
         help="Server model learning rate (default: learning_rate * num_clients_per_round)",
         action="store",
         type=float,
@@ -824,15 +822,15 @@ def parse_args(custom_args=None):
 
     parser.add_argument(
         "-gs",
-        "--gradieng-shuffle",
-        help="Enable gradieng shuffle (default: enabled)",
+        "--gradient-shuffle",
+        help="Enable gradient shuffle (default: enabled)",
         action="store_true",
         dest="gradient_shuffle",
     )
 
     parser.add_argument(
         "-ngs",
-        "--no-gradieng-shuffle",
+        "--no-gradient-shuffle",
         help="Disable gradieng shuffle (default: enabled)",
         action="store_false",
         dest="gradient_shuffle",
@@ -1046,11 +1044,11 @@ def parse_args(custom_args=None):
         dest="enable_g_measurement",
     )
     parser.add_argument(
-        "--diagnostic-rounds",
-        help="Comma-separated list of rounds to run G measurement (e.g., '1,3,5')",
-        type=str,
-        default="1,3,5",
-        dest="diagnostic_rounds",
+        "--g-measure-frequency",
+        help="Measure G every N rounds (frequency-based, default: 10)",
+        type=int,
+        default=10,
+        dest="g_measure_frequency",
     )
     parser.add_argument(
         "--use-variance-g",

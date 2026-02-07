@@ -11,6 +11,10 @@ def _str_bool(v: bool) -> str:
     return "true" if v else "false"
 
 
+# Unified g_oracle_mode → MultiSFL oracle_mode
+_ORACLE_MODE_TO_MSFL = {"global": "master", "individual": "branch"}
+
+
 class MultiSFLAdapter(FrameworkAdapter):
     name = "multisfl"
 
@@ -52,13 +56,40 @@ class MultiSFLAdapter(FrameworkAdapter):
             "--split_layer", str(common["split_layer"]),
             "--enable_drift_measurement", _str_bool(bool(common.get("drift", {}).get("enabled", False))),
             "--drift_sample_interval", str(common.get("drift", {}).get("sample_interval", 1)),
-            "--enable_g_measurement", _str_bool(bool(overrides.get("enable_g_measurement", False))),
-            "--g_measurement_mode", str(overrides.get("g_measurement_mode", "single")),
-            "--g_measurement_k", str(overrides.get("g_measurement_k", 5)),
+            "--enable_g_measurement", _str_bool(bool(common.get("enable_g_measurement", False))),
+            "--g_measure_frequency", str(common.get("g_measure_frequency", 10)),
+            "--g_measurement_mode", str(common.get("g_measurement_mode", "single")),
+            "--g_measurement_k", str(common.get("g_measurement_k", 5)),
+            "--use_variance_g", _str_bool(bool(common.get("use_variance_g", False))),
+            "--oracle_mode", _ORACLE_MODE_TO_MSFL.get(
+                str(common.get("g_oracle_mode", "global")), "master"
+            ),
+            # Master pull
+            "--alpha_master_pull", str(overrides.get("alpha_master_pull", 0.1)),
+            # Sampling proportion scheduler
+            "--p_update", str(overrides.get("p_update", "abs_ratio")),
+            "--p0", str(overrides.get("p0", 0.01)),
+            "--p_min", str(overrides.get("p_min", 0.01)),
+            "--p_max", str(overrides.get("p_max", 0.5)),
+            "--gamma", str(overrides.get("gamma", 0.5)),
+            "--delta_clip", str(overrides.get("delta_clip", 0.2)),
+            "--eps", str(overrides.get("eps", 1e-12)),
+            # Replay
+            "--replay_budget_mode", str(overrides.get("replay_budget_mode", "local_dataset")),
+            "--replay_min_total", str(overrides.get("replay_min_total", 0)),
+            "--max_assistant_trials", str(overrides.get("max_assistant_trials", 20)),
+            # Gradient clipping (from common)
+            "--clip_grad", _str_bool(bool(common.get("clip_grad", False))),
+            "--clip_grad_max_norm", str(common.get("clip_grad_max_norm", 10.0)),
+            # Transforms & init (from common)
+            "--use_sfl_transform", _str_bool(bool(common.get("use_sfl_transform", False))),
+            "--use_torchvision_init", _str_bool(bool(common.get("use_torchvision_init", False))),
         ]
 
         if overrides.get("branches") is not None:
             cmd.extend(["--branches", str(overrides["branches"])])
+        if common.get("use_full_epochs", False):
+            cmd.append("--use-full-epochs")
 
         extra = overrides.get("extra_cli", [])
         cmd.extend([str(x) for x in extra])

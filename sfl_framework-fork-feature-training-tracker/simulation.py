@@ -160,7 +160,7 @@ if __name__ == "__main__":
         "server_model_aggregation": "false",
         "split_strategy": "layer_name",
         "use_additional_epoch": "false",
-        "diagnostic_rounds": "10,20,30,40,50,60,70,80,90,100,110,120,130,140,150,160,170,180,190,200,210,220,230,240,250,260,270,280,290,300",
+        "g_measure_frequency": "10",
         "enable_g_measurement": "false",
         "use_cumulative_usage": "false",
         "usage_decay_factor": "0.95",
@@ -448,7 +448,7 @@ if __name__ == "__main__":
         BALANCING_STRATEGY = workload.get("balancing_strategy", None)
         BALANCING_TARGET = workload.get("balancing_target", None)
         ENABLE_G_MEASUREMENT = workload.get("enable_g_measurement", None)
-        DIAGNOSTIC_ROUNDS = workload.get("diagnostic_rounds", None)
+        G_MEASURE_FREQUENCY = workload.get("g_measure_frequency", None)
         ENABLE_CONCATENATION = workload.get("enable_concatenation", None)
         ENABLE_LOGIT_ADJUSTMENT = workload.get("enable_logit_adjustment", None)
         MIN_REQUIRE_SIZE = workload.get("min_require_size", None)
@@ -549,8 +549,8 @@ if __name__ == "__main__":
             server_command.extend(["-btarget", BALANCING_TARGET])
         if ENABLE_G_MEASUREMENT and ENABLE_G_MEASUREMENT.lower() == "true":
             server_command.extend(["--enable-g-measurement"])
-        if DIAGNOSTIC_ROUNDS:
-            server_command.extend(["--diagnostic-rounds", DIAGNOSTIC_ROUNDS])
+        if G_MEASURE_FREQUENCY:
+            server_command.extend(["--g-measure-frequency", G_MEASURE_FREQUENCY])
         if ENABLE_CONCATENATION and ENABLE_CONCATENATION.lower() == "true":
             server_command.extend(["-ec"])
         if ENABLE_LOGIT_ADJUSTMENT and ENABLE_LOGIT_ADJUSTMENT.lower() == "true":

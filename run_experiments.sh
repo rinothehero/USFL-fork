@@ -227,8 +227,7 @@ echo ""
 # ========================= Generate batch_spec.json & run =========================
 BATCH_SPEC="$OUTPUT_DIR/batch_spec.json"
 
-# Build methods list and GPU map as JSON for Python
-METHODS_JSON=$(printf '"%s",' "${METHODS[@]}" | sed 's/,$//')
+# Build GPU map as JSON
 GPU_JSON="{"
 for method in "${METHODS[@]}"; do
     gpu="${GPU_MAP[$method]}"
@@ -240,117 +239,14 @@ for method in "${METHODS[@]}"; do
 done
 GPU_JSON="${GPU_JSON%,}}"
 
-python3 << PYEOF
-import json, os, shutil
-
-common_file = "$COMMON_FILE"
-temp_dir = "$TEMP_DIR"
-output_dir = "$OUTPUT_DIR"
-batch_spec_path = "$BATCH_SPEC"
-methods = [$METHODS_JSON]
-gpu_map = $GPU_JSON
-
-with open(common_file) as f:
-    cr = json.load(f)
-
-# Build unified common spec from common.json
-common = {
-    'dataset': cr.get('dataset', 'cifar10'),
-    'model': cr.get('model', 'resnet18_flex'),
-    'seed': cr.get('seed', 42),
-    'rounds': cr.get('rounds', 100),
-    'total_clients': cr.get('total_clients', 100),
-    'clients_per_round': cr.get('clients_per_round', 10),
-    'local_epochs': cr.get('local_epochs', 5),
-    'client_batch_size': cr.get('batch_size', 50),
-    'server_batch_size': cr.get('server_batch_size', 500),
-    'learning_rate': cr.get('learning_rate', 0.001),
-    'momentum': cr.get('momentum', 0.0),
-    'device': 'cuda',
-    'split_layer': cr.get('split_layer', 'layer1.1.bn2'),
-    'distribution': {
-        'mode': 'shard_dirichlet',
-        'dirichlet_alpha': cr.get('alpha', 0.3),
-        'labels_per_client': cr.get('labels_per_client', 2),
-        'min_require_size': cr.get('min_require_size', 10),
-    },
-    'drift': {'enabled': True, 'sample_interval': 1},
-}
-
-FRAMEWORK_MAP = {
-    'sfl': 'sfl', 'usfl': 'sfl', 'scaffold': 'sfl',
-    'gas': 'gas', 'multisfl': 'multisfl',
-}
-METHOD_NAME_MAP = {
-    'sfl': 'sfl', 'usfl': 'usfl', 'scaffold': 'scaffold_sfl',
-    'gas': 'gas', 'multisfl': 'multisfl',
-}
-
-# SFL adapter: these go as top-level framework_overrides
-SFL_TOP_KEYS = {'selector', 'aggregator'}
-# SFL adapter: these flags use store_true (just need the flag, no value)
-STORE_TRUE_FLAGS = {
-    'gradient-shuffle', 'gradient_shuffle',
-    'use-dynamic-batch-scheduler', 'use_dynamic_batch_scheduler',
-    'use-fresh-scoring', 'use_fresh_scoring',
-    'use-cumulative-usage', 'use_cumulative_usage',
-}
-
-def build_overrides(method, cfg):
-    cfg = {k: v for k, v in cfg.items() if not k.startswith('_')}
-    fw = FRAMEWORK_MAP[method]
-
-    if fw == 'sfl':
-        overrides = {}
-        sfl_args = {}
-        for k, v in cfg.items():
-            if k in SFL_TOP_KEYS:
-                overrides[k] = v
-            else:
-                cli_key = k.replace('_', '-')
-                # store_true flags: keep as Python bool
-                # str_to_bool flags: convert bool -> string
-                if isinstance(v, bool) and cli_key not in STORE_TRUE_FLAGS:
-                    v = str(v).lower()
-                sfl_args[cli_key] = v
-        if sfl_args:
-            overrides['sfl_args'] = sfl_args
-        return overrides
-    else:
-        return cfg
-
-experiments = []
-for method in methods:
-    cfg_path = os.path.join(temp_dir, f"{method}.json")
-    with open(cfg_path) as f:
-        method_cfg = json.load(f)
-
-    exp = {
-        'name': method,
-        'framework': FRAMEWORK_MAP[method],
-        'method': METHOD_NAME_MAP[method],
-        'gpu': gpu_map.get(method),
-        'overrides': build_overrides(method, method_cfg),
-    }
-    experiments.append(exp)
-
-batch = {
-    'output_dir': output_dir,
-    'common': common,
-    'experiments': experiments,
-}
-
-with open(batch_spec_path, 'w') as f:
-    json.dump(batch, f, indent=2)
-
-print(f"Generated: {batch_spec_path}")
-
-# Save per-method configs for reference
-for method in methods:
-    src = os.path.join(temp_dir, f"{method}.json")
-    dst = os.path.join(output_dir, f"{method}_config.json")
-    shutil.copy2(src, dst)
-PYEOF
+python3 -m experiment_core.generate_spec \
+    --config-dir "$CONFIG_DIR" \
+    --methods "${METHODS[@]}" \
+    --gpu-map "$GPU_JSON" \
+    --output "$BATCH_SPEC" \
+    --output-dir "$OUTPUT_DIR" \
+    --method-configs-dir "$TEMP_DIR" \
+    --copy-configs-to "$OUTPUT_DIR"
 
 echo ""
 

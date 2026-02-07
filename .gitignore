@@ -8,3 +8,5 @@
 git-ai
 !experiment_configs/*.json
 !experiment_configs/**/*.json
+!deploy_servers.json
+data/

@@ -11,6 +11,10 @@ def _b(value: bool) -> str:
     return "true" if value else "false"
 
 
+# Unified g_oracle_mode → GAS g_measure_mode
+_ORACLE_MODE_TO_GAS = {"global": "strict", "individual": "realistic"}
+
+
 # GAS only supports these models.  Map unified spec names → GAS internal names.
 _GAS_MODEL_MAP: Dict[str, str] = {
     "resnet18": "resnet18",
@@ -70,6 +74,20 @@ class GASAdapter(FrameworkAdapter):
             "GAS_SEED": str(common["seed"]),
             "GAS_DRIFT_MEASUREMENT": _b(bool(common.get("drift", {}).get("enabled", False))),
             "GAS_DRIFT_SAMPLE_INTERVAL": str(common.get("drift", {}).get("sample_interval", 1)),
+            "GAS_G_MEASUREMENT": _b(bool(common.get("enable_g_measurement", False))),
+            "GAS_G_MEASUREMENT_ACCUMULATION": str(common.get("g_measurement_mode", "single")),
+            "GAS_G_MEASUREMENT_K": str(common.get("g_measurement_k", 5)),
+            "GAS_USE_VARIANCE_G": _b(bool(common.get("use_variance_g", False))),
+            "GAS_G_MEASURE_FREQUENCY": str(common.get("g_measure_frequency", 10)),
+            "GAS_G_MEASURE_MODE": _ORACLE_MODE_TO_GAS.get(
+                str(common.get("g_oracle_mode", "global")), "strict"
+            ),
+            "GAS_CLIP_GRAD": _b(bool(common.get("clip_grad", False))),
+            "GAS_CLIP_GRAD_MAX_NORM": str(common.get("clip_grad_max_norm", 10.0)),
+            "GAS_WEIGHT_DECAY": str(common.get("weight_decay", 0.0)),
+            "GAS_USE_SFL_TRANSFORM": _b(bool(common.get("use_sfl_transform", False))),
+            "GAS_USE_TORCHVISION_INIT": _b(bool(common.get("use_torchvision_init", False))),
+            "GAS_USE_FULL_EPOCHS": _b(bool(common.get("use_full_epochs", False))),
         }
 
         # Apply distribution mode flags
@@ -93,7 +111,7 @@ class GASAdapter(FrameworkAdapter):
         cmd = [str(execution.get("python", "python")), "GAS_main.py"]
 
         # Preserve existing GAS behavior: first positional arg toggles variance G mode
-        use_variance_g = bool(spec.get("framework_overrides", {}).get("use_variance_g", False))
+        use_variance_g = bool(spec.get("common", {}).get("use_variance_g", False))
         cmd.append("true" if use_variance_g else "false")
 
         gas_flags = spec.get("framework_overrides", {}).get("gas_flags", [])

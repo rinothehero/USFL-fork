@@ -143,6 +143,7 @@ user_parti_num = _env_int("GAS_CLIENTS_PER_ROUND", user_parti_num)
 lr = _env_float("GAS_LR", lr)
 momentum = _env_float("GAS_MOMENTUM", momentum)
 split_layer = _env_str("GAS_SPLIT_LAYER", split_layer)
+weight_decay = _env_float("GAS_WEIGHT_DECAY", weight_decay)
 
 # Random seeds selection
 seed_value = _env_int("GAS_SEED", 2023)
@@ -150,7 +151,8 @@ torch.manual_seed(seed_value)
 np.random.seed(seed_value)
 torch.cuda.manual_seed(seed_value)
 torch.cuda.manual_seed_all(seed_value)
-clip_grad = True
+clip_grad = _env_bool("GAS_CLIP_GRAD", True)
+clip_grad_max_norm = _env_float("GAS_CLIP_GRAD_MAX_NORM", 10.0)
 
 # Feature: Use Full Epochs (like sfl-framework)
 use_full_epochs = _env_bool("GAS_USE_FULL_EPOCHS", False)
@@ -163,6 +165,11 @@ Sample_Frequency = 1  # Sampling frequency
 V_Test = True  # Calculate Gradient Dissimilarity
 V_Test_Frequency = 1
 Accu_Test_Frequency = 1
+Generate = _env_bool("GAS_GENERATE", Generate)
+Sample_Frequency = _env_int("GAS_SAMPLE_FREQUENCY", Sample_Frequency)
+V_Test = _env_bool("GAS_V_TEST", V_Test)
+V_Test_Frequency = _env_int("GAS_V_TEST_FREQUENCY", V_Test_Frequency)
+Accu_Test_Frequency = _env_int("GAS_ACCU_TEST_FREQUENCY", Accu_Test_Frequency)
 num_label = 100 if cifar100 else 10
 
 # G Measurement Settings (USFL-style 3-perspective)
@@ -171,6 +178,11 @@ G_Measure_Frequency = 10  # Diagnostic round frequency (every N epochs)
 G_Measure_Mode = "strict"  # 'strict' (Global Model) or 'realistic' (Individual Models)
 G_Measurement_Accumulation = "single"  # "single" (1-step) | "k_batch" (first K) | "accumulated" (full round)
 G_Measurement_K = 5  # Number of batches for k_batch mode
+G_Measurement = _env_bool("GAS_G_MEASUREMENT", G_Measurement)
+G_Measure_Frequency = _env_int("GAS_G_MEASURE_FREQUENCY", G_Measure_Frequency)
+G_Measure_Mode = _env_str("GAS_G_MEASURE_MODE", G_Measure_Mode)
+G_Measurement_Accumulation = _env_str("GAS_G_MEASUREMENT_ACCUMULATION", G_Measurement_Accumulation)
+G_Measurement_K = _env_int("GAS_G_MEASUREMENT_K", G_Measurement_K)
 
 # Drift Measurement Settings (SCAFFOLD-style client drift tracking)
 DRIFT_MEASUREMENT = _env_bool("GAS_DRIFT_MEASUREMENT", False)
@@ -197,6 +209,12 @@ if "--legacy-oracle" in sys.argv:
     USE_SFL_ORACLE = False
 
 USE_TORCHVISION_INIT = "--torchvision-init" in sys.argv
+
+# Env var overrides (highest priority, override CLI args)
+USE_VARIANCE_G = _env_bool("GAS_USE_VARIANCE_G", USE_VARIANCE_G)
+USE_SFL_TRANSFORM = _env_bool("GAS_USE_SFL_TRANSFORM", USE_SFL_TRANSFORM)
+USE_SFL_ORACLE = _env_bool("GAS_USE_SFL_ORACLE", USE_SFL_ORACLE)
+USE_TORCHVISION_INIT = _env_bool("GAS_USE_TORCHVISION_INIT", USE_TORCHVISION_INIT)
 
 # Simulate real communication environments
 WRTT = True  # True for simulation, False for no simulation
@@ -886,6 +904,7 @@ _intermediate_config = {
     "momentum": momentum,
     "weight_decay": weight_decay,
     "clip_grad": clip_grad,
+    "clip_grad_max_norm": clip_grad_max_norm,
     "iid": iid,
     "dirichlet": dirichlet,
     "label_dirichlet": label_dirichlet,
@@ -997,7 +1016,7 @@ while epoch != epochs:
     optimizer_down.zero_grad()
     localLoss.backward()
     if clip_grad:
-        torch.nn.utils.clip_grad_norm_(parameters=user_model.parameters(), max_norm=10)
+        torch.nn.utils.clip_grad_norm_(parameters=user_model.parameters(), max_norm=clip_grad_max_norm)
 
     if g_measure_state is not None and g_measure_state["active"]:
         batch_size = labels.size(0)
@@ -1149,7 +1168,7 @@ while epoch != epochs:
         loss.backward()
         if clip_grad:
             torch.nn.utils.clip_grad_norm_(
-                parameters=server_model.parameters(), max_norm=10
+                parameters=server_model.parameters(), max_norm=clip_grad_max_norm
             )
 
         if g_measure_state is not None and g_measure_state["active"]:

@@ -1,0 +1,30 @@
+{
+  "_instructions": "Fill in your GPU server details below. This file is gitignored (personal config).",
+  "servers": {
+    "xsailor4": {
+      "ssh_host": "xsailor4-pj",
+      "remote_repo": "/home/xsailor4/jhkang/USFL-fork",
+      "conda_env": "usfl_env",
+      "gpus": [
+        0,
+        1,
+        2,
+        3
+      ]
+    },
+    "xsailor5": {
+      "ssh_host": "xsailor5-pj",
+      "remote_repo": "/home/xsailor5/jhkang/USFL-fork",
+      "conda_env": "usfl_env",
+      "gpus": [
+        0,
+        1,
+        2,
+        3
+      ]
+    }
+  },
+  "gdrive_rclone_remote": "",
+  "tmux_session": "usfl-exp",
+  "git_branch": "feat/G_drift"
+}

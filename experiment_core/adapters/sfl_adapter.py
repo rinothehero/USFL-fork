@@ -69,6 +69,17 @@ class SFLAdapter(FrameworkAdapter):
                 str(common.get("drift", {}).get("sample_interval", 1)),
             ])
 
+        if common.get("enable_g_measurement", False):
+            cmd.append("--enable-g-measurement")
+        if common.get("use_variance_g", False):
+            cmd.append("--use-variance-g")
+        if common.get("g_measurement_mode"):
+            cmd.extend(["--g-measurement-mode", str(common["g_measurement_mode"])])
+        if common.get("g_measurement_k"):
+            cmd.extend(["--g-measurement-k", str(common["g_measurement_k"])])
+        if common.get("g_measure_frequency"):
+            cmd.extend(["--g-measure-frequency", str(common["g_measure_frequency"])])
+
         sfl_overrides = spec.get("framework_overrides", {}).get("sfl_args", {})
         for k, v in sfl_overrides.items():
             flag = k if str(k).startswith("-") else f"--{k}"

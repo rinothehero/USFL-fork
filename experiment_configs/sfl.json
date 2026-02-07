@@ -1,6 +1,12 @@
 {
-  "_description": "SFL: base Split Federated Learning. No extra features.",
+  "_description": "SFL: base Split Federated Learning. No extra optimizations.",
+
+  "_selector": "Client selection: uniform | usfl | missing_class | fedcbs.",
   "selector": "uniform",
+
+  "_aggregator": "Model aggregation: fedavg | usfl | fitfl.",
   "aggregator": "fedavg",
+
+  "_server_model_aggregation": "Aggregate server-side model across clients (false for base SFL).",
   "server_model_aggregation": false
 }

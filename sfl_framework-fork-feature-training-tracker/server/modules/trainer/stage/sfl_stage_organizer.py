@@ -75,13 +75,10 @@ class SFLStageOrganizer(BaseStageOrganizer):
         self._dataset = dataset
         self.g_measurement_system = None
         if getattr(config, "enable_g_measurement", False):
-            diagnostic_rounds = getattr(config, "diagnostic_rounds", "1,3,5")
-            if isinstance(diagnostic_rounds, str):
-                diagnostic_rounds = [int(x) for x in diagnostic_rounds.split(",")]
             measurement_mode = getattr(config, "g_measurement_mode", "single")
             measurement_k = getattr(config, "g_measurement_k", 5)
             self.g_measurement_system = GMeasurementSystem(
-                diagnostic_rounds=diagnostic_rounds,
+                diagnostic_frequency=getattr(config, "g_measure_frequency", 10),
                 device=config.device,
                 use_variance_g=getattr(config, "use_variance_g", False),
                 measurement_mode=measurement_mode,

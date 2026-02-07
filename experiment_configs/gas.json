@@ -1,7 +1,29 @@
 {
-  "_description": "GAS: gradient quality-based client selection.",
-  "use_variance_g": false,
-  "use_full_epochs": false,
-  "use_sfl_transform": false,
-  "torchvision_init": false
+  "_description": "GAS: gradient quality-based client selection with activation generation.",
+  "_note": "Shared params (clip_grad, weight_decay, use_sfl_transform, use_torchvision_init, use_full_epochs, g_measure_frequency, g_oracle_mode) are in common.json.",
+
+  "_section_mode": "=== GAS Mode Flags ===",
+
+  "_use_sfl_oracle": "true: SFL oracle (full model) for G computation | false: legacy oracle.",
+  "use_sfl_oracle": true,
+
+  "_use_resnet_image_style": "true: ImageNet-style ResNet stem (7x7 conv + maxpool) | false: CIFAR-style (3x3 conv).",
+  "use_resnet_image_style": true,
+
+  "_section_gen": "=== Activation Generation & V-Test ===",
+
+  "_generate": "Enable synthetic activation generation for non-IID balancing.",
+  "generate": true,
+
+  "_sample_frequency": "Activation sampling frequency (every N rounds).",
+  "sample_frequency": 1,
+
+  "_v_test": "Compute V-value (gradient dissimilarity metric) for client ranking.",
+  "v_test": true,
+
+  "_v_test_frequency": "V-value computation frequency (every N rounds).",
+  "v_test_frequency": 1,
+
+  "_accu_test_frequency": "Global accuracy evaluation frequency (every N rounds).",
+  "accu_test_frequency": 1
 }

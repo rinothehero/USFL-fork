@@ -90,7 +90,7 @@ class ServerConfig:
     split_layer: str  # Layer name for model splitting.
     # G Measurement
     enable_g_measurement: bool  # Enable gradient dissimilarity (G) measurement
-    diagnostic_rounds: str  # Comma-separated list of rounds to run G measurement
+    g_measure_frequency: int  # Measure G every N rounds (frequency-based)
     use_variance_g: bool
     oracle_batch_size: Optional[int]
     g_measurement_mode: str  # "single" (1-step) | "k_batch" (first K batches) | "accumulated" (full round average)

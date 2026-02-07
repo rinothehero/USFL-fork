@@ -779,13 +779,13 @@ class GMeasurementSystem:
 
     def __init__(
         self,
-        diagnostic_rounds: List[int] = [1, 3, 5],
+        diagnostic_frequency: int = 10,
         device: str = "cuda",
         use_variance_g: bool = False,
         measurement_mode: str = "single",  # "single" | "k_batch" | "accumulated"
         measurement_k: int = 5,  # Number of batches for k_batch mode
     ):
-        self.diagnostic_rounds = set(diagnostic_rounds)
+        self.diagnostic_frequency = diagnostic_frequency
         self.device = device
         self.use_variance_g = use_variance_g
         self.measurement_mode = measurement_mode
@@ -832,7 +832,7 @@ class GMeasurementSystem:
             print("[G Measurement] Mode: SINGLE (1-step)")
 
     def is_diagnostic_round(self, round_number: int) -> bool:
-        return round_number in self.diagnostic_rounds
+        return (round_number + 1) % self.diagnostic_frequency == 0
 
     # ============================================================
     # Accumulated / K-Batch Mode Methods

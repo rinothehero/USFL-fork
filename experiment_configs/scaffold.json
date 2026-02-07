@@ -1,7 +1,12 @@
 {
-  "_description": "SCAFFOLD-SFL: SCAFFOLD control variates on split FL.",
+  "_description": "SCAFFOLD-SFL: SCAFFOLD control variates on split FL. Control variates (c, c_i) are auto-managed internally.",
+
   "selector": "uniform",
   "aggregator": "fedavg",
+
+  "_server_model_aggregation": "Must be true for SCAFFOLD (server aggregates model updates).",
   "server_model_aggregation": true,
+
+  "_server_learning_rate": "Server-side learning rate for model aggregation step.",
   "server_learning_rate": 0.01
 }
