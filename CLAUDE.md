@@ -255,23 +255,312 @@ python run_multisfl.py \
     --local_steps 5
 ```
 
-## Deployment
+## GPU Server Deployment (deploy.sh)
 
-Distributed experiments across GPU servers are managed by `deploy.sh`:
+This section explains how to run experiments on remote GPU servers. `deploy.sh` automates the entire lifecycle: git push → SSH → experiment launch → monitoring → result collection.
 
-```bash
-./deploy.sh run usfl@server-a:0 gas@server-b:1   # Deploy experiments
-./deploy.sh status                                 # Check all servers
-./deploy.sh collect --local                        # Collect results
-./deploy.sh kill <run_name>                        # Kill a running experiment
-./deploy.sh check <run_name>                       # Check experiment status
+### Architecture Overview
+
+```
+┌─ Local Machine ─────────────────────────────────────────────────────┐
+│  experiment_configs/       deploy.sh                                │
+│  ├── common.json    ───→  1. git push                              │
+│  ├── usfl.json             2. generate_spec (per method)            │
+│  ├── gas.json              3. scp spec to server                    │
+│  └── ...                   4. SSH → tmux + remote_run.sh            │
+└──────────────────────────────────────────────────────────────────────┘
+                                    │ SSH
+                                    ▼
+┌─ GPU Server (tmux session) ──────────────────────────────────────────┐
+│  deploy/remote_run.sh                                                │
+│  ├── conda activate                                                  │
+│  └── python -m experiment_core.batch_runner --spec batch_spec.json   │
+│       └── runner.py → adapter.build_command() → subprocess           │
+│            ├── SFL:      sfl_runner.py → simulation.py (in-process)  │
+│            ├── GAS:      GAS_main.py (env vars)                      │
+│            └── MultiSFL: run_multisfl.py (CLI args)                  │
+│                                                                      │
+│  Results → results/<run_name>/                                       │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-The deployment pipeline: `deploy.sh` → SSH → `deploy/remote_run.sh` (conda activation) → `experiment_core/batch_runner.py` (batch execution) → per-experiment adapters.
+### Prerequisites
 
-Server inventory is configured in `deploy/deploy_servers.json`. Deploy history is tracked in `deploy/.deploy_history.json` (auto-generated, not tracked by git).
+**1. SSH config** — Password-less SSH to GPU servers must work:
+```bash
+# ~/.ssh/config example
+Host xsailor4-pj
+    HostName 10.0.0.4
+    User jhkang
+    IdentityFile ~/.ssh/id_ed25519
+```
+Test: `ssh xsailor4-pj "hostname"` should succeed without prompts.
 
-## Running Experiments
+**2. Server environment** — Each GPU server needs:
+- Git clone of this repo (same remote)
+- Conda environment with all dependencies installed
+- `nvidia-smi` available (for GPU status checks)
+- `tmux` installed
+
+**3. Local tools** — `jq` is required: `brew install jq`
+
+### Server Configuration
+
+Edit `deploy/deploy_servers.json`:
+```json
+{
+  "servers": {
+    "xsailor4": {
+      "ssh_host": "xsailor4-pj",
+      "remote_repo": "/home/xsailor5/jhkang/USFL-fork",
+      "conda_env": "usfl_env",
+      "gpus": [0, 1, 2, 3]
+    },
+    "xsailor5": {
+      "ssh_host": "xsailor5-pj",
+      "remote_repo": "/home/xsailor5/jhkang/USFL-fork",
+      "conda_env": "usfl_env",
+      "gpus": [0, 1, 2, 3]
+    }
+  },
+  "gdrive_rclone_remote": "",
+  "tmux_session": "usfl-exp"
+}
+```
+
+Fields:
+- `ssh_host`: SSH alias from `~/.ssh/config` (NOT raw IP)
+- `remote_repo`: Absolute path to git clone on the server
+- `conda_env`: Conda environment name on the server
+- `gpus`: Available GPU indices (informational, for `servers` command)
+- `gdrive_rclone_remote`: Optional rclone remote for Google Drive result upload
+- `tmux_session`: Prefix for tmux session names (default: `usfl-exp`)
+
+### Experiment Configuration
+
+All experiment parameters live in `experiment_configs/`:
+
+**`common.json`** — Shared across ALL methods:
+```json
+{
+  "dataset": "cifar10",
+  "model": "resnet18_flex",
+  "rounds": 100,
+  "alpha": 0.3,
+  "labels_per_client": 2,
+  "total_clients": 100,
+  "clients_per_round": 10,
+  "local_epochs": 5,
+  "learning_rate": 0.001,
+  "split_layer": "layer2",
+  "enable_drift_measurement": true,
+  "enable_g_measurement": false,
+  "g_measure_frequency": 10
+}
+```
+
+**Per-method JSONs** — Override/extend common params:
+- `sfl.json`, `usfl.json`, `scaffold.json`, `mix2sfl.json` — SFL framework variants
+- `gas.json` — GAS-specific (generate, v_test, sample_frequency)
+- `multisfl.json` — MultiSFL-specific (branches, alpha_master_pull, p_update)
+
+Keys prefixed with `_` are comments (filtered by `build_overrides()` during spec generation).
+
+**To change experiment parameters:**
+1. Edit `common.json` for shared params (dataset, rounds, alpha, etc.)
+2. Edit the per-method JSON for method-specific params
+3. Deploy — `deploy.sh` reads these files to generate specs
+
+### Deploying Experiments
+
+#### Step-by-Step Workflow
+
+```bash
+# 1. Edit experiment configs
+#    (Change dataset, alpha, rounds, method-specific params, etc.)
+
+# 2. Deploy to GPU servers
+./deploy.sh run usfl@xsailor4:0 gas@xsailor5:0 sfl@xsailor4:1 multisfl@xsailor5:1
+
+# 3. Monitor progress
+./deploy.sh status          # Overview of all servers
+./deploy.sh check           # Detailed status of latest deployment
+./deploy.sh logs xsailor4 usfl   # Tail log of specific experiment
+
+# 4. Wait for completion, then collect results
+./deploy.sh collect --local  # rsync results to local ./results/
+
+# 5. Generate dashboard
+python sfl_dashboard.py results/<run_name>/ --open
+```
+
+#### Run Command Formats
+
+```bash
+# Inline format: method@server:gpu
+./deploy.sh run usfl@xsailor4:0 gas@xsailor5:1
+
+# Server flag format: all methods on one server
+./deploy.sh run --server xsailor4 --methods "usfl sfl gas" --gpus "0 1 2"
+
+# Interactive mode: SSH into server with conda activated
+./deploy.sh run -i --server xsailor4
+
+# Skip git push (if already pushed)
+./deploy.sh run --no-push usfl@xsailor4:0
+
+# Reuse existing run name (add experiments to existing result directory)
+./deploy.sh run --run-name cifar10_a0.3_r100_20260207_222446 scaffold@xsailor4:2
+```
+
+#### What `deploy.sh run` Does Internally
+
+1. **Git push** — Commits any uncommitted changes and pushes to remote
+2. **Generate spec** — For each method, runs `generate_spec.py` with method-specific config:
+   ```bash
+   python -m experiment_core.generate_spec \
+       --config-dir experiment_configs \
+       --methods usfl \
+       --gpu-map '{"usfl": 0}' \
+       --output-dir results/<run_name> \
+       --output /tmp/usfl_spec.json
+   ```
+3. **Git sync** — SSH to each server: `git fetch && git checkout <branch> && git reset --hard origin/<branch>`
+4. **SCP spec** — Transfer generated `batch_spec_<method>.json` to server
+5. **Tmux launch** — Start each experiment in its own tmux session:
+   ```bash
+   tmux new-session -d -s 'usfl-exp-usfl-222446' \
+       'bash deploy/remote_run.sh usfl_env batch_spec_usfl.json 2>&1 | tee experiment_usfl-222446.log'
+   ```
+6. **Record history** — Saves deployment info to `deploy/.deploy_history.json`
+
+#### Run Naming Convention
+
+Auto-generated: `{dataset}_a{alpha}_r{rounds}_{YYYYMMDD_HHMMSS}`
+Example: `cifar10_a0.3_r100_20260207_222446`
+
+All methods in a single deployment share the same `run_name` → results go to `results/<run_name>/` on each server.
+
+### Monitoring
+
+```bash
+# Overview: all servers, running experiments, GPU utilization
+./deploy.sh status
+
+# Detailed check: experiment completion status for a specific deployment
+./deploy.sh check                    # Latest pending deployment
+./deploy.sh check cifar10_a0.3_r100_20260207_222446
+
+# Live log tail
+./deploy.sh logs xsailor4 usfl       # Tail usfl experiment log
+./deploy.sh logs xsailor4            # List available logs
+
+# Attach to tmux session (interactive, real-time output)
+./deploy.sh attach xsailor4 usfl     # Ctrl+B D to detach
+./deploy.sh attach xsailor4          # List sessions
+
+# View deploy history
+./deploy.sh collect --list
+```
+
+### Killing Experiments
+
+```bash
+# Interactive: shows numbered list, pick which to kill
+./deploy.sh kill
+
+# Kill all experiments on all servers
+./deploy.sh kill --all
+
+# Kill all experiments on a specific server
+./deploy.sh kill xsailor4
+
+# Kill a specific method on a server
+./deploy.sh kill xsailor4 usfl
+```
+
+### Collecting Results
+
+```bash
+# Collect ALL pending results (rsync to local ./results/)
+./deploy.sh collect --local
+
+# Collect specific run
+./deploy.sh collect --local cifar10_a0.3_r100_20260207_222446
+
+# Re-collect already-collected runs
+./deploy.sh collect --local --all
+
+# Upload to Google Drive (requires rclone setup on servers)
+./deploy.sh collect
+```
+
+Result files are merged from multiple servers into a single `results/<run_name>/` directory. The `collect` command:
+- Checks if experiments are still running (marks as `partial` if so)
+- Marks as `collected` only when all tmux sessions have exited
+- On re-run, picks up any `partial` results automatically
+
+### Result Analysis
+
+```bash
+# Generate interactive HTML dashboard with all experiments compared
+python sfl_dashboard.py results/<run_name>/ --open
+
+# Custom output path
+python sfl_dashboard.py results/<run_name>/ --output my_report.html
+```
+
+The dashboard auto-detects SFL, GAS, and MultiSFL result formats, extracts accuracy curves, drift metrics, G measurements, V-values, and per-round metrics, and generates an interactive Plotly dashboard.
+
+### Typical Experiment Recipes
+
+**Compare all 5 methods on CIFAR-10 Non-IID:**
+```bash
+# 1. Set common.json: dataset=cifar10, alpha=0.3, rounds=100
+# 2. Deploy all methods across 2 servers:
+./deploy.sh run sfl@xsailor4:0 usfl@xsailor4:1 scaffold@xsailor4:2 \
+               gas@xsailor5:0 multisfl@xsailor5:1
+```
+
+**Re-run a crashed experiment:**
+```bash
+# Check which experiments crashed
+./deploy.sh check cifar10_a0.3_r100_20260207_222446
+
+# Re-run only the crashed method, reusing the same run_name
+./deploy.sh run --run-name cifar10_a0.3_r100_20260207_222446 gas@xsailor5:0
+```
+
+**Run locally without GPU servers (single method):**
+```bash
+# Generate spec manually
+python -m experiment_core.generate_spec \
+    --config-dir experiment_configs \
+    --methods usfl \
+    --gpu-map '{"usfl": 0}' \
+    --output-dir results/local_test \
+    --output /tmp/local_spec.json
+
+# Run batch_runner directly
+python -m experiment_core.batch_runner --spec /tmp/local_spec.json --repo-root .
+```
+
+### File Reference
+
+| File | Purpose |
+|------|---------|
+| `deploy.sh` | Main CLI tool (run, status, check, kill, logs, attach, collect, servers) |
+| `deploy/deploy_servers.json` | Server inventory (SSH, repo paths, conda env, GPUs) |
+| `deploy/.deploy_history.json` | Auto-generated deployment history (not in git) |
+| `deploy/remote_run.sh` | Runs inside tmux on GPU server (conda activate → batch_runner) |
+| `deploy/setup_rclone_gdrive.sh` | One-time rclone Google Drive setup for servers |
+| `experiment_core/generate_spec.py` | Config JSONs → batch_spec.json |
+| `experiment_core/batch_runner.py` | Runs multiple experiments from a spec file |
+| `experiment_core/runner.py` | Runs a single experiment via adapter |
+| `experiment_core/adapters/` | Translates unified config → framework-native format |
+| `sfl_dashboard.py` | Result visualization (HTML dashboard generator) |
+
+## Running Experiments Locally
 
 ### Unified Framework (SFL/USFL)
 
@@ -287,44 +576,6 @@ Experiments are configured by modifying `simulation.py` directly. Look for confi
 - Parameter grids for batch testing
 - `START_INDEX` and `END_INDEX` for workload range control
 - `SKIP_FILTERS` for skipping specific parameter combinations
-
-**Quick Start Examples:**
-```python
-# In simulation.py, configure USFL_OPTIONS:
-USFL_OPTIONS = {
-    "A": {  # USFL with all features
-        "method": "usfl",
-        "balancing_strategy": "target",
-        "balancing_target": "mean",
-        "gradient_shuffle": "true",
-        "gradient_shuffle_strategy": "random",
-        "use_dynamic_batch_scheduler": "true",
-    },
-    "B": {  # Base SFL without USFL features
-        "method": "sfl",
-        "balancing_strategy": "none",
-        "gradient_shuffle": "false",
-        "use_dynamic_batch_scheduler": "false",
-    },
-}
-```
-
-### Unified Experiment Pipeline
-
-The preferred way to run experiments across all frameworks:
-
-```bash
-# Generate experiment spec from configs
-python -m experiment_core.generate_spec
-
-# Run a batch of experiments
-python -m experiment_core.batch_runner --spec <spec.json> --repo-root .
-
-# Or run a single experiment
-python -m experiment_core.run_experiment --spec <spec.json>
-```
-
-The pipeline reads from `experiment_configs/common.json` (shared parameters) plus method-specific JSONs (e.g., `usfl.json`, `gas.json`). Adapters translate unified config into each framework's native format (CLI args for SFL/MultiSFL, env vars for GAS).
 
 ### Emulation Mode
 
