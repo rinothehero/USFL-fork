@@ -62,6 +62,8 @@ class ServerConfig:
     use_additional_epoch: bool
     use_cumulative_usage: bool
     usage_decay_factor: float
+    scale_server_lr: bool  # Multiply server LR by clients_per_round
+    scale_client_grad: bool  # Multiply activation gradients by N (participating clients)
     use_data_replication: bool
     balancing_strategy: str
     balancing_target: str
