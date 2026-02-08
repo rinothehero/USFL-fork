@@ -512,6 +512,36 @@ python sfl_dashboard.py results/<run_name>/ --output my_report.html
 
 The dashboard auto-detects SFL, GAS, and MultiSFL result formats, extracts accuracy curves, drift metrics, G measurements, V-values, and per-round metrics, and generates an interactive Plotly dashboard.
 
+**Hosting dashboard for mobile/remote access (via Tailscale):**
+
+This machine has Tailscale VPN configured. To view the dashboard on a phone or another device on the Tailscale network:
+
+```bash
+# 1. Generate dashboard
+python sfl_dashboard.py results/<run_name>/
+
+# 2. Start HTTP server (bind to all interfaces so Tailscale can reach it)
+nohup python -m http.server 8765 --bind 0.0.0.0 \
+    --directory results/<run_name>/ > /tmp/dashboard_server.log 2>&1 &
+echo "PID: $!"
+
+# 3. Get Tailscale IP
+tailscale ip -4    # e.g., 100.108.120.69
+
+# Access from phone/other device:
+#   http://<tailscale-ip>:8765/sfl_dashboard.html
+#   e.g., http://100.108.120.69:8765/sfl_dashboard.html
+
+# 4. Stop server when done
+kill <PID>
+```
+
+Key points:
+- `--bind 0.0.0.0` is required (default `127.0.0.1` blocks external access)
+- Use `nohup ... &` so the server survives after the shell exits
+- Port 8765 is arbitrary — any unused port works
+- Only accessible within the Tailscale VPN network (secure)
+
 ### Typical Experiment Recipes
 
 **Compare all 5 methods on CIFAR-10 Non-IID:**
