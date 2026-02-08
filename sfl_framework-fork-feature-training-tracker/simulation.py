@@ -431,6 +431,8 @@ if __name__ == "__main__":
         DELETE_FRACTION_OF_DATA = workload.get("delete_fraction_of_data", None)
         SELECTOR = workload.get("selector", None)
         AGGREGATOR = workload.get("aggregator", None)
+        SCALE_SERVER_LR = workload.get("scale_server_lr", None)
+        SCALE_CLIENT_GRAD = workload.get("scale_client_grad", None)
         GRADIENT_SHUFFLE = workload.get("gradient_shuffle", None)
         GRADIENT_SHUFFLE_STRATEGY = workload.get("gradient_shuffle_strategy", None)
         GRADIENT_SHUFFLE_TARGET = workload.get("gradient_shuffle_target", None)
@@ -514,6 +516,10 @@ if __name__ == "__main__":
             server_command.extend(["-s", SELECTOR])
         if AGGREGATOR:
             server_command.extend(["-aggr", AGGREGATOR])
+        if SCALE_SERVER_LR and SCALE_SERVER_LR.lower() == "true":
+            server_command.extend(["--scale-server-lr"])
+        if SCALE_CLIENT_GRAD and SCALE_CLIENT_GRAD.lower() == "true":
+            server_command.extend(["--scale-client-grad"])
         if GRADIENT_SHUFFLE and GRADIENT_SHUFFLE.lower() == "true":
             server_command.extend(["-gs"])
         if GRADIENT_SHUFFLE_STRATEGY:

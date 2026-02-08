@@ -8,8 +8,11 @@
 __pycache__/
 .ruff_cache/
 results/
+.venv/
 git-ai
 !experiment_configs/*.json
 !experiment_configs/**/*.json
 !deploy/deploy_servers.json
-data/
+data/main.py
+main.py
+README.md

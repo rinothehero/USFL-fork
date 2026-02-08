@@ -616,7 +616,17 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 .config-table th{{color:var(--text-dim);font-weight:600;text-transform:uppercase;font-size:.72rem;letter-spacing:.05em}}
 .config-table tr:hover td{{background:rgba(108,158,255,.04)}}
 .config-table td:first-child{{font-weight:600;color:var(--text);min-width:130px}}
-@media(max-width:900px){{.summary-grid{{grid-template-columns:1fr}}.chart-row{{grid-template-columns:1fr}}.container{{padding:16px}}}}
+@media(max-width:900px){{.summary-grid{{grid-template-columns:1fr}}.chart-row{{grid-template-columns:1fr}}.container{{padding:12px 8px}}.header{{padding:18px 16px}}.chart-card{{padding:14px 10px}}.chart-card h3{{font-size:.95rem}}.chart-card .desc{{font-size:.72rem;margin-bottom:6px}}.tab-nav{{gap:2px;padding:3px}}.tab-btn{{padding:8px 12px;font-size:.78rem}}}}
+/* Fullscreen modal for mobile chart zoom */
+.chart-modal-overlay{{display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.92);z-index:9999;flex-direction:column;align-items:stretch;justify-content:center;padding:0}}
+.chart-modal-overlay.open{{display:flex}}
+.chart-modal-header{{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;flex-shrink:0}}
+.chart-modal-header h3{{color:#e4e6f0;font-size:.95rem;font-weight:600;margin:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+.chart-modal-close{{background:rgba(255,255,255,.12);border:none;color:#e4e6f0;font-size:1.4rem;width:40px;height:40px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-left:12px;-webkit-tap-highlight-color:transparent}}
+.chart-modal-close:active{{background:rgba(255,255,255,.25)}}
+#modalChart{{flex:1;min-height:0;width:100%}}
+/* Tap hint on mobile */
+@media(max-width:900px){{.chart-card{{cursor:pointer;-webkit-tap-highlight-color:transparent}}.chart-card::after{{content:'Tap to expand';position:absolute;top:8px;right:10px;font-size:.65rem;color:var(--text-dim);opacity:.6;pointer-events:none}}.chart-card{{position:relative}}}}
 </style>
 </head>
 <body>
@@ -628,6 +638,14 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
   <div class="summary-grid" id="summaryGrid"></div>
   <div class="tab-nav">{tab_buttons}</div>
   {sections_html}
+</div>
+<!-- Fullscreen chart modal -->
+<div class="chart-modal-overlay" id="chartModal">
+  <div class="chart-modal-header">
+    <h3 id="modalTitle"></h3>
+    <button class="chart-modal-close" id="modalClose" aria-label="Close">✕</button>
+  </div>
+  <div id="modalChart"></div>
 </div>
 <script>
 var CHARTS={json.dumps(charts)};
@@ -675,6 +693,51 @@ document.querySelectorAll('.tab-btn').forEach(function(btn){{
     tab.querySelectorAll('[id^="c"]').forEach(function(el){{if(chartMap[el.id])renderChart(el.id);}});
     window.dispatchEvent(new Event('resize'));
   }});
+}});
+
+// ─── Fullscreen modal for chart zoom (mobile-friendly) ───
+var overlay=document.getElementById('chartModal');
+var modalChart=document.getElementById('modalChart');
+var modalTitle=document.getElementById('modalTitle');
+var currentModalKey=null;
+
+function openModal(divId){{
+  var key=chartMap[divId];
+  if(!key||!CHARTS[key])return;
+  currentModalKey=key;
+  var ch=CHARTS[key];
+  modalTitle.textContent=ch.layout.yaxis&&ch.layout.yaxis.title?ch.layout.yaxis.title.text||ch.layout.yaxis.title:'';
+  overlay.classList.add('open');
+  document.body.style.overflow='hidden';
+  // Render with mobile-optimized layout
+  var ml=JSON.parse(JSON.stringify(ch.layout));
+  ml.margin={{t:10,r:12,b:50,l:50}};
+  ml.legend={{orientation:'h',y:-0.12,x:0.5,xanchor:'center',font:{{size:12}},bgcolor:'transparent'}};
+  if(ml.font)ml.font.size=13;
+  Plotly.newPlot(modalChart,ch.traces,ml,{{responsive:true,displayModeBar:true,displaylogo:false,modeBarButtonsToRemove:['lasso2d','select2d','toImage']}});
+}}
+
+function closeModal(){{
+  overlay.classList.remove('open');
+  document.body.style.overflow='';
+  Plotly.purge(modalChart);
+  currentModalKey=null;
+}}
+
+document.getElementById('modalClose').addEventListener('click',closeModal);
+overlay.addEventListener('click',function(e){{if(e.target===overlay)closeModal();}});
+document.addEventListener('keydown',function(e){{if(e.key==='Escape'&&currentModalKey)closeModal();}});
+
+// Attach tap-to-zoom on all chart cards
+document.querySelectorAll('.chart-card').forEach(function(card){{
+  var chartDiv=card.querySelector('[id^="c"]');
+  if(chartDiv&&chartMap[chartDiv.id]){{
+    card.addEventListener('click',function(e){{
+      // Don't intercept Plotly toolbar clicks
+      if(e.target.closest('.modebar'))return;
+      openModal(chartDiv.id);
+    }});
+  }}
 }});
 </script>
 </body>

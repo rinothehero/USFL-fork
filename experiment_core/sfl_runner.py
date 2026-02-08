@@ -77,6 +77,8 @@ _VALUE_FLAGS = {
 # store_true flags: append only when value is "true"
 _STORE_TRUE_FLAGS = {
     "gradient_shuffle": "-gs",
+    "scale_server_lr": "--scale-server-lr",
+    "scale_client_grad": "--scale-client-grad",
     "use_dynamic_batch_scheduler": "-udbs",
     "use_additional_epoch": "-uae",
     "use_cumulative_usage": "-ucu",

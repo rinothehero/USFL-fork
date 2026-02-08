@@ -45,6 +45,7 @@ STORE_TRUE_FLAGS = {
     "gradient-shuffle", "use-dynamic-batch-scheduler",
     "use-additional-epoch", "use-cumulative-usage",
     "use-fresh-scoring", "use-data-replication",
+    "scale-server-lr", "scale-client-grad",
 }
 
 # GAS: per-method config key → env var (only GAS-specific; shared params handled by adapter)

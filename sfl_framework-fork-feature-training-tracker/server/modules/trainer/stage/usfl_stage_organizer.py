@@ -935,13 +935,17 @@ class USFLStageOrganizer(BaseStageOrganizer):
         # SFLV2: Create persistent optimizer and criterion once per round
         server_model = self.split_models[1].to(self.config.device)
 
-        # Server learning rate: explicit value or default to client_lr * num_clients_per_round
+        # Server learning rate: explicit > scale toggle > base lr
         server_lr = self.config.server_learning_rate
         if server_lr is None:
-            server_lr = self.config.learning_rate * self.config.num_clients_per_round
+            if self.config.scale_server_lr:
+                server_lr = self.config.learning_rate * self.config.num_clients_per_round
+            else:
+                server_lr = self.config.learning_rate
+        scale_tag = "scaled" if self.config.scale_server_lr else "unscaled"
         print(
-            f"[USFL] Server LR: {server_lr} "
-            f"(client_lr={self.config.learning_rate} x {self.config.num_clients_per_round} clients)"
+            f"[USFL] Server LR: {server_lr} ({scale_tag}, "
+            f"client_lr={self.config.learning_rate}, K={self.config.num_clients_per_round})"
         )
 
         server_optimizer = self.in_round._get_optimizer(
@@ -1035,12 +1039,13 @@ class USFLStageOrganizer(BaseStageOrganizer):
                     # Scale gradient by number of participating clients
                     # CE(mean) on concatenated batch divides by total_batch = N * client_batch
                     # We multiply by N to restore scale to 1/client_batch (same as SFL)
-                    num_participating_clients = len(non_empty_activations)
-                    if num_participating_clients > 1:
-                        if isinstance(grad, tuple):
-                            grad = tuple(g * num_participating_clients for g in grad)
-                        else:
-                            grad = grad * num_participating_clients
+                    if self.config.scale_client_grad:
+                        num_participating_clients = len(non_empty_activations)
+                        if num_participating_clients > 1:
+                            if isinstance(grad, tuple):
+                                grad = tuple(g * num_participating_clients for g in grad)
+                            else:
+                                grad = grad * num_participating_clients
 
                     # G Measurement: Collect server gradient
                     if is_diagnostic and server_grad:

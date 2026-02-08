@@ -4,8 +4,14 @@
   "selector": "usfl",
   "aggregator": "fedavg",
 
-  "_server_learning_rate": "Server-side LR. null = auto (client_lr * clients_per_round).",
+  "_server_learning_rate": "Server-side LR. null = auto based on scale_server_lr.",
   "server_learning_rate": null,
+
+  "_scale_server_lr": "true: server LR = client_lr * clients_per_round | false: server LR = client_lr.",
+  "scale_server_lr": false,
+
+  "_scale_client_grad": "true: multiply activation gradients by N (participating clients) to restore per-client scale | false: raw concatenated-batch gradient.",
+  "scale_client_grad": false,
 
   "_section_gs": "=== Gradient Shuffle: mix gradients across clients to reduce bias ===",
 

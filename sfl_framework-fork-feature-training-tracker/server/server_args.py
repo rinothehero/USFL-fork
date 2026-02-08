@@ -125,6 +125,8 @@ class Config:
     # SCALA
     enable_logit_adjustment: bool  # Whether to enable logit adjustment.
     # USFL
+    scale_server_lr: bool  # Multiply server LR by clients_per_round (SFLv2 style)
+    scale_client_grad: bool  # Multiply activation gradients by N (participating clients)
     gradient_shuffle: bool
     gradient_shuffle_strategy: str
     gradient_shuffle_target: str
@@ -366,6 +368,22 @@ def parse_args(custom_args=None):
         dest="server_learning_rate",
         default=None,
         required=False,
+    )
+
+    parser.add_argument(
+        "--scale-server-lr",
+        help="Multiply server LR by clients_per_round (SFLv2 style)",
+        action="store_true",
+        dest="scale_server_lr",
+        default=False,
+    )
+
+    parser.add_argument(
+        "--scale-client-grad",
+        help="Multiply activation gradients by N (participating clients) to restore per-client scale",
+        action="store_true",
+        dest="scale_client_grad",
+        default=False,
     )
 
     parser.add_argument(
