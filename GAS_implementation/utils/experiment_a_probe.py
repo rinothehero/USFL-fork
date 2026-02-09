@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import random
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader, Dataset, Subset
 
 
 def _extract_batch(
-    batch: Any, device: torch.device
+    batch: Any, device: Any
 ) -> Tuple[Tuple[Any, ...], Dict[str, Any], Optional[torch.Tensor]]:
     if isinstance(batch, dict):
         labels = batch.get("labels", batch.get("label"))
@@ -129,6 +129,137 @@ def _load_probe_indices(indices_path: str) -> List[int]:
     return out
 
 
+def _to_label_map(dataset: Dataset) -> Dict[int, int]:
+    targets: Optional[Iterable[Any]] = None
+
+    if isinstance(dataset, Subset):
+        base_map = _to_label_map(dataset.dataset)
+        if not base_map:
+            return {}
+        label_map: Dict[int, int] = {}
+        for local_pos, base_idx in enumerate(dataset.indices):
+            if int(base_idx) not in base_map:
+                continue
+            label_map[int(local_pos)] = int(base_map[int(base_idx)])
+        return label_map
+
+    if hasattr(dataset, "targets"):
+        targets = getattr(dataset, "targets")
+    elif hasattr(dataset, "labels"):
+        targets = getattr(dataset, "labels")
+    elif hasattr(dataset, "label"):
+        targets = getattr(dataset, "label")
+    elif hasattr(dataset, "y"):
+        targets = getattr(dataset, "y")
+
+    if targets is None:
+        return {}
+
+    if isinstance(targets, torch.Tensor):
+        targets = targets.detach().cpu().tolist()
+
+    label_map: Dict[int, int] = {}
+    try:
+        for idx, value in enumerate(targets):
+            label_map[int(idx)] = int(value)
+    except Exception:
+        return {}
+    return label_map
+
+
+def _sample_class_balanced_indices(
+    label_map: Dict[int, int],
+    num_samples: int,
+    seed: int,
+) -> List[int]:
+    if not label_map or num_samples <= 0:
+        return []
+
+    class_to_indices: Dict[int, List[int]] = {}
+    for idx, label in label_map.items():
+        class_to_indices.setdefault(int(label), []).append(int(idx))
+    classes = sorted(class_to_indices.keys())
+    if not classes:
+        return []
+
+    rng = random.Random(int(seed))
+    for label in classes:
+        rng.shuffle(class_to_indices[label])
+
+    base = num_samples // len(classes)
+    rem = num_samples % len(classes)
+    selected: List[int] = []
+    leftovers: List[int] = []
+
+    for rank, label in enumerate(classes):
+        need = base + (1 if rank < rem else 0)
+        pool = class_to_indices[label]
+        take = min(need, len(pool))
+        selected.extend(pool[:take])
+        leftovers.extend(pool[take:])
+
+    if len(selected) < num_samples and leftovers:
+        rng.shuffle(leftovers)
+        selected.extend(leftovers[: (num_samples - len(selected))])
+
+    rng.shuffle(selected)
+    return selected[:num_samples]
+
+
+def _reorder_for_balanced_batches(
+    indices: List[int],
+    label_map: Dict[int, int],
+    batch_size: int,
+    seed: int,
+) -> Tuple[List[int], bool, int, int]:
+    if not indices or not label_map or batch_size <= 0:
+        return indices, False, 0, 0
+
+    class_to_indices: Dict[int, List[int]] = {}
+    for idx in indices:
+        label = label_map.get(int(idx))
+        if label is None:
+            continue
+        class_to_indices.setdefault(int(label), []).append(int(idx))
+
+    classes = sorted(class_to_indices.keys())
+    if not classes:
+        return indices, False, 0, 0
+
+    num_classes = len(classes)
+    if batch_size % num_classes != 0:
+        return indices, False, 0, num_classes
+    per_class = batch_size // num_classes
+    if per_class <= 0:
+        return indices, False, 0, num_classes
+
+    rng = random.Random(int(seed) + 7919)
+    for label in classes:
+        rng.shuffle(class_to_indices[label])
+
+    full_batches = min(len(class_to_indices[label]) // per_class for label in classes)
+    if full_batches <= 0:
+        return indices, False, 0, num_classes
+
+    ordered: List[int] = []
+    consumed = set()
+    for batch_idx in range(full_batches):
+        batch: List[int] = []
+        for label in classes:
+            start = batch_idx * per_class
+            end = start + per_class
+            batch.extend(class_to_indices[label][start:end])
+        rng.shuffle(batch)
+        ordered.extend(batch)
+        consumed.update(batch)
+
+    for idx in indices:
+        if int(idx) not in consumed:
+            ordered.append(int(idx))
+
+    return ordered, True, int(full_batches), int(num_classes)
+
+
 def build_probe_loader(
     default_loader: Optional[DataLoader],
     train_dataset: Optional[Dataset] = None,
@@ -138,6 +269,8 @@ def build_probe_loader(
     num_samples: int = 0,
     batch_size: int = 0,
     seed: int = 0,
+    class_balanced: bool = False,
+    class_balanced_batches: bool = False,
 ) -> Tuple[Optional[DataLoader], dict]:
     source_norm = str(source or "test").lower()
     if source_norm not in ("test", "train"):
@@ -149,7 +282,15 @@ def build_probe_loader(
     if dataset is None:
         return None, {"source": source_norm, "selected_samples": 0}
 
+    if batch_size and int(batch_size) > 0:
+        probe_batch_size = int(batch_size)
+    elif default_loader is not None and getattr(default_loader, "batch_size", None):
+        probe_batch_size = int(default_loader.batch_size)
+    else:
+        probe_batch_size = 1
+
     total_samples = len(dataset)
+    label_map = _to_label_map(dataset)
     selected_indices: Optional[List[int]] = None
 
     loaded_indices = _load_probe_indices(indices_path)
@@ -159,18 +300,36 @@ def build_probe_loader(
             selected_indices = filtered
     elif int(num_samples) > 0 and total_samples > 0:
         k = min(int(num_samples), total_samples)
-        all_indices = list(range(total_samples))
-        random.Random(int(seed)).shuffle(all_indices)
-        selected_indices = all_indices[:k]
+        if class_balanced:
+            balanced = _sample_class_balanced_indices(label_map, k, int(seed))
+            if balanced:
+                selected_indices = balanced
+        if selected_indices is None:
+            all_indices = list(range(total_samples))
+            random.Random(int(seed)).shuffle(all_indices)
+            selected_indices = all_indices[:k]
 
-    probe_dataset = Subset(dataset, selected_indices) if selected_indices is not None else dataset
+    balanced_batches_used = False
+    balanced_full_batches = 0
+    num_classes = 0
+    if selected_indices is not None and class_balanced_batches:
+        (
+            selected_indices,
+            balanced_batches_used,
+            balanced_full_batches,
+            num_classes,
+        ) = _reorder_for_balanced_batches(
+            selected_indices,
+            label_map,
+            int(max(probe_batch_size, 1)),
+            int(seed),
+        )
+    elif label_map:
+        num_classes = len(set(label_map.values()))
 
-    if batch_size and int(batch_size) > 0:
-        probe_batch_size = int(batch_size)
-    elif default_loader is not None and getattr(default_loader, "batch_size", None):
-        probe_batch_size = int(default_loader.batch_size)
-    else:
-        probe_batch_size = 1
+    probe_dataset = (
+        Subset(dataset, selected_indices) if selected_indices is not None else dataset
+    )
 
     loader_kwargs = {
         "dataset": probe_dataset,
@@ -180,7 +339,9 @@ def build_probe_loader(
     }
     if default_loader is not None:
         loader_kwargs["num_workers"] = int(getattr(default_loader, "num_workers", 0))
-        loader_kwargs["pin_memory"] = bool(getattr(default_loader, "pin_memory", False))
+        loader_kwargs["pin_memory"] = bool(
+            getattr(default_loader, "pin_memory", False)
+        )
         collate_fn = getattr(default_loader, "collate_fn", None)
         if collate_fn is not None:
             loader_kwargs["collate_fn"] = collate_fn
@@ -194,6 +355,11 @@ def build_probe_loader(
         "indices_path": indices_path or "",
         "num_samples": int(max(int(num_samples), 0)),
         "seed": int(seed),
+        "class_balanced": bool(class_balanced),
+        "class_balanced_batches": bool(class_balanced_batches),
+        "class_balanced_batches_applied": bool(balanced_batches_used),
+        "balanced_full_batches": int(balanced_full_batches),
+        "num_classes": int(num_classes),
     }
 
 
@@ -201,9 +367,13 @@ def compute_split_probe_directions(
     client_model: torch.nn.Module,
     server_model: torch.nn.Module,
     probe_loader: Any,
-    device: torch.device,
+    device: Any,
     max_batches: int = 1,
 ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], dict]:
+    """
+    Compute central directions c_c, c_s from a fixed probe loader:
+      c = -∇ L_Q(x^{t,0})
+    """
     if probe_loader is None:
         return None, None, {"used_batches": 0, "used_samples": 0}
 

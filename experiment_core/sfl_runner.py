@@ -98,6 +98,8 @@ _STORE_TRUE_FLAGS = {
     "networking_fairness": "-nf",
     "enable_concatenation": "-ec",
     "enable_logit_adjustment": "-ela",
+    "probe_class_balanced": "--probe-class-balanced",
+    "probe_class_balanced_batches": "--probe-class-balanced-batches",
 }
 
 # store_false flags: append when value is "false"
@@ -193,6 +195,10 @@ def spec_to_workload(spec: Dict[str, Any]) -> Dict[str, str]:
         workload["probe_max_batches"] = str(common.get("probe_max_batches", 1))
     if "probe_seed" in common:
         workload["probe_seed"] = str(common.get("probe_seed", common.get("seed", 0)))
+    if common.get("probe_class_balanced", False):
+        workload["probe_class_balanced"] = "true"
+    if common.get("probe_class_balanced_batches", False):
+        workload["probe_class_balanced_batches"] = "true"
 
     # Per-method sfl_args overrides
     sfl_args = overrides.get("sfl_args", {})

@@ -101,6 +101,8 @@ def _defaults() -> Dict[str, Any]:
             "probe_batch_size": 0,
             "probe_max_batches": 1,
             "probe_seed": 42,
+            "probe_class_balanced": False,
+            "probe_class_balanced_batches": False,
         },
         "execution": {
             "mode": "run",

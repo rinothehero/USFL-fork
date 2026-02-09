@@ -110,6 +110,10 @@ def build_common_spec(common_path: Path) -> Dict[str, Any]:
         "probe_batch_size": cr.get("probe_batch_size", 0),
         "probe_max_batches": cr.get("probe_max_batches", 1),
         "probe_seed": cr.get("probe_seed", cr.get("seed", 42)),
+        "probe_class_balanced": cr.get("probe_class_balanced", False),
+        "probe_class_balanced_batches": cr.get(
+            "probe_class_balanced_batches", False
+        ),
     }
 
 

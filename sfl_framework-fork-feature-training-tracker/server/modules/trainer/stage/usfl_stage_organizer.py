@@ -110,6 +110,12 @@ class USFLStageOrganizer(BaseStageOrganizer):
                 num_samples=int(getattr(config, "probe_num_samples", 0)),
                 batch_size=int(getattr(config, "probe_batch_size", 0)),
                 seed=int(getattr(config, "probe_seed", getattr(config, "seed", 0))),
+                class_balanced=bool(
+                    getattr(config, "probe_class_balanced", False)
+                ),
+                class_balanced_batches=bool(
+                    getattr(config, "probe_class_balanced_batches", False)
+                ),
             )
             if self.probe_loader is None:
                 self.probe_loader = self.testloader

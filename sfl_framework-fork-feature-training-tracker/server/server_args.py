@@ -197,6 +197,8 @@ class Config:
     probe_batch_size: int  # Probe loader batch size (0 = reuse default loader batch size)
     probe_max_batches: int  # Number of probe batches used to estimate c^t
     probe_seed: int  # Seed for random probe subset sampling
+    probe_class_balanced: bool  # Sample probe subset with class-balanced policy when possible
+    probe_class_balanced_batches: bool  # Reorder probe indices to make each batch class-balanced when possible
 
     # ==================
     #  IN-ROUND EVALUATION OPTIONS
@@ -1190,6 +1192,18 @@ def parse_args(custom_args=None):
         type=int,
         dest="probe_seed",
         default=2023,
+    )
+    parser.add_argument(
+        "--probe-class-balanced",
+        help="Sample probe subset as class-balanced when possible",
+        action="store_true",
+        dest="probe_class_balanced",
+    )
+    parser.add_argument(
+        "--probe-class-balanced-batches",
+        help="Reorder probe subset so each probe batch is class-balanced when possible",
+        action="store_true",
+        dest="probe_class_balanced_batches",
     )
     parser.add_argument(
         "--enable-inround-evaluation",

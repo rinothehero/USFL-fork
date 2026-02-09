@@ -163,6 +163,18 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Random seed for probe subset sampling (default: --seed)",
     )
+    parser.add_argument(
+        "--probe_class_balanced",
+        type=str_to_bool,
+        default=False,
+        help="Sample probe subset as class-balanced when possible",
+    )
+    parser.add_argument(
+        "--probe_class_balanced_batches",
+        type=str_to_bool,
+        default=False,
+        help="Reorder probe subset so each probe batch is class-balanced when possible",
+    )
     parser.add_argument("--num_classes", type=int, default=10)
 
     parser.add_argument("--synthetic_train_size", type=int, default=5000)
@@ -332,6 +344,8 @@ def main():
         probe_batch_size=args.probe_batch_size,
         probe_max_batches=args.probe_max_batches,
         probe_seed=args.probe_seed if args.probe_seed is not None else args.seed,
+        probe_class_balanced=args.probe_class_balanced,
+        probe_class_balanced_batches=args.probe_class_balanced_batches,
     )
 
     # Data Partitioning
@@ -373,6 +387,8 @@ def main():
             num_samples=cfg.probe_num_samples,
             batch_size=cfg.probe_batch_size,
             seed=cfg.probe_seed,
+            class_balanced=cfg.probe_class_balanced,
+            class_balanced_batches=cfg.probe_class_balanced_batches,
         )
         if probe_loader is None:
             probe_loader = test_loader

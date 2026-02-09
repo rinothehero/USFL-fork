@@ -99,6 +99,8 @@ GAS/MultiSFL는 라운드 시작 client 상태가 참여자마다 다를 수 있
 - `probe_batch_size`: 0이면 기본 loader batch 재사용
 - `probe_max_batches`: 라운드당 probe 배치 수
 - `probe_seed`: subset 샘플 시드
+- `probe_class_balanced`: 라벨 접근 가능 시 class-balanced subset 샘플링
+- `probe_class_balanced_batches`: 가능하면 probe batch도 class-balanced가 되도록 인덱스 재정렬
 
 ### 4.2 인덱스 파일 포맷
 
@@ -210,14 +212,22 @@ TXT:
 { "q_indices": [5, 12, 30, 44, 101, 333] }
 ```
 
+참고:
+- `probe_source=test`를 쓰면 probe 5000장을 사용해도 학습(train partition)에서 샘플을 제외하지 않는다.
+
 ### Step 3. `experiment_configs/common.json`에 반영
 
 최소 필수:
 - `enable_drift_measurement: true`
 - `client_schedule_path: <스케줄 파일 경로>`
-- `probe_source: test` (또는 train)
-- `probe_indices_path: <probe 인덱스 파일 경로>`
-- `probe_max_batches: 1` (또는 원하는 값)
+- `probe_source: test`
+- `probe_indices_path: ""` (인덱스 파일 미사용 시)
+- `probe_num_samples: 5000`
+- `probe_batch_size: 500`
+- `probe_max_batches: 10`
+- `probe_seed: 42`
+- `probe_class_balanced: true`
+- `probe_class_balanced_batches: true`
 
 ### Step 4. batch spec 생성
 
@@ -331,4 +341,3 @@ raw에서도 동일하게 `drift_history.expA_*` 키로 접근 가능하다.
 - seed 통일(`common.seed`, `probe_seed`)
 - 동일 분할/round/clients_per_round/local_epochs
 - normalized JSON 기반으로 동일 post-processing
-

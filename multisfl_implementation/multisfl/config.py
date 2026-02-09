@@ -72,6 +72,8 @@ class MultiSFLConfig:
     probe_batch_size: int = 0
     probe_max_batches: int = 1
     probe_seed: int = 42
+    probe_class_balanced: bool = False
+    probe_class_balanced_batches: bool = False
 
     def __post_init__(self):
         if self.p_min <= 0:

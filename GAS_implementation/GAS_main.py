@@ -197,6 +197,10 @@ PROBE_NUM_SAMPLES = _env_int("GAS_PROBE_NUM_SAMPLES", 0)
 PROBE_BATCH_SIZE = _env_int("GAS_PROBE_BATCH_SIZE", 0)
 PROBE_MAX_BATCHES = max(_env_int("GAS_PROBE_MAX_BATCHES", 1), 1)
 PROBE_SEED = _env_int("GAS_PROBE_SEED", seed_value)
+PROBE_CLASS_BALANCED = _env_bool("GAS_PROBE_CLASS_BALANCED", False)
+PROBE_CLASS_BALANCED_BATCHES = _env_bool(
+    "GAS_PROBE_CLASS_BALANCED_BATCHES", False
+)
 
 # Optional fixed client schedule (Experiment A condition: same P_t across methods)
 CLIENT_SCHEDULE_PATH = _env_str("GAS_CLIENT_SCHEDULE_PATH", "")
@@ -490,6 +494,8 @@ try:
         num_samples=PROBE_NUM_SAMPLES,
         batch_size=PROBE_BATCH_SIZE,
         seed=PROBE_SEED,
+        class_balanced=PROBE_CLASS_BALANCED,
+        class_balanced_batches=PROBE_CLASS_BALANCED_BATCHES,
     )
     if probe_loader is None:
         probe_loader = test_loader
@@ -1014,6 +1020,8 @@ _intermediate_config = {
     "probe_batch_size": PROBE_BATCH_SIZE,
     "probe_max_batches": PROBE_MAX_BATCHES,
     "probe_seed": PROBE_SEED,
+    "probe_class_balanced": PROBE_CLASS_BALANCED,
+    "probe_class_balanced_batches": PROBE_CLASS_BALANCED_BATCHES,
 }
 
 

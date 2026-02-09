@@ -93,6 +93,12 @@ class GASAdapter(FrameworkAdapter):
             "GAS_PROBE_BATCH_SIZE": str(common.get("probe_batch_size", 0)),
             "GAS_PROBE_MAX_BATCHES": str(common.get("probe_max_batches", 1)),
             "GAS_PROBE_SEED": str(common.get("probe_seed", common.get("seed", 42))),
+            "GAS_PROBE_CLASS_BALANCED": _b(
+                bool(common.get("probe_class_balanced", False))
+            ),
+            "GAS_PROBE_CLASS_BALANCED_BATCHES": _b(
+                bool(common.get("probe_class_balanced_batches", False))
+            ),
         }
 
         client_schedule_path = (

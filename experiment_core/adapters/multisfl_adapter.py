@@ -90,6 +90,12 @@ class MultiSFLAdapter(FrameworkAdapter):
             "--probe_batch_size", str(common.get("probe_batch_size", 0)),
             "--probe_max_batches", str(common.get("probe_max_batches", 1)),
             "--probe_seed", str(common.get("probe_seed", common.get("seed", 42))),
+            "--probe_class_balanced", _str_bool(
+                bool(common.get("probe_class_balanced", False))
+            ),
+            "--probe_class_balanced_batches", _str_bool(
+                bool(common.get("probe_class_balanced_batches", False))
+            ),
         ]
 
         client_schedule_path = (
