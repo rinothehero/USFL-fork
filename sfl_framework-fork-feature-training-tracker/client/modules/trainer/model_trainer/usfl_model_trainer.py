@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 from tqdm import tqdm
 
-from utils.log_utils import vprint
+from utils.log_utils import vprint, TQDM_DISABLED
 
 from .base_model_trainer import BaseModelTrainer
 from .propagator.propagator import get_propagator
@@ -163,7 +163,7 @@ class USFLModelTrainer(BaseModelTrainer):
             dataloader_iterator = iter(self.trainloader)
 
             progress_bar = tqdm(
-                total=iterations, desc="Default Dataset Training", leave=True
+                total=iterations, desc="Default Dataset Training", leave=True, disable=TQDM_DISABLED
             )
 
             if my_schedule:
@@ -370,7 +370,7 @@ class USFLModelTrainer(BaseModelTrainer):
             dataloader_iterator = iter(self.trainloader)
             completed_iterations = 0
             progress_bar = tqdm(
-                total=iterations, desc="GLUE Dataset Training", leave=True
+                total=iterations, desc="GLUE Dataset Training", leave=True, disable=TQDM_DISABLED
             )
 
             if batch_schedule:

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import torch
 from tqdm import tqdm
 
-from utils.log_utils import vprint
+from utils.log_utils import vprint, TQDM_DISABLED
 
 from .base_model_trainer import BaseModelTrainer
 
@@ -43,7 +43,7 @@ class FedProxModelTrainer(BaseModelTrainer):
             total = 0
             total_labels = 0
 
-            for batch in tqdm(self.trainloader, desc="Training Batches"):
+            for batch in tqdm(self.trainloader, desc="Training Batches", disable=TQDM_DISABLED):
                 inputs, labels = batch
                 total_labels += len(labels)
                 inputs, labels = inputs.to(self.config.device), labels.to(

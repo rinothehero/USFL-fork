@@ -3,6 +3,8 @@ from typing import TYPE_CHECKING
 
 from tqdm import tqdm
 
+from utils.log_utils import TQDM_DISABLED
+
 from .base_model_trainer import BaseModelTrainer
 from .propagator.propagator import get_propagator
 
@@ -44,7 +46,7 @@ class SFLProxModelTrainer(BaseModelTrainer):
         for epoch in range(self.training_params["local_epochs"]):
             total_labels = 0
 
-            for batch in tqdm(self.trainloader, desc="Training Batches"):
+            for batch in tqdm(self.trainloader, desc="Training Batches", disable=TQDM_DISABLED):
                 inputs, labels = batch
                 total_labels += len(labels)
                 inputs, labels = inputs.to(self.config.device), labels.to(
@@ -77,7 +79,7 @@ class SFLProxModelTrainer(BaseModelTrainer):
         optimizer = self.get_optimizer(self.server_config)
 
         for epoch in range(self.training_params["local_epochs"]):
-            for batch in tqdm(self.trainloader, desc="Training Batches"):
+            for batch in tqdm(self.trainloader, desc="Training Batches", disable=TQDM_DISABLED):
                 inputs = batch["input_ids"].to(self.config.device)
                 attention_mask = batch["attention_mask"].to(self.config.device)
                 labels = batch["label"].to(self.config.device)

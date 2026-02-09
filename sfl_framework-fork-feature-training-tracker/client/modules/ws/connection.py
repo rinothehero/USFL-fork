@@ -7,7 +7,7 @@ import websockets
 from tqdm import tqdm
 from websockets.exceptions import ConnectionClosedError, InvalidHandshake
 
-from utils.log_utils import vprint
+from utils.log_utils import vprint, TQDM_DISABLED
 
 if TYPE_CHECKING:
     from client_args import Config
@@ -55,6 +55,7 @@ class Connection:
                     range(0, len(data), chunk_size),
                     desc="Sending data to server",
                     unit="chunk",
+                    disable=TQDM_DISABLED,
                 ):
                     chunk = data[i : i + chunk_size]
                     await self.websocket.send(chunk)

@@ -3,6 +3,7 @@
 import os
 
 _VERBOSITY: int = int(os.environ.get("USFL_VERBOSITY", "1"))
+TQDM_DISABLED: bool = _VERBOSITY < 2
 
 
 def vprint(message, level: int = 1):

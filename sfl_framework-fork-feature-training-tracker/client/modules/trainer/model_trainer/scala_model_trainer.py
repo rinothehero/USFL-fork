@@ -3,6 +3,8 @@ from typing import TYPE_CHECKING
 
 from tqdm import tqdm
 
+from utils.log_utils import TQDM_DISABLED
+
 from .base_model_trainer import BaseModelTrainer
 from .propagator.propagator import get_propagator
 
@@ -45,7 +47,7 @@ class ScalaModelTrainer(BaseModelTrainer):
             total_labels = 0
 
             for batch_idx, batch in enumerate(
-                tqdm(self.trainloader, desc="Training Batches", total=iterations)
+                tqdm(self.trainloader, desc="Training Batches", total=iterations, disable=TQDM_DISABLED)
             ):
                 if batch_idx >= iterations:
                     break
@@ -80,7 +82,7 @@ class ScalaModelTrainer(BaseModelTrainer):
 
         for epoch in range(self.training_params["local_epochs"]):
             for batch_idx, batch in enumerate(
-                tqdm(self.trainloader, desc="Training Batches", total=iterations)
+                tqdm(self.trainloader, desc="Training Batches", total=iterations, disable=TQDM_DISABLED)
             ):
                 if batch_idx >= iterations:
                     break

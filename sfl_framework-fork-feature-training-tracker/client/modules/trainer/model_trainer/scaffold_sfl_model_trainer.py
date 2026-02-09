@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING
 import torch
 from tqdm import tqdm
 
-from utils.log_utils import vprint
+from utils.log_utils import vprint, TQDM_DISABLED
 
 from .base_model_trainer import BaseModelTrainer
 from .propagator.propagator import get_propagator
@@ -233,7 +233,7 @@ class ScaffoldSFLModelTrainer(BaseModelTrainer):
         for epoch in range(self.training_params["local_epochs"]):
             total_labels = 0
 
-            for batch in tqdm(self.trainloader, desc="Training Batches"):
+            for batch in tqdm(self.trainloader, desc="Training Batches", disable=TQDM_DISABLED):
                 inputs, labels = batch
                 total_labels += len(labels)
                 inputs, labels = (
@@ -310,7 +310,7 @@ class ScaffoldSFLModelTrainer(BaseModelTrainer):
         self._snapshot_round_start_for_drift()
 
         for epoch in range(self.training_params["local_epochs"]):
-            for batch in tqdm(self.trainloader, desc="Training Batches"):
+            for batch in tqdm(self.trainloader, desc="Training Batches", disable=TQDM_DISABLED):
                 inputs = batch["input_ids"].to(self.config.device)
                 attention_mask = batch["attention_mask"].to(self.config.device)
                 labels = batch["label"].to(self.config.device)

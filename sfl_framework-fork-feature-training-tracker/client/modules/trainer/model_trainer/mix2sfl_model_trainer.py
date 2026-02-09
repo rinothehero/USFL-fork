@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING
 
 from tqdm import tqdm
 
-from utils.log_utils import vprint
+from utils.log_utils import vprint, TQDM_DISABLED
 
 from .base_model_trainer import BaseModelTrainer
 from .propagator.propagator import get_propagator
@@ -168,7 +168,7 @@ class Mix2SFLModelTrainer(BaseModelTrainer):
             dataloader_iterator = iter(self.trainloader)
             local_iterations = len(self.trainloader)
 
-            for step in tqdm(range(iterations), desc="Training Batches"):
+            for step in tqdm(range(iterations), desc="Training Batches", disable=TQDM_DISABLED):
                 if step < local_iterations:
                     inputs, labels = next(dataloader_iterator)
                     self.used_samples += len(labels)

@@ -8,7 +8,7 @@ from starlette.websockets import WebSocketState
 from tqdm import tqdm
 
 from .compressor import compress, decompress
-from utils.log_utils import vprint
+from utils.log_utils import vprint, TQDM_DISABLED
 
 if TYPE_CHECKING:
     from modules.global_dict.global_dict import GlobalDict
@@ -105,6 +105,7 @@ class Connection:
                 leave=False,
                 position=i,
                 ncols=100,
+                disable=TQDM_DISABLED,
             )
             for i, client_id in enumerate(client_ids)
         ]
@@ -210,6 +211,7 @@ class Connection:
                     range(0, len(compressed_data), chunk_size),
                     desc=f"Sending compressed data to client {client_id}",
                     unit="chunk",
+                    disable=TQDM_DISABLED,
                 ):
                     chunk = compressed_data[i : i + chunk_size]
                     await websocket.send_bytes(chunk)
