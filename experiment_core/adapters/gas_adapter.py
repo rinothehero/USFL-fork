@@ -109,9 +109,18 @@ class GASAdapter(FrameworkAdapter):
         if client_schedule_path:
             p = Path(str(client_schedule_path))
             if not p.is_absolute():
-                spec_path = spec.get("execution", {}).get("_spec_path")
+                execution = spec.get("execution", {})
+                spec_path = execution.get("_spec_path")
+                repo_root = execution.get("_repo_root")
                 if spec_path:
-                    p = (Path(spec_path).resolve().parent / p).resolve()
+                    from_spec = (Path(spec_path).resolve().parent / p).resolve()
+                    if repo_root:
+                        from_repo = (Path(repo_root) / p).resolve()
+                        p = from_spec if from_spec.exists() else from_repo
+                    else:
+                        p = from_spec
+                elif repo_root:
+                    p = (Path(repo_root) / p).resolve()
             env["GAS_CLIENT_SCHEDULE_PATH"] = str(p)
 
         probe_indices_path = (
@@ -122,9 +131,18 @@ class GASAdapter(FrameworkAdapter):
         if probe_indices_path:
             p = Path(str(probe_indices_path))
             if not p.is_absolute():
-                spec_path = spec.get("execution", {}).get("_spec_path")
+                execution = spec.get("execution", {})
+                spec_path = execution.get("_spec_path")
+                repo_root = execution.get("_repo_root")
                 if spec_path:
-                    p = (Path(spec_path).resolve().parent / p).resolve()
+                    from_spec = (Path(spec_path).resolve().parent / p).resolve()
+                    if repo_root:
+                        from_repo = (Path(repo_root) / p).resolve()
+                        p = from_spec if from_spec.exists() else from_repo
+                    else:
+                        p = from_spec
+                elif repo_root:
+                    p = (Path(repo_root) / p).resolve()
             env["GAS_PROBE_INDICES_PATH"] = str(p)
 
         # Apply distribution mode flags

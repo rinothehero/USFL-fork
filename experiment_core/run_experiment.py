@@ -32,6 +32,7 @@ def main() -> None:
     spec.raw.setdefault("execution", {})["_spec_path"] = str(
         Path(args.spec).resolve()
     )
+    spec.raw["execution"]["_repo_root"] = str(Path(args.repo_root).resolve())
     outcome = run_experiment(spec, Path(args.repo_root).resolve())
 
     print("[experiment_core] done")
