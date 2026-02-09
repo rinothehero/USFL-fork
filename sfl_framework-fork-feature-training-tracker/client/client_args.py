@@ -84,6 +84,7 @@ class ServerConfig:
     model_path: str  # File path to save/load the model.
     dataset_path: str  # File path to the dataset location.
     result_output_dir: str  # Directory for result JSON files (empty = CWD).
+    client_schedule_path: str  # Optional JSON file for fixed round-wise client IDs.
 
     # ==================
     #  METHOD OPTIONS
@@ -103,6 +104,15 @@ class ServerConfig:
     # Drift Measurement (SCAFFOLD-style)
     enable_drift_measurement: bool  # Enable client drift measurement
     drift_sample_interval: int  # Measure drift every n steps (1 = every step)
+    # Experiment A Probe (server-only, but sent via config dict)
+    probe_source: str  # Probe dataset source: "test" | "train"
+    probe_indices_path: str  # Optional JSON/TXT indices file for fixed probe set Q
+    probe_num_samples: int  # If >0 and indices file empty, sample fixed-size probe subset
+    probe_batch_size: int  # Probe loader batch size
+    probe_max_batches: int  # Number of probe batches used to estimate c^t
+    probe_seed: int  # Seed for random probe subset sampling
+    probe_class_balanced: bool  # Sample probe subset with class-balanced policy
+    probe_class_balanced_batches: bool  # Reorder probe indices for class-balanced batches
     # In-round evaluation
     enable_inround_evaluation: bool  # Enable training accuracy evaluation during in-round
     # FitFL
