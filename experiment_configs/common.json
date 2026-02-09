@@ -13,7 +13,7 @@
   "total_clients": 100,
   "clients_per_round": 10,
   "local_epochs": 5,
-  "learning_rate": 0.001,
+  "learning_rate": 0.01,
   "_split_layer": "Model split point. e.g. layer1 | layer1.1.bn2 | layer2 (ResNet18).",
   "split_layer": "layer2",
   "_section_training": "=== Training Options (shared across frameworks) ===",
