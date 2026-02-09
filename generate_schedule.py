@@ -1,9 +1,10 @@
 """
 Generate fixed client schedule by simulating USFL selector logic.
 
-Replicates the USFL selector's alpha-based scoring (missing label coverage +
-selection frequency balancing) without running actual training. Produces a
-JSON schedule file usable by all methods via client_schedule_path.
+Uses the EXACT same shard_dirichlet distribution code as the SFL framework
+(verbatim copy from shard_dirichlet_distributer.py) to ensure identical
+per-client label assignments. Then simulates USFL selector to produce a
+schedule file usable by all methods via client_schedule_path.
 
 Usage:
     python generate_schedule.py
@@ -18,12 +19,87 @@ import math
 import random
 from collections import Counter, deque
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import numpy as np
 
 
 # ── Shard-Dirichlet Distribution ────────────────────────────────────
+# VERBATIM copy of ShardDirichletDistributer._distribute_once() from
+# sfl_framework-fork-feature-training-tracker/server/modules/trainer/
+# distributer/shard_dirichlet_distributer.py
+# DO NOT modify without syncing with the framework code.
+
+def _distribute_once(
+    targets: np.ndarray,
+    num_clients: int,
+    num_classes: int,
+    labels_per_client: int,
+    alpha: float,
+    prng: np.random.Generator,
+) -> Tuple[List[List[int]], Dict[int, List[int]]]:
+    """Exact copy of ShardDirichletDistributer._distribute_once()."""
+    # Step 1: Calculate how many times each class should be assigned
+    total_assignments = num_clients * labels_per_client
+    assignments_per_class = total_assignments // num_classes
+
+    # Create class pool: each class appears exactly assignments_per_class times
+    class_pool = []
+    for k in range(num_classes):
+        class_pool.extend([k] * assignments_per_class)
+
+    # Handle remainder: distribute extra assignments to some classes
+    remainder = total_assignments - len(class_pool)
+    extra_classes = prng.choice(num_classes, size=remainder, replace=False)
+    class_pool.extend(extra_classes.tolist())
+
+    prng.shuffle(class_pool)
+
+    # Step 2: Assign classes to each client
+    client2classes = {}
+
+    for i in range(num_clients):
+        assigned = class_pool[i * labels_per_client : (i + 1) * labels_per_client]
+        # Remove duplicates within same client
+        assigned = list(set(assigned))
+
+        # If we got fewer due to duplicates, fill from remaining pool or random
+        while len(assigned) < labels_per_client:
+            # Try to find a class not yet in assigned
+            for c in range(num_classes):
+                if c not in assigned:
+                    assigned.append(c)
+                    break
+            else:
+                break
+
+        client2classes[i] = assigned
+
+    # Step 3: Distribute samples using Dirichlet
+    idx_clients: List[List[int]] = [[] for _ in range(num_clients)]
+
+    for k in range(num_classes):
+        clients_with_class_k = [i for i in range(num_clients) if k in client2classes[i]]
+
+        if not clients_with_class_k:
+            continue
+
+        idx_k = np.where(targets == k)[0]
+        if len(idx_k) == 0:
+            continue
+
+        prng.shuffle(idx_k)
+
+        # Dirichlet distribution among clients that have this class
+        proportions = prng.dirichlet(np.repeat(alpha, len(clients_with_class_k)))
+        proportions = (np.cumsum(proportions) * len(idx_k)).astype(int)[:-1]
+        idx_splits = np.split(idx_k, proportions)
+
+        for client_idx, split in zip(clients_with_class_k, idx_splits):
+            idx_clients[client_idx].extend(split.tolist())
+
+    return idx_clients, client2classes
+
 
 def shard_dirichlet_distribute(
     targets: np.ndarray,
@@ -33,60 +109,35 @@ def shard_dirichlet_distribute(
     seed: int,
     min_require_size: int = 12,
     max_retries: int = 10000,
-) -> List[List[int]]:
-    """Replicate ShardDirichletDistributer from the SFL framework."""
-    num_classes = len(set(targets.tolist()))
+) -> Tuple[List[List[int]], Dict[int, List[int]]]:
+    """Exact replica of ShardDirichletDistributer.distribute() retry loop."""
+    num_classes = len(set(targets.tolist()) - {int("9999999")})
 
     for retry in range(max_retries):
         prng = np.random.default_rng(seed + retry)
 
-        # Step 1: class assignment pool (each class assigned equally)
-        total_assignments = num_clients * labels_per_client
-        per_class = total_assignments // num_classes
-        class_pool = [k for k in range(num_classes) for _ in range(per_class)]
-        remainder = total_assignments - len(class_pool)
-        if remainder > 0:
-            extra = prng.choice(num_classes, size=remainder, replace=False)
-            class_pool.extend(extra.tolist())
-        prng.shuffle(class_pool)
+        idx_clients, client2classes = _distribute_once(
+            targets, num_clients, num_classes, labels_per_client, alpha, prng
+        )
 
-        # Step 2: assign classes to each client
-        client2classes: Dict[int, List[int]] = {}
-        for i in range(num_clients):
-            assigned = list(set(class_pool[i * labels_per_client: (i + 1) * labels_per_client]))
-            c = 0
-            while len(assigned) < labels_per_client:
-                if c not in assigned:
-                    assigned.append(c)
-                c += 1
-            client2classes[i] = assigned
-
-        # Step 3: distribute samples via Dirichlet
-        idx_clients: List[List[int]] = [[] for _ in range(num_clients)]
-        for k in range(num_classes):
-            clients_k = [i for i in range(num_clients) if k in client2classes[i]]
-            idx_k = np.where(targets == k)[0].copy()
-            prng.shuffle(idx_k)
-            if not clients_k:
-                continue
-            props = prng.dirichlet(np.repeat(alpha, len(clients_k)))
-            splits = np.split(idx_k, (np.cumsum(props) * len(idx_k)).astype(int)[:-1])
-            for ci, sp in zip(clients_k, splits):
-                idx_clients[ci].extend(sp.tolist())
-
-        min_size = min(len(v) for v in idx_clients)
+        min_size = min(len(idx) for idx in idx_clients) if idx_clients else 0
         if min_size >= min_require_size:
-            return idx_clients
+            break
+    else:
+        print(f"[WARN] Could not achieve min_size={min_require_size} "
+              f"after {max_retries} retries. Final min_size={min_size}")
 
-    # Fallback: borrow from richest client
+    # Fallback: handle empty clients by borrowing from richest
     for j in range(num_clients):
         if len(idx_clients[j]) == 0:
             richest = max(range(num_clients), key=lambda x: len(idx_clients[x]))
-            borrow = max(1, min(min_require_size, len(idx_clients[richest]) // 2))
-            for _ in range(borrow):
+            num_to_borrow = min(min_require_size, len(idx_clients[richest]) // 2)
+            num_to_borrow = max(1, num_to_borrow)
+            for _ in range(num_to_borrow):
                 if len(idx_clients[richest]) > 1:
                     idx_clients[j].append(idx_clients[richest].pop())
-    return idx_clients
+
+    return idx_clients, client2classes
 
 
 # ── USFL Selector Simulator ─────────────────────────────────────────
@@ -107,14 +158,6 @@ class USFLSelectorSim:
     @staticmethod
     def _minmax(val: float, lo: float, hi: float) -> float:
         return 0.0 if hi == lo else (val - lo) / (hi - lo)
-
-    @staticmethod
-    def _kl(counts: Dict[str, int], nc: int) -> float:
-        total = sum(counts.values())
-        if total == 0:
-            return float("inf")
-        return sum((c / total) * math.log((c / total) * nc)
-                   for c in counts.values() if c > 0)
 
     def select(self, label_dists: Dict[int, Dict[str, int]],
                alpha: float = 0.5) -> List[int]:
@@ -262,9 +305,9 @@ def main():
     num_classes = len(set(targets.tolist()))
     print(f"  Samples: {len(targets)}, classes: {num_classes}")
 
-    # 2. Distribute data (shard_dirichlet)
+    # 2. Distribute data (shard_dirichlet) — EXACT same as framework
     min_req = max(10, args.batch_size // 4)
-    idx_clients = shard_dirichlet_distribute(
+    idx_clients, client2classes = shard_dirichlet_distribute(
         targets, args.total_clients, args.labels_per_client,
         args.alpha, args.seed, min_req,
     )
@@ -277,6 +320,15 @@ def main():
     for cid in range(args.total_clients):
         counts = Counter(int(targets[i]) for i in idx_clients[cid])
         label_dists[cid] = {str(k): v for k, v in counts.items()}
+
+    # 3b. Print class coverage summary
+    print(f"\n  Class coverage per client (labels_per_client={args.labels_per_client}):")
+    class_count = Counter()
+    for cid, classes in client2classes.items():
+        for c in classes:
+            class_count[c] += 1
+    for c in range(num_classes):
+        print(f"    Class {c}: assigned to {class_count[c]} clients")
     print()
 
     # 4. Simulate USFL selection
@@ -287,6 +339,16 @@ def main():
     for r in range(args.rounds):
         selected = selector.select(label_dists)
         schedule.append(selected)
+
+        # Verify all classes covered
+        round_labels = set()
+        for cid in selected:
+            round_labels.update(int(k) for k in label_dists[cid].keys())
+        if len(round_labels) < num_classes:
+            missing = set(range(num_classes)) - round_labels
+            print(f"  [WARN] Round {r+1}: missing classes {missing} "
+                  f"in selected clients {selected}")
+
         if (r + 1) % 50 == 0 or r == 0:
             print(f"  Round {r+1:3d}/{args.rounds}: {selected}")
 
