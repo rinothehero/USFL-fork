@@ -34,6 +34,7 @@ def main():
     print(f"[0] min_require_size={min_require_size} (must match framework)")
 
     # ── 1. Load real CIFAR-10 targets ──
+    from generate_schedule import _distribute_once
     from torchvision.datasets import CIFAR10
     ds = CIFAR10(root="./data", train=True, download=True)
     targets = np.array(ds.targets)
