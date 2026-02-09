@@ -22,6 +22,17 @@
         2,
         3
       ]
+    },
+    "xsailor3": {
+      "ssh_host": "xsailor3-pj",
+      "remote_repo": "/home/xsailor3/jhkang/USFL-fork",
+      "conda_env": "usfl_env",
+      "gpus": [
+        0,
+        1,
+        2,
+        3
+      ]
     }
   },
   "gdrive_rclone_remote": "",
