@@ -167,39 +167,69 @@ def run_batch(batch_spec_path: str, repo_root: Path) -> None:
 
     print(f"[batch_runner] Output: {output_dir}")
     print(f"[batch_runner] Experiments: {len(experiments)}")
-    print()
 
-    # 각 실험 시작
-    procs: List[Dict[str, Any]] = []
+    # Group experiments by GPU: same GPU → sequential, different GPUs → parallel
+    from collections import defaultdict
+
+    gpu_groups: Dict[Optional[int], List[Dict[str, Any]]] = defaultdict(list)
     for exp in experiments:
-        name = exp.get("name", exp.get("framework", "unknown"))
         gpu = exp.get("gpu")
-        spec = _build_single_spec(common, exp, output_dir)
+        gpu_groups[gpu].append(exp)
 
-        handle = _run_one(spec, name, gpu, repo_root, log_dir)
-        gpu_str = f"GPU {gpu}" if gpu is not None else "CPU"
-        print(f"  [{name}] started (PID={handle['proc'].pid}, {gpu_str})")
-        procs.append({"name": name, "gpu": gpu, "start": time.time(), **handle})
-
+    n_groups = len(gpu_groups)
+    if n_groups == 1:
+        gpu_val = list(gpu_groups.keys())[0]
+        n_exps = len(list(gpu_groups.values())[0])
+        if n_exps > 1:
+            print(f"[batch_runner] Mode: sequential (all on GPU {gpu_val})")
+        else:
+            print(f"[batch_runner] Mode: single experiment (GPU {gpu_val})")
+    else:
+        print(f"[batch_runner] Mode: parallel across {n_groups} GPU(s), sequential within each")
     print()
-    print("[batch_runner] Waiting for all experiments to finish...")
-    print()
 
-    # 완료 대기
-    results = []
-    for item in procs:
-        proc = item["proc"]
-        proc.wait()
-        item["thread"].join(timeout=5)
-        elapsed = time.time() - item["start"]
-        status = "OK" if proc.returncode == 0 else f"FAIL (exit={proc.returncode})"
-        results.append({
-            "name": item["name"],
-            "gpu": item["gpu"],
-            "exit_code": proc.returncode,
-            "elapsed_sec": round(elapsed, 1),
-        })
-        print(f"  [{item['name']}] {status}  ({elapsed:.0f}s)")
+    results: List[Dict[str, Any]] = []
+    result_lock = threading.Lock()
+
+    def _run_gpu_group(gpu_exps: List[Dict[str, Any]]) -> None:
+        """Run experiments for one GPU sequentially."""
+        for exp in gpu_exps:
+            name = exp.get("name", exp.get("framework", "unknown"))
+            gpu = exp.get("gpu")
+            spec = _build_single_spec(common, exp, output_dir)
+
+            start = time.time()
+            handle = _run_one(spec, name, gpu, repo_root, log_dir)
+            gpu_str = f"GPU {gpu}" if gpu is not None else "CPU"
+            print(f"  [{name}] started (PID={handle['proc'].pid}, {gpu_str})")
+
+            proc = handle["proc"]
+            proc.wait()
+            handle["thread"].join(timeout=5)
+            elapsed = time.time() - start
+            status = "OK" if proc.returncode == 0 else f"FAIL (exit={proc.returncode})"
+
+            with result_lock:
+                results.append({
+                    "name": name,
+                    "gpu": gpu,
+                    "exit_code": proc.returncode,
+                    "elapsed_sec": round(elapsed, 1),
+                })
+            print(f"  [{name}] {status}  ({elapsed:.0f}s)")
+
+    if n_groups <= 1:
+        # Single GPU (or CPU): run sequentially in main thread
+        _run_gpu_group(list(gpu_groups.values())[0])
+    else:
+        # Multiple GPUs: run groups in parallel threads
+        group_threads = []
+        for gpu, gpu_exps in gpu_groups.items():
+            t = threading.Thread(target=_run_gpu_group, args=(gpu_exps,))
+            group_threads.append(t)
+            t.start()
+        for t in group_threads:
+            t.join()
 
     # summary 저장
     summary = {

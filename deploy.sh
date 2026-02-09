@@ -47,6 +47,20 @@ get_global_field() {
     jq -r ".$field // empty" "$CONFIG_FILE"
 }
 
+# Check if method appears as a +-delimited component in exp_name
+# Examples: exp_name="usfl+sfl-g0-222446" matches method "usfl" and "sfl"
+#           exp_name="usfl-g0-222446" matches only "usfl"
+#           exp_name="sfl_iid-g0-222446" does NOT match "sfl"
+_exp_matches_method() {
+    local exp_name="$1" method="$2"
+    local padded="+${exp_name}"
+    # +method+ (middle of group), +method- (end of group/before suffix)
+    [[ "$padded" == *"+${method}+"* || "$padded" == *"+${method}-"* ]] && return 0
+    # Exact match (legacy format: just "method")
+    [[ "$exp_name" == "$method" ]] && return 0
+    return 1
+}
+
 list_servers() {
     jq -r '.servers | keys[]' "$CONFIG_FILE"
 }
@@ -118,11 +132,17 @@ _is_run_complete() {
     tmux_session=$(get_global_field "tmux_session")
     tmux_session="${tmux_session:-usfl-exp}"
 
+    # Check each unique server once: any session with our run_id means still running
+    local checked_servers=""
     local IFS=","
     for entry in $assignments_csv; do
-        local method="${entry%%:*}"
         local rest="${entry#*:}"
         local server="${rest%%:*}"
+
+        case " $checked_servers " in
+            *" $server "*) continue ;;
+        esac
+        checked_servers="$checked_servers $server"
 
         local ssh_host
         ssh_host=$(get_server_field "$server" "ssh_host")
@@ -130,24 +150,14 @@ _is_run_complete() {
             continue
         fi
 
-        # Check new naming (method-run_id), then legacy (method-only)
-        local sess="${tmux_session}-${method}-${run_id}"
         # shellcheck disable=SC2029
-        local has_session
-        has_session=$(ssh -o ConnectTimeout=5 "$ssh_host" \
-            "tmux has-session -t '$sess' 2>/dev/null && echo 'yes' || echo 'no'" 2>/dev/null \
-            || echo "no")
+        local active
+        active=$(ssh -o ConnectTimeout=5 "$ssh_host" \
+            "tmux ls 2>/dev/null | grep '^${tmux_session}-' | grep '${run_id}' | head -1" 2>/dev/null \
+            || echo "")
 
-        if [[ "$has_session" != "yes" ]]; then
-            local legacy_sess="${tmux_session}-${method}"
-            # shellcheck disable=SC2029
-            has_session=$(ssh -o ConnectTimeout=5 "$ssh_host" \
-                "tmux has-session -t '$legacy_sess' 2>/dev/null && echo 'yes' || echo 'no'" 2>/dev/null \
-                || echo "no")
-        fi
-
-        if [[ "$has_session" == "yes" ]]; then
-            return 1  # at least one experiment is still running
+        if [[ -n "$active" ]]; then
+            return 1  # at least one session still running
         fi
     done
     return 0  # all done
@@ -245,8 +255,38 @@ do_git_push() {
         git push origin "$branch" 2>/dev/null || echo "  (push skipped — already up to date)"
     else
         echo "  Uncommitted changes detected."
-        read -rp "  Commit message [exp: deploy $(date +%H%M)]: " msg
-        msg="${msg:-exp: deploy $(date +%Y%m%d_%H%M%S)}"
+        # Check if changes are config-only (experiment_configs/ directory)
+        local changed_files
+        changed_files=$(git diff --name-only HEAD 2>/dev/null; git diff --cached --name-only 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null)
+        changed_files=$(echo "$changed_files" | sort -u | grep -v '^$')
+
+        local non_config
+        non_config=$(echo "$changed_files" | grep -v '^experiment_configs/' || true)
+
+        local msg
+        if [[ -z "$non_config" ]]; then
+            # Config-only changes
+            msg="exp: deploy $(date +%H%M)"
+            echo "  Config-only changes (experiment_configs/)."
+        else
+            echo "  Changed files outside experiment_configs/:"
+            echo "$non_config" | while IFS= read -r f; do echo "    $f"; done
+            echo ""
+            read -rp "  Commit message: " msg
+            if [[ -z "$msg" ]]; then
+                echo "  Cancelled (empty message)."
+                return 1
+            fi
+        fi
+
+        echo ""
+        echo "  Commit: \"$msg\""
+        read -rp "  Proceed? [Y/n] " confirm
+        if [[ "$confirm" =~ ^[Nn] ]]; then
+            echo "  Cancelled."
+            return 1
+        fi
+
         git add -A
         git commit -m "$msg"
         git push origin "$branch"
@@ -449,7 +489,32 @@ cmd_run() {
     # run_id = HHMMSS from run_name (e.g., "222446" from "cifar10_a0.3_r100_20260207_222446")
     local _run_id="${_run_name##*_}"
 
-    # Batch mode: per-experiment tmux sessions
+    # ── Group assignments by (server, gpu) for sequential execution ──
+    local GROUP_KEYS=()    # "server:gpu" entries (unique)
+    local GROUP_METHODS=() # corresponding methods, +-joined (e.g., "usfl+sfl")
+
+    for entry in "${ASSIGNMENTS[@]}"; do
+        local method="${entry%%:*}"
+        local rest="${entry#*:}"
+        local server="${rest%%:*}"
+        local gpu="${rest#*:}"
+        local key="${server}:${gpu}"
+
+        local found=false
+        for i in "${!GROUP_KEYS[@]}"; do
+            if [[ "${GROUP_KEYS[$i]}" == "$key" ]]; then
+                GROUP_METHODS[$i]="${GROUP_METHODS[$i]}+${method}"
+                found=true
+                break
+            fi
+        done
+        if [[ "$found" == false ]]; then
+            GROUP_KEYS+=("$key")
+            GROUP_METHODS+=("$method")
+        fi
+    done
+
+    # Batch mode: per-GPU tmux sessions (grouped methods run sequentially)
     echo "── Execution Plan ──"
     echo "  Branch: $branch"
     if [[ -n "$run_name_override" ]]; then
@@ -457,24 +522,31 @@ cmd_run() {
     else
         echo "  Run:    $_run_name"
     fi
-    for entry in "${ASSIGNMENTS[@]}"; do
-        local method="${entry%%:*}"
-        local rest="${entry#*:}"
-        local server="${rest%%:*}"
-        local gpu="${rest#*:}"
-        echo "  $method → $server GPU $gpu  (tmux: ${tmux_session}-${method}-g${gpu}-${_run_id})"
+    for i in "${!GROUP_KEYS[@]}"; do
+        local key="${GROUP_KEYS[$i]}"
+        local server="${key%%:*}"
+        local gpu="${key#*:}"
+        local methods="${GROUP_METHODS[$i]}"
+        local session_name="${tmux_session}-${methods}-g${gpu}-${_run_id}"
+        local methods_display="${methods//+/, }"
+        if [[ "$methods" == *"+"* ]]; then
+            echo "  $methods_display → $server GPU $gpu  (tmux: $session_name) [sequential]"
+        else
+            echo "  $methods_display → $server GPU $gpu  (tmux: $session_name)"
+        fi
     done
     echo ""
 
     # Check for existing tmux sessions BEFORE starting
     local has_conflict=false
-    for entry in "${ASSIGNMENTS[@]}"; do
-        local method="${entry%%:*}"
-        local rest="${entry#*:}"
-        local server="${rest%%:*}"
+    for i in "${!GROUP_KEYS[@]}"; do
+        local key="${GROUP_KEYS[$i]}"
+        local server="${key%%:*}"
+        local gpu="${key#*:}"
+        local methods="${GROUP_METHODS[$i]}"
         local ssh_host
         ssh_host=$(get_server_field "$server" "ssh_host")
-        local session_name="${tmux_session}-${method}-g${gpu}-${_run_id}"
+        local session_name="${tmux_session}-${methods}-g${gpu}-${_run_id}"
         # shellcheck disable=SC2029
         if ssh -o ConnectTimeout=5 "$ssh_host" "tmux has-session -t '$session_name' 2>/dev/null" 2>/dev/null; then
             echo "  WARNING: tmux '$session_name' already running on $server"
@@ -522,45 +594,55 @@ cmd_run() {
     echo "  Results:  results/$_run_name/"
     echo ""
 
-    # Phase 2: Per-experiment tmux sessions (parallel)
+    # Phase 2: Per-GPU tmux sessions (parallel across groups, sequential within)
     local pids=()
-    for entry in "${ASSIGNMENTS[@]}"; do
-        local method="${entry%%:*}"
-        local rest="${entry#*:}"
-        local server="${rest%%:*}"
-        local gpu="${rest#*:}"
+    for i in "${!GROUP_KEYS[@]}"; do
+        local key="${GROUP_KEYS[$i]}"
+        local server="${key%%:*}"
+        local gpu="${key#*:}"
+        local methods="${GROUP_METHODS[$i]}"
         (
             local ssh_host remote_repo conda_env
             ssh_host=$(get_server_field "$server" "ssh_host")
             remote_repo=$(get_server_field "$server" "remote_repo")
             conda_env=$(get_server_field "$server" "conda_env")
 
-            # Generate single-experiment spec with shared output dir
-            local spec_file="/tmp/usfl_spec_${method}_g${gpu}_$$.json"
+            # Generate spec (supports multiple methods → sequential execution)
+            local methods_space="${methods//+/ }"
+            local gpu_map="{"
+            local first=true
+            for m in $methods_space; do
+                if [[ "$first" == true ]]; then first=false; else gpu_map+=","; fi
+                gpu_map+="\"$m\":$gpu"
+            done
+            gpu_map+="}"
+
+            local spec_file="/tmp/usfl_spec_${methods}_g${gpu}_$$.json"
             python3 -m experiment_core.generate_spec \
                 --config-dir experiment_configs \
-                --methods "$method" \
-                --gpu-map "{\"$method\":$gpu}" \
+                --methods $methods_space \
+                --gpu-map "$gpu_map" \
                 --output-dir "results/$_run_name" \
                 --output "$spec_file"
 
-            # Transfer spec to server (include GPU to avoid overwrite when same method on multiple GPUs)
-            local remote_spec="batch_spec_${method}_g${gpu}.json"
+            # Transfer spec to server
+            local remote_spec="batch_spec_${methods}_g${gpu}.json"
             scp -q "$spec_file" "$ssh_host:$remote_repo/$remote_spec"
             rm -f "$spec_file"
 
-            # Kill existing session if present (exact name match)
-            local session_name="${tmux_session}-${method}-g${gpu}-${_run_id}"
+            # Kill existing session if present
+            local session_name="${tmux_session}-${methods}-g${gpu}-${_run_id}"
             # shellcheck disable=SC2029
             ssh "$ssh_host" "tmux kill-session -t '$session_name' 2>/dev/null || true"
 
-            # Start experiment in its own tmux session
+            # Start experiment(s) in tmux session
             # shellcheck disable=SC2029
             ssh "$ssh_host" "cd $remote_repo && \
                 tmux new-session -d -s '$session_name' \
-                'bash deploy/remote_run.sh $conda_env $remote_spec 2>&1 | tee experiment_${method}-g${gpu}-${_run_id}.log'"
+                'bash deploy/remote_run.sh $conda_env $remote_spec 2>&1 | tee experiment_${methods}-g${gpu}-${_run_id}.log'"
 
-            echo "[$server] $method → GPU $gpu (tmux: $session_name)"
+            local methods_display="${methods//+/, }"
+            echo "[$server] $methods_display → GPU $gpu (tmux: $session_name)"
         ) &
         pids+=($!)
     done
@@ -681,12 +763,12 @@ cmd_logs() {
     remote_repo=$(get_server_field "$server" "remote_repo")
 
     if [[ -n "$method" ]]; then
-        # Try exact match first (e.g., "sfl-222446"), then glob for method prefix (e.g., "sfl")
+        # Find log file: try exact match, single-method patterns, then grouped patterns
         # shellcheck disable=SC2029
         local log_file
         log_file=$(ssh "$ssh_host" "cd $remote_repo && \
             if [ -f experiment_${method}.log ]; then echo experiment_${method}.log; \
-            else ls -t experiment_${method}-*.log 2>/dev/null | head -1; fi" 2>/dev/null)
+            else ls -t experiment_${method}-*.log experiment_${method}+*.log experiment_*+${method}-*.log experiment_*+${method}+*.log 2>/dev/null | head -1; fi" 2>/dev/null)
 
         if [[ -z "$log_file" ]]; then
             echo "No log file found for '$method' on $server."
@@ -741,11 +823,13 @@ cmd_attach() {
         return
     fi
 
-    # Find matching session: try exact match, then prefix match
+    # Find matching session: search for method as a component in session name
+    # Handles: "method-g0-123", "method+other-g0-123", "other+method-g0-123"
     local session_name=""
     # shellcheck disable=SC2029
     session_name=$(ssh -o ConnectTimeout=5 "$ssh_host" \
-        "tmux ls 2>/dev/null | grep '^${tmux_session}-${method}' | cut -d: -f1 | head -1" 2>/dev/null \
+        "tmux ls 2>/dev/null | grep '^${tmux_session}-' | cut -d: -f1 | \
+        grep -m1 -E '^${tmux_session}-(${method}[+-]|.*\\+${method}[+-]|.*\\+${method}\$)'" 2>/dev/null \
         || echo "")
 
     if [[ -z "$session_name" ]]; then
@@ -1039,9 +1123,9 @@ cmd_kill() {
             local exp_name="${sess#${tmux_session}-}"
 
             if [[ "$mode" == "targeted" && -n "$target_method" ]]; then
-                # exp_name formats: "method-gN-runid" or legacy "method-runid"
-                # Match on exact name, or method prefix (e.g., "usfl" matches "usfl-g0-123349")
-                if [[ "$exp_name" != "$target_method" && "$exp_name" != "${target_method}-"* ]]; then
+                # Match method as a +-delimited component (handles grouped sessions)
+                # e.g., "usfl" matches "usfl-g0-123" and "usfl+sfl-g0-123"
+                if ! _exp_matches_method "$exp_name" "$target_method"; then
                     continue
                 fi
             fi
@@ -1226,27 +1310,37 @@ for m in matches:
 
         total=$((total + 1))
 
-        # Try new naming first (method-run_id), fall back to legacy (method-only)
-        local sess="${tmux_session}-${method}-${run_id}"
-        local log_name="experiment_${method}-${run_id}.log"
-
+        # Discover session for this method (handles grouped sessions like "usfl+sfl-g0-123")
         # shellcheck disable=SC2029
-        local has_session
-        has_session=$(ssh -o ConnectTimeout=5 "$ssh_host" \
-            "tmux has-session -t '$sess' 2>/dev/null && echo 'yes' || echo 'no'" 2>/dev/null \
-            || echo "no")
+        local all_sessions
+        all_sessions=$(ssh -o ConnectTimeout=5 "$ssh_host" \
+            "tmux ls 2>/dev/null | grep '^${tmux_session}-' | cut -d: -f1" 2>/dev/null \
+            || echo "")
 
-        # Fallback to legacy session name
-        if [[ "$has_session" != "yes" ]]; then
-            local legacy_sess="${tmux_session}-${method}"
-            # shellcheck disable=SC2029
-            has_session=$(ssh -o ConnectTimeout=5 "$ssh_host" \
-                "tmux has-session -t '$legacy_sess' 2>/dev/null && echo 'yes' || echo 'no'" 2>/dev/null \
-                || echo "no")
-            if [[ "$has_session" == "yes" ]]; then
-                sess="$legacy_sess"
-                log_name="experiment_${method}.log"
+        local sess="" log_name=""
+        for candidate in $all_sessions; do
+            local candidate_exp="${candidate#${tmux_session}-}"
+            if _exp_matches_method "$candidate_exp" "$method" && [[ "$candidate_exp" == *"${run_id}"* ]]; then
+                sess="$candidate"
+                log_name="experiment_${candidate_exp}.log"
+                break
             fi
+        done
+
+        # Legacy fallback: exact session name without run_id
+        if [[ -z "$sess" ]]; then
+            for candidate in $all_sessions; do
+                if [[ "$candidate" == "${tmux_session}-${method}" ]]; then
+                    sess="$candidate"
+                    log_name="experiment_${method}.log"
+                    break
+                fi
+            done
+        fi
+
+        local has_session="no"
+        if [[ -n "$sess" ]]; then
+            has_session="yes"
         fi
 
         if [[ "$has_session" == "yes" ]]; then
@@ -1317,6 +1411,7 @@ Commands:
 Run Usage:
   ./deploy.sh run usfl@server-a:0 gas@server-b:1
   ./deploy.sh run --server server-a --methods "usfl sfl" --gpus "0 1"
+  ./deploy.sh run usfl@s:0 sfl@s:0 gas@s:1     # usfl+sfl run sequentially on GPU 0
   ./deploy.sh run -i --server server-a          # 대화형 모드
   ./deploy.sh run --no-push usfl@server-a:0     # git push 스킵
   ./deploy.sh run --run-name <name> usfl@s:0    # 기존 run에 실험 추가/재실행
