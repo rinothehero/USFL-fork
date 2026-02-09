@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, List
 import torch
 
 from .base_aggregator import BaseAggregator
+from utils.log_utils import vprint
 
 if TYPE_CHECKING:
     from typing import List
@@ -69,13 +70,13 @@ class FitFLAggregator(BaseAggregator):
         params: List[dict],
         except_zero=False,
     ):
-        print(f"Params: {params}")
+        vprint(f"Params: {params}", 2)
         dataset_sizes = [param["dataset_size"] for param in params]
         trained_epochs = [param["trained_epochs"] for param in params]
-        print(f"Trained epochs: {trained_epochs}")
+        vprint(f"Trained epochs: {trained_epochs}", 2)
 
         if except_zero:
-            print("Except zero parameters")
+            vprint("Except zero parameters", 0)
             return self._except_zero(models, dataset_sizes, trained_epochs)
 
         if not models:
@@ -92,9 +93,9 @@ class FitFLAggregator(BaseAggregator):
             for dataset_weight, epoch_weight in zip(dataset_weights, epoch_weights)
         ]
 
-        print(f"Dataset sizes: {dataset_sizes}")
-        print(f"Epochs: {epochs}")
-        print(f"Weights: {weights}")
+        vprint(f"Dataset sizes: {dataset_sizes}", 2)
+        vprint(f"Epochs: {epochs}", 2)
+        vprint(f"Weights: {weights}", 2)
 
         aggregated_state_dict = {}
         for key, param in models[0].state_dict().items():

@@ -4,6 +4,7 @@ import numpy as np
 import torch
 
 from .base_distributer import BaseDistributer
+from utils.log_utils import vprint
 
 if TYPE_CHECKING:
     from server_args import Config
@@ -70,7 +71,7 @@ class LabelDirichletDistributer(BaseDistributer):
             targets = self._remove_fraction_of_labels(targets, 0.5)
 
         num_classes = len(set(targets) - {int("9999999")})
-        print("num_classes: ", num_classes)
+        vprint(f"num_classes: {num_classes}", 2)
 
         labels_per_client = self.config.labels_per_client
         seed = getattr(self.config, "seed", 42)
@@ -102,7 +103,7 @@ class LabelDirichletDistributer(BaseDistributer):
 
         for i in range(num_classes):
             if times[i] == 0:
-                print(f"Class {i} was not assigned to any client.")
+                vprint(f"Class {i} was not assigned to any client.", 0)
                 continue
 
             idx_k = np.where(targets == i)[0]
@@ -118,26 +119,26 @@ class LabelDirichletDistributer(BaseDistributer):
 
         for j in range(num_clients):
             if len(idx_clients[j]) == 0:
-                print(
-                    f"Client {clients[j]} has no samples. Finding samples to assign..."
+                vprint(
+                    f"Client {clients[j]} has no samples. Finding samples to assign...", 0
                 )
                 max_samples_client = max(
                     range(num_clients), key=lambda x: len(idx_clients[x])
                 )
                 if len(idx_clients[max_samples_client]) > 1:
                     idx_clients[j].append(idx_clients[max_samples_client].pop())
-                    print(
-                        f"  Assigned 1 sample from client {clients[max_samples_client]} to client {clients[j]}"
+                    vprint(
+                        f"  Assigned 1 sample from client {clients[max_samples_client]} to client {clients[j]}", 2
                     )
                 else:
-                    print(f"  Could not find samples to assign to client {clients[j]}")
+                    vprint(f"  Could not find samples to assign to client {clients[j]}", 0)
 
         total_assigned_samples = 0
         for i, idx_j in enumerate(idx_clients):
             num_samples = len(idx_j)
             total_assigned_samples += num_samples
-            print(f"Client {clients[i]}: {num_samples} samples, labels: {contains[i]}")
-        print(f"Total assigned samples: {total_assigned_samples}")
-        print(f"Total dataset size: {dataset_size}")
+            vprint(f"Client {clients[i]}: {num_samples} samples, labels: {contains[i]}", 2)
+        vprint(f"Total assigned samples: {total_assigned_samples}", 2)
+        vprint(f"Total dataset size: {dataset_size}", 2)
 
         return idx_clients

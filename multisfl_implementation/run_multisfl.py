@@ -28,6 +28,7 @@ from multisfl.replay import ScoreVectorTracker, KnowledgeRequestPlanner
 from multisfl.scheduler import SamplingProportionScheduler
 from multisfl.trainer import MultiSFLTrainer
 from multisfl.utils import set_seed
+from multisfl.log_utils import vprint
 
 
 def str_to_bool(value: str) -> bool:
@@ -311,7 +312,7 @@ def main():
     else:
         raise ValueError(f"Unknown dataset: {args.dataset}")
 
-    print(f"Partitioning data: {args.partition}")
+    vprint(f"Partitioning data: {args.partition}", 1)
     if args.partition == "iid":
         client_data_list = partition_iid(
             train_data, args.num_clients, args.num_classes, seed=args.seed
@@ -379,7 +380,7 @@ def main():
     )
 
     if cfg.use_torchvision_init and cfg.model_type == "resnet18_image_style":
-        print("[Init] Loading torchvision ResNet18 weights...")
+        vprint("[Init] Loading torchvision ResNet18 weights...", 1)
         wc_init, ws_init = load_torchvision_resnet18_init(
             wc_init, ws_init, split_layer=cfg.split_layer or "layer1", image_style=True
         )
@@ -417,22 +418,22 @@ def main():
         test_loader=test_loader,
     )
 
-    print("\n" + "=" * 70)
-    print("Starting Training")
-    print("=" * 70)
+    vprint("\n" + "=" * 70, 1)
+    vprint("Starting Training", 1)
+    vprint("=" * 70, 1)
 
     stats = trainer.run()
 
-    print("\n" + "=" * 70)
-    print("Training Complete - Summary")
-    print("=" * 70)
-    print(
-        f"{'Round':>6} {'Acc':>8} {'p_r':>10} {'Requested':>10} {'Collected':>10} {'||grad_f||':>12}"
+    vprint("\n" + "=" * 70, 1)
+    vprint("Training Complete - Summary", 1)
+    vprint("=" * 70, 1)
+    vprint(
+        f"{'Round':>6} {'Acc':>8} {'p_r':>10} {'Requested':>10} {'Collected':>10} {'||grad_f||':>12}", 1
     )
-    print("-" * 70)
+    vprint("-" * 70, 1)
     for s in stats:
-        print(
-            f"{s.round_idx:>6} {s.acc:>8.4f} {s.p_r:>10.6f} {s.requested:>10} {s.collected:>10} {s.mean_grad_f_main_norm:>12.6f}"
+        vprint(
+            f"{s.round_idx:>6} {s.acc:>8.4f} {s.p_r:>10.6f} {s.requested:>10} {s.collected:>10} {s.mean_grad_f_main_norm:>12.6f}", 1
         )
 
     final_acc = stats[-1].acc if stats else 0.0
@@ -440,11 +441,11 @@ def main():
     total_requested = sum(s.requested for s in stats)
     total_collected = sum(s.collected for s in stats)
 
-    print("-" * 70)
-    print(f"Final accuracy: {final_acc:.4f}")
-    print(f"Best accuracy: {best_acc:.4f}")
-    print(f"Total replay requested: {total_requested}, collected: {total_collected}")
-    print("=" * 70)
+    vprint("-" * 70, 1)
+    vprint(f"Final accuracy: {final_acc:.4f}", 1)
+    vprint(f"Best accuracy: {best_acc:.4f}", 1)
+    vprint(f"Total replay requested: {total_requested}, collected: {total_collected}", 1)
+    vprint("=" * 70, 1)
 
     g_summary = trainer.g_system.get_summary() if trainer.g_system else {}
     g_measurements = trainer.g_system.get_all_measurements() if trainer.g_system else []
@@ -510,14 +511,14 @@ def main():
     # Add drift measurement results
     if trainer.drift_tracker is not None:
         results["drift_history"] = trainer.drift_tracker.get_history()
-        print(f"\n[Drift Measurement] Final G_drift values: {results['drift_history']['G_drift'][-5:]}")
+        vprint(f"\n[Drift Measurement] Final G_drift values: {results['drift_history']['G_drift'][-5:]}", 1)
 
     os.makedirs(args.result_output_dir, exist_ok=True)
     filename = os.path.join(args.result_output_dir, f"results_multisfl_{args.dataset}_{args.partition}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
     with open(filename, "w") as f:
         json.dump(results, f, indent=4)
 
-    print(f"\nResults saved to {filename}")
+    vprint(f"\nResults saved to {filename}", 1)
 
 
 if __name__ == "__main__":

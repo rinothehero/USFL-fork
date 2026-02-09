@@ -3,6 +3,8 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
+from utils.log_utils import vprint
+
 
 @dataclass
 class ServerConfig:
@@ -242,5 +244,5 @@ def parse_args(custom_args=None):
     except SystemExit:
         args, _ = parser.parse_known_args(args=custom_args)
 
-    print(args)
+    vprint(args, 2)
     return Config(**vars(args))

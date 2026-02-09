@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Tuple
 
 import torch
 
+from utils.log_utils import vprint
+
 from .base_stage_organizer import BaseStageOrganizer
 from .in_round.in_round import InRound
 from .post_round.post_round import PostRound
@@ -57,7 +59,7 @@ class ScalaStageOrganizer(BaseStageOrganizer):
     def _print_memory_usage(self, step):
         allocated = torch.cuda.memory_allocated() / 1024**2
         reserved = torch.cuda.memory_reserved() / 1024**2
-        print(f"{step} - Allocated: {allocated:.2f} MiB, Reserved: {reserved:.2f} MiB")
+        vprint(f"{step} - Allocated: {allocated:.2f} MiB, Reserved: {reserved:.2f} MiB", 2)
 
     def _calculate_batch_size(self, dataset_sizes: dict[int, int]):
         total_dataset_size = sum(dataset_sizes.values())
@@ -71,7 +73,7 @@ class ScalaStageOrganizer(BaseStageOrganizer):
         for client_id in batch_sizes:
             if batch_sizes[client_id] <= 0:
                 batch_sizes[client_id] = 1
-                print(f"Warning: Client {client_id} had zero batch size, set to 1")
+                vprint(f"Warning: Client {client_id} had zero batch size, set to 1", 0)
 
         iterations_per_client = {
             str(client_id): (
@@ -230,7 +232,7 @@ class ScalaStageOrganizer(BaseStageOrganizer):
             enable_logit_adjustment = self.config.enable_logit_adjustment
 
             if enable_concatenation and enable_logit_adjustment:
-                print("Server side training with concatenation and logit adjustment")
+                vprint("Server side training with concatenation and logit adjustment", 2)
                 while True:
                     activations = await self.in_round.wait_for_concatenated_activations(
                         self.selected_clients
@@ -290,7 +292,7 @@ class ScalaStageOrganizer(BaseStageOrganizer):
                         start_index = end_index
 
             elif enable_concatenation and not enable_logit_adjustment:
-                print("Server side training with concatenation and no logit adjustment")
+                vprint("Server side training with concatenation and no logit adjustment", 2)
                 while True:
                     activations = await self.in_round.wait_for_concatenated_activations(
                         self.selected_clients
@@ -334,7 +336,7 @@ class ScalaStageOrganizer(BaseStageOrganizer):
                         start_index = end_index
 
             elif not enable_concatenation and enable_logit_adjustment:
-                print("Server side training with no concatenation and logit adjustment")
+                vprint("Server side training with no concatenation and logit adjustment", 2)
                 while True:
                     activation = await self.in_round.wait_for_activations()
 
@@ -394,20 +396,20 @@ class ScalaStageOrganizer(BaseStageOrganizer):
             if updated_torch_model != None:
                 updated_torch_model = self.aggregator.model_reshape(updated_torch_model)
                 self.post_round.update_global_model(updated_torch_model, self.model)
-                print("Updated global model")
+                vprint("Updated global model", 2)
         elif updated_torch_model is not None and hasattr(self.model, "get_split_models"):
             # FlexibleResNet: Update client_model directly and sync to full model
             client_model, _ = self.model.get_split_models()
             client_model.load_state_dict(updated_torch_model.state_dict())
             if hasattr(self.model, "sync_full_model_from_split"):
                 self.model.sync_full_model_from_split()
-            print("Updated global model (FlexibleResNet)")
+            vprint("Updated global model (FlexibleResNet)", 2)
 
         model_queue.clear()
         accuracy = self.post_round.evaluate_global_model(self.model, self.testloader)
         self.global_dict.add_event("MODEL_EVALUATED", {"accuracy": accuracy})
 
-        print(f"[Round {round_number}] Accuracy: {accuracy}")
+        vprint(f"[Round {round_number}] Accuracy: {accuracy}", 1)
 
         if self.config.device == "cuda":
             self._print_memory_usage(f"[Round {round_number} Before]")

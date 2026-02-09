@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 
 from .utils import average_state_dicts, blend_state_dict
+from .log_utils import vprint
 
 
 def _set_batchnorm_eval(module: nn.Module) -> Dict[str, bool]:
@@ -199,7 +200,7 @@ class MainServer:
             pre_clip_norm = torch.nn.utils.clip_grad_norm_(
                 ws.parameters(), max_norm=self.clip_grad_max_norm
             )
-            print(f"[Clip][Server] pre_norm={float(pre_clip_norm):.6f}")
+            vprint(f"[Clip][Server] pre_norm={float(pre_clip_norm):.6f}", 2)
 
         grad_norm_sq = 0.0
         for p in ws.parameters():

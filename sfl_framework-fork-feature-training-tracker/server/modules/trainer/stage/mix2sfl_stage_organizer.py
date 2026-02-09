@@ -11,6 +11,7 @@ from .base_stage_organizer import BaseStageOrganizer
 from .in_round.in_round import InRound
 from .post_round.post_round import PostRound
 from .pre_round.pre_round import PreRound
+from utils.log_utils import vprint
 from utils.g_measurement import GMeasurementSystem
 from utils.drift_measurement import DriftMeasurementTracker
 
@@ -76,7 +77,7 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
         self.drift_tracker = None
         if getattr(config, "enable_drift_measurement", False):
             self.drift_tracker = DriftMeasurementTracker()
-            print("[Drift] DriftMeasurementTracker initialized (Mix2SFL)")
+            vprint("[Drift] DriftMeasurementTracker initialized (Mix2SFL)", 2)
 
     def _concatenate_activations(self, concatenated_activations, activation):
         if not concatenated_activations:
@@ -256,8 +257,8 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
 
             process = psutil.Process(os.getpid())
             mem_before_oracle = process.memory_info().rss / (1024**3)
-            print(
-                f"\n[G Measurement] === Round {round_number}: Computing Oracle === (mem={mem_before_oracle:.2f}GB)"
+            vprint(
+                f"\n[G Measurement] === Round {round_number}: Computing Oracle === (mem={mem_before_oracle:.2f}GB)", 1
             )
 
             if self.g_measurement_system.oracle_calculator is None:
@@ -272,8 +273,8 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
                     drop_last=False,
                 )
                 self.g_measurement_system.initialize(full_trainloader)
-                print(
-                    f"[G Measurement] Oracle calculator initialized with {len(full_trainloader.dataset)} samples"
+                vprint(
+                    f"[G Measurement] Oracle calculator initialized with {len(full_trainloader.dataset)} samples", 2
                 )
 
             self.g_measurement_system.set_param_names(
@@ -294,8 +295,8 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
             )
 
             mem_after_oracle = process.memory_info().rss / (1024**3)
-            print(
-                f"[G Measurement] Oracle computed (mem={mem_after_oracle:.2f}GB, Δ={mem_after_oracle - mem_before_oracle:+.2f}GB)"
+            vprint(
+                f"[G Measurement] Oracle computed (mem={mem_after_oracle:.2f}GB, Δ={mem_after_oracle - mem_before_oracle:+.2f}GB)", 1
             )
 
         await self.pre_round.send_customized_global_model(
@@ -691,13 +692,13 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
                             int(client_weights[cid])
                             for cid in sorted(client_weights.keys())
                         ]
-                        print(
+                        vprint(
                             "[G Measurement] Collected gradients from "
-                            f"{len(client_grads)} clients (batch_sizes={sorted_sizes})"
+                            f"{len(client_grads)} clients (batch_sizes={sorted_sizes})", 1
                         )
                     else:
-                        print(
-                            f"[G Measurement] Collected gradients from {len(client_grads)} clients"
+                        vprint(
+                            f"[G Measurement] Collected gradients from {len(client_grads)} clients", 1
                         )
 
                 result = self.g_measurement_system.compute_g(
@@ -705,14 +706,14 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
                 )
                 if result:
                     self.global_dict.add_event("G_MEASUREMENT", result.to_dict())
-                    print(f"[G Measurement] Round {round_number} G computed and logged")
+                    vprint(f"[G Measurement] Round {round_number} G computed and logged", 1)
 
             self.g_measurement_system.clear_round_data()
             gc.collect()
 
             mem_after = process.memory_info().rss / (1024**3)
-            print(
-                f"[G Measurement] Memory: {mem_before:.2f}GB → {mem_after:.2f}GB (freed {mem_before - mem_after:.2f}GB)"
+            vprint(
+                f"[G Measurement] Memory: {mem_before:.2f}GB → {mem_after:.2f}GB (freed {mem_before - mem_after:.2f}GB)", 1
             )
 
         for item in model_queue.queue:
@@ -793,4 +794,4 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
         accuracy = self.post_round.evaluate_global_model(self.model, self.testloader)
         self.global_dict.add_event("MODEL_EVALUATED", {"accuracy": accuracy})
 
-        print(f"[Round {round_number}] Accuracy: {accuracy}")
+        vprint(f"[Round {round_number}/{self.config.global_round}] Accuracy: {accuracy:.4f}", 1)

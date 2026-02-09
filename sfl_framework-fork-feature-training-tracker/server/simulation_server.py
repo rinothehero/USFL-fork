@@ -12,6 +12,7 @@ from server.modules.trainer.trainer import Trainer
 from server.modules.ws.handler.handler import get_handler
 from server.modules.ws.inmemory_connection import InMemoryConnection
 from server.modules.ws.inmemory_endpoint import InMemoryEndpoint
+from utils.log_utils import vprint
 
 if TYPE_CHECKING:
     from server_args import Config
@@ -76,14 +77,14 @@ class SimulationServer:
         )
 
         for task in done:
-            print(f"Task completed: {task}")
+            vprint(f"Task completed: {task}", 2)
             try:
                 result = task.result()
-                print(f"Task result: {result}")
+                vprint(f"Task result: {result}", 2)
             except Exception as e:
 
-                print(f"Task raised an exception: {e}")
-                print(f"Exception traceback: {traceback.format_exc()}")
+                vprint(f"Task raised an exception: {e}", 0)
+                vprint(f"Exception traceback: {traceback.format_exc()}", 0)
 
         for task in pending:
-            print(f"Task still pending: {task}")
+            vprint(f"Task still pending: {task}", 2)

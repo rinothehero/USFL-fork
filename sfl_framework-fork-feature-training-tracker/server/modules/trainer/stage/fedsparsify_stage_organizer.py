@@ -3,6 +3,8 @@ from typing import TYPE_CHECKING
 
 import torch
 
+from utils.log_utils import vprint
+
 from .base_stage_organizer import BaseStageOrganizer
 from .dependency.torch_pruning.pruner.algorithms.metapruner import MetaPruner
 from .dependency.torch_pruning.pruner.importance import MagnitudeImportance
@@ -102,14 +104,14 @@ class FedSparsifyStageOrganizer(BaseStageOrganizer):
 
     def _prune(self, round_number: int):
         total_sparsification_ratio = self._calculate_sparsity(round_number)
-        print(f"round: {round_number}, total sparsity: {total_sparsification_ratio}")
+        vprint(f"round: {round_number}, total sparsity: {total_sparsification_ratio}", 2)
 
         if total_sparsification_ratio > 0:
             sparsity_diff = (
                 total_sparsification_ratio - self.previous_sparsification_ratio
             )
 
-            print(f"sparsity diff: {sparsity_diff}")
+            vprint(f"sparsity diff: {sparsity_diff}", 2)
 
             prune_ratio_this_round = sparsity_diff / (
                 1 - self.previous_sparsification_ratio
@@ -119,8 +121,8 @@ class FedSparsifyStageOrganizer(BaseStageOrganizer):
             if prune_ratio_this_round == 0:
                 return
 
-            print(
-                f"Round {round_number}: Total Sparsification Ratio = {total_sparsification_ratio:.4f}, Prune Ratio This Round = {prune_ratio_this_round:.4f}, Remaining Parameters Ratio = {self.remaining_params_ratio:.4f}"
+            vprint(
+                f"Round {round_number}: Total Sparsification Ratio = {total_sparsification_ratio:.4f}, Prune Ratio This Round = {prune_ratio_this_round:.4f}, Remaining Parameters Ratio = {self.remaining_params_ratio:.4f}", 2
             )
 
             self.previous_sparsification_ratio = total_sparsification_ratio
@@ -135,12 +137,12 @@ class FedSparsifyStageOrganizer(BaseStageOrganizer):
                 max_pruning_ratio=prune_ratio_this_round,
             )
 
-            print("Parameter count before pruning: ", self.parameters)
+            vprint(f"Parameter count before pruning: {self.parameters}", 2)
 
             pruner.step()
             self.parameters = self._count_parameters(self.model.get_torch_model())
 
-            print("Parameter count after pruning: ", self.parameters)
+            vprint(f"Parameter count after pruning: {self.parameters}", 2)
 
     async def _pre_round(self, round_number: int):
         await self.pre_round.wait_for_clients()
@@ -201,7 +203,7 @@ class FedSparsifyStageOrganizer(BaseStageOrganizer):
 
         if updated_torch_model != None:
             self.post_round.update_global_model(updated_torch_model, self.model)
-            print("Updated global model")
+            vprint("Updated global model", 2)
 
         self.global_dict.add_event(
             "MODEL_PRUNING_START",
@@ -215,4 +217,4 @@ class FedSparsifyStageOrganizer(BaseStageOrganizer):
         accuracy = self.post_round.evaluate_global_model(self.model, self.testloader)
         self.global_dict.add_event("MODEL_EVALUATED", {"accuracy": accuracy})
 
-        print(f"[Round {round_number}] Accuracy: {accuracy}")
+        vprint(f"[Round {round_number}] Accuracy: {accuracy}", 1)

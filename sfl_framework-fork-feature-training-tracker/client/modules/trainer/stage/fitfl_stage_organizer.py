@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING
 
 from modules.trainer.model_trainer.model_trainer import get_model_trainer
 
+from utils.log_utils import vprint
+
 from .base_stage_organizer import BaseStageOrganizer
 from .in_round.in_round import InRound
 from .post_round.post_round import PostRound
@@ -54,7 +56,7 @@ class FitFLStageOrganizer(BaseStageOrganizer):
         self.model = model
 
         parameter_count = self._count_parameters(self.model)
-        print(f"Received model parameter count: {parameter_count}")
+        vprint(f"Received model parameter count: {parameter_count}", 2)
 
         self.training_params = training_params
 
@@ -67,7 +69,7 @@ class FitFLStageOrganizer(BaseStageOrganizer):
             self.api,
         )
 
-        print("Initialized model trainer")
+        vprint("Initialized model trainer", 2)
 
         return False
 
@@ -82,7 +84,7 @@ class FitFLStageOrganizer(BaseStageOrganizer):
             {"expected_round_end_time": expected_round_end_time},
         )
 
-        print(f"Trained epochs: {self.trained_epochs}")
+        vprint(f"Trained epochs: {self.trained_epochs}", 2)
 
     async def _post_round(self):
         await self.post_round.submit_model(
@@ -103,7 +105,7 @@ class FitFLStageOrganizer(BaseStageOrganizer):
 
         while not task.done():
             if time.time() > self.training_params["round_end_time"]:
-                print("Round end time reached, cancelling in round")
+                vprint("Round end time reached, cancelling in round", 0)
                 task.cancel()
                 return
 
@@ -114,7 +116,7 @@ class FitFLStageOrganizer(BaseStageOrganizer):
 
         while not task.done():
             if time.time() > self.training_params["round_end_time"]:
-                print("Round end time reached, cancelling post round")
+                vprint("Round end time reached, cancelling post round", 0)
                 task.cancel()
                 return
 

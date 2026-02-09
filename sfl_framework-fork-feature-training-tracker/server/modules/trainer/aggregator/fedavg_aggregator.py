@@ -5,6 +5,7 @@ import torch
 
 from .base_aggregator import BaseAggregator
 from ..utils.training_tracker import TrainingTracker
+from utils.log_utils import vprint
 
 if TYPE_CHECKING:
     from typing import List
@@ -57,7 +58,7 @@ class FedAvgAggregator(BaseAggregator):
         self, models: List[torch.nn.Module], params: List[dict], except_zero=False
     ):
         if except_zero:
-            print("Except zero parameters")
+            vprint("Except zero parameters", 0)
             return self._except_zero(models, params)
 
         if not models:

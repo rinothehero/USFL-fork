@@ -94,6 +94,7 @@ from server.modules.ws.inmemory_connection import (
 )
 from server.server_args import parse_args as s_parse_args
 from server.simulation_server import SimulationServer
+from utils.log_utils import vprint
 
 
 async def run_simulation(server_args, client_args_list):
@@ -132,11 +133,11 @@ if __name__ == "__main__":
         if arg.startswith("gpu="):
             gpu_str = arg.split("=")[1]
             GPU_DEVICES = [int(g.strip()) for g in gpu_str.split(",")]
-            print(f"[GPU] Using specified GPUs: {GPU_DEVICES}")
+            vprint(f"[GPU] Using specified GPUs: {GPU_DEVICES}", 1)
             break
 
     if GPU_DEVICES is None:
-        print(f"[GPU] Using all available GPUs (use 'gpu=0,1' to specify)")
+        vprint(f"[GPU] Using all available GPUs (use 'gpu=0,1' to specify)", 1)
 
     # Fixed base configuration
     BASE_CONFIG = {
@@ -614,23 +615,23 @@ if __name__ == "__main__":
                 # Run without timeout
                 asyncio.run(run_simulation(server_command, client_commands))
 
-            print(f"\n✓ Workload {idx} completed successfully")
+            vprint(f"\n✓ Workload {idx} completed successfully", 1)
 
         except asyncio.TimeoutError:
-            print(f"\n⏱️  TIMEOUT in workload {idx} after {WORKLOAD_TIMEOUT} seconds")
-            print(f"   Skipping to next workload...")
+            vprint(f"\n⏱️  TIMEOUT in workload {idx} after {WORKLOAD_TIMEOUT} seconds", 0)
+            vprint(f"   Skipping to next workload...", 0)
             timeout_workloads.append(
                 (idx, workload_name, f"Timeout after {WORKLOAD_TIMEOUT}s")
             )
             continue
 
         except KeyboardInterrupt:
-            print(f"\n\n⚠️  Interrupted by user at workload {idx}")
-            print(f"   To resume from this point, set START_INDEX = {idx}")
+            vprint(f"\n\n⚠️  Interrupted by user at workload {idx}", 0)
+            vprint(f"   To resume from this point, set START_INDEX = {idx}", 0)
             raise
 
         except Exception as e:
-            print(f"\n❌ ERROR in workload {idx}: {e}")
+            vprint(f"\n❌ ERROR in workload {idx}: {e}", 0)
             import traceback
 
             traceback.print_exc()

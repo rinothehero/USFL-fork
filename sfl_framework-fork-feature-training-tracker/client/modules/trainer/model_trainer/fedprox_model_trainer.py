@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING
 import torch
 from tqdm import tqdm
 
+from utils.log_utils import vprint
+
 from .base_model_trainer import BaseModelTrainer
 
 if TYPE_CHECKING:
@@ -70,8 +72,8 @@ class FedProxModelTrainer(BaseModelTrainer):
             epoch_loss = running_loss / float(total)
             epoch_acc = running_corrects / float(total)
 
-            print(
-                f"Epoch {epoch + 1}: Loss = {epoch_loss:.4f}, Accuracy = {epoch_acc:.4f}, Total labels = {total_labels}"
+            vprint(
+                f"Epoch {epoch + 1}: Loss = {epoch_loss:.4f}, Accuracy = {epoch_acc:.4f}, Total labels = {total_labels}", 2
             )
 
     async def _train_glue_dataset(self, params: dict):
@@ -111,8 +113,8 @@ class FedProxModelTrainer(BaseModelTrainer):
             epoch_loss = running_loss / float(total)
             epoch_acc = running_corrects / float(total)
 
-            print(
-                f"Epoch {epoch + 1}: Loss = {epoch_loss:.4f}, Accuracy = {epoch_acc:.4f}"
+            vprint(
+                f"Epoch {epoch + 1}: Loss = {epoch_loss:.4f}, Accuracy = {epoch_acc:.4f}", 2
             )
 
     async def train(self, params: dict = None):

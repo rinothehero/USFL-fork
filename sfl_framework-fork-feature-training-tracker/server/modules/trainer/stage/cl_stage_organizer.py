@@ -1,5 +1,7 @@
 from typing import TYPE_CHECKING
 
+from utils.log_utils import vprint
+
 from .base_stage_organizer import BaseStageOrganizer
 from .dependency.model_trainer.model_trainer import get_model_trainer
 from .in_round.in_round import InRound
@@ -61,4 +63,4 @@ class CLStageOrganizer(BaseStageOrganizer):
         accuracy = self.post_round.evaluate_global_model(self.model, self.testloader)
         self.global_dict.add_event("MODEL_EVALUATED", {"accuracy": accuracy})
 
-        print(f"[Round {round_number}] Accuracy: {accuracy}")
+        vprint(f"[Round {round_number}] Accuracy: {accuracy}", 1)

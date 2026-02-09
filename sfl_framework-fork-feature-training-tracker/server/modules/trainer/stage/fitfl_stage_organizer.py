@@ -3,6 +3,8 @@ from typing import TYPE_CHECKING
 
 import torch
 
+from utils.log_utils import vprint
+
 from .base_stage_organizer import BaseStageOrganizer
 from .dependency.torch_pruning.pruner.algorithms.emapruner import EmaPruner
 from .dependency.torch_pruning.pruner.algorithms.metapruner import MetaPruner
@@ -125,18 +127,18 @@ class FitFLStageOrganizer(BaseStageOrganizer):
 
         acc = self._evaluate_model(test_model)
         start_acc = acc
-        print(f"Start accuracy: {start_acc}")
+        vprint(f"Start accuracy: {start_acc}", 2)
 
         search_count = 0
         center_acc_diff = 10000
         adjusted_pruning_decision_threshold = self.pruning_decision_threshold
 
-        print(
-            f"Adjusted pruning decision threshold: {adjusted_pruning_decision_threshold}"
+        vprint(
+            f"Adjusted pruning decision threshold: {adjusted_pruning_decision_threshold}", 2
         )
 
         if start_acc - (self.pruning_min_acc + adjusted_pruning_decision_threshold) < 0:
-            print(f"Model accuracy is too low. Skip pruning")
+            vprint(f"Model accuracy is too low. Skip pruning", 2)
             return 0
 
         while search_count < 7:
@@ -157,32 +159,32 @@ class FitFLStageOrganizer(BaseStageOrganizer):
             acc = self._evaluate_model(test_model)
             acc_diff = start_acc - acc
             center_acc_diff = acc_diff
-            print(f"Accuracy difference: {acc_diff}, Pruning ratio: {center}")
+            vprint(f"Accuracy difference: {acc_diff}, Pruning ratio: {center}", 2)
 
             test_model = copy.deepcopy(self.model.get_torch_model())
 
             if acc_diff < adjusted_pruning_decision_threshold:
-                print("Pruning ratio is too low")
+                vprint("Pruning ratio is too low", 2)
                 start = center
                 center = (start + end) / 2
             else:
-                print("Pruning ratio is too high")
+                vprint("Pruning ratio is too high", 2)
                 end = center
                 center = (start + end) / 2
 
         if center < self.min_pruning_ratio:
-            print("Cannot find proper pruning ratio")
+            vprint("Cannot find proper pruning ratio", 2)
             center = 0
 
         if center > self.max_pruning_ratio:
-            print("Cannot find proper pruning ratio")
+            vprint("Cannot find proper pruning ratio", 2)
             center = self.max_pruning_ratio
 
         if center_acc_diff > adjusted_pruning_decision_threshold:
-            print("Acc diff is too high. Cannot find proper pruning ratio")
+            vprint("Acc diff is too high. Cannot find proper pruning ratio", 2)
             center = 0
 
-        print(f"Pruning ratio: {center}")
+        vprint(f"Pruning ratio: {center}", 2)
         return center
 
     def _prune(self, round_number):
@@ -194,8 +196,8 @@ class FitFLStageOrganizer(BaseStageOrganizer):
                 self.pruning_count -= 1
                 return False
 
-            print(
-                f"[Round {round_number}] Global model pruning ratio: {global_pruning_ratio}"
+            vprint(
+                f"[Round {round_number}] Global model pruning ratio: {global_pruning_ratio}", 2
             )
 
             self.global_pruner = EmaPruner(
@@ -210,15 +212,15 @@ class FitFLStageOrganizer(BaseStageOrganizer):
                 _ema=copy.deepcopy(self.global_pruner.ema),
             )
 
-            print(f"[Round {round_number}] Global model pruning start")
-            print(
-                f"[Round {round_number}] Global model parameters before: {self.parameters}"
+            vprint(f"[Round {round_number}] Global model pruning start", 2)
+            vprint(
+                f"[Round {round_number}] Global model parameters before: {self.parameters}", 2
             )
             self.global_pruner.step()
             self.parameters = self._count_parameters(self.model.get_torch_model())
-            print("Pruned global model")
-            print(
-                f"[Round {round_number}] Global model parameters after: {self.parameters}"
+            vprint("Pruned global model", 2)
+            vprint(
+                f"[Round {round_number}] Global model parameters after: {self.parameters}", 2
             )
             self.last_pruning_round = round_number
 
@@ -307,4 +309,4 @@ class FitFLStageOrganizer(BaseStageOrganizer):
 
         self.global_dict.add_event("MODEL_EVALUATED", {"accuracy": accuracy})
 
-        print(f"[Round {round_number}] Accuracy: {accuracy}")
+        vprint(f"[Round {round_number}] Accuracy: {accuracy}", 1)

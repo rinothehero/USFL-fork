@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 
 import orjson
 
+from utils.log_utils import vprint
+
 from ....model.base_model import BaseModel
 from ....ws.connection import Connection
 from ...seletor.base_selector import BaseSelector
@@ -24,8 +26,9 @@ class PreRound:
 
     async def wait_for_client_informations(self):
         last_key_length = 0
-        print(
-            f"Waiting for {self.config.num_clients} clients to send client information... ({last_key_length})"
+        vprint(
+            f"Waiting for {self.config.num_clients} clients to send client information... ({last_key_length})",
+            2,
         )
 
         while True:
@@ -38,11 +41,11 @@ class PreRound:
 
             key_length = len(client_informations.keys())
             if key_length >= self.config.num_clients:
-                print(f"Received client information from {key_length} clients")
+                vprint(f"Received client information from {key_length} clients", 2)
                 break
             else:
                 if last_key_length != key_length:
-                    print(f"Received client information from {key_length} clients")
+                    vprint(f"Received client information from {key_length} clients", 2)
 
                 last_key_length = key_length
 
@@ -50,20 +53,22 @@ class PreRound:
 
     async def wait_for_clients(self):
         last_client_count = self.global_dict.get_waiting_clients_count()
-        print(
-            f"Waiting for {self.config.num_clients} clients to connect... ({last_client_count})"
+        vprint(
+            f"Waiting for {self.config.num_clients} clients to connect... ({last_client_count})",
+            2,
         )
 
         while True:
             total_waiting_clients = self.global_dict.get_waiting_clients_count()
 
             if total_waiting_clients >= self.config.num_clients:
-                print(f"Found {self.config.num_clients} clients")
+                vprint(f"Found {self.config.num_clients} clients", 2)
                 break
             else:
                 if last_client_count != total_waiting_clients:
-                    print(
-                        f"Waiting for {self.config.num_clients} clients to connect... ({total_waiting_clients})"
+                    vprint(
+                        f"Waiting for {self.config.num_clients} clients to connect... ({total_waiting_clients})",
+                        2,
                     )
 
                 last_client_count = total_waiting_clients
@@ -83,7 +88,7 @@ class PreRound:
             data,
         )
 
-        print(f"Selected {len(selected_clients)} clients: {selected_clients}")
+        vprint(f"Selected {len(selected_clients)} clients: {selected_clients}", 1)
         return selected_clients
 
     async def send_customized_global_model(

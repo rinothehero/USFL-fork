@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+from utils.log_utils import vprint
 
 
 def adjust_positive_definite(loc, matrix, device, max_attempts=100, epsilon_start=1e-6):
@@ -29,8 +30,8 @@ def try_multivariate_normal(loc, covariance_matrix, device):
         return mvn
     except ValueError as e:
         if "PositiveDefinite" in str(e):
-            print(
-                "The covariance matrix is not positive definite, attempting to adjust it...."
+            vprint(
+                "The covariance matrix is not positive definite, attempting to adjust it....", 0
             )
             mvn, success = adjust_positive_definite(loc, covariance_matrix, device)
             if success:

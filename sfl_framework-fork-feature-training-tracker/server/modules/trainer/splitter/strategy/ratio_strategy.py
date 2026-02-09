@@ -2,6 +2,7 @@ from collections import deque
 from typing import TYPE_CHECKING
 
 from .base_strategy import BaseStrategy
+from utils.log_utils import vprint
 
 if TYPE_CHECKING:
     from server_args import Config
@@ -27,7 +28,7 @@ class RatioStrategy(BaseStrategy):
 
             for name, child in parent.named_children():
                 if isinstance(child, not_splitable_modules):
-                    print(f"{prefix}{name} is not splitable ({type(child)})")
+                    vprint(f"{prefix}{name} is not splitable ({type(child)})", 2)
 
                 if len(list(child.named_children())) != 0 and not isinstance(
                     child, not_splitable_modules
@@ -38,15 +39,15 @@ class RatioStrategy(BaseStrategy):
 
                     accumulated_params += layer_params
                     current_ratio = accumulated_params / total_params
-                    print(
-                        f"{prefix}{name} has {layer_params} params, current_ratio {current_ratio}"
+                    vprint(
+                        f"{prefix}{name} has {layer_params} params, current_ratio {current_ratio}", 2
                     )
 
                     if pending_split_point is not None:
                         if current_ratio > pending_split_ratio:
-                            print(f"layer {pending_split_point} is split point")
-                            print(
-                                f"current_ratio {current_ratio} > pending_split_ratio {pending_split_ratio}"
+                            vprint(f"layer {pending_split_point} is split point", 2)
+                            vprint(
+                                f"current_ratio {current_ratio} > pending_split_ratio {pending_split_ratio}", 2
                             )
                             split_points.append(pending_split_point)
                             pending_split_point = None
@@ -60,8 +61,8 @@ class RatioStrategy(BaseStrategy):
                             continue
 
                     if split_ratios and current_ratio >= split_ratios[0]:
-                        print(f"layer {prefix + name} is pending split point")
-                        print(f"pending_split_ratio {current_ratio}")
+                        vprint(f"layer {prefix + name} is pending split point", 2)
+                        vprint(f"pending_split_ratio {current_ratio}", 2)
                         pending_split_ratio = current_ratio
                         pending_split_point = prefix + name
                         split_ratios.popleft()
@@ -101,12 +102,12 @@ class RatioStrategy(BaseStrategy):
                 if isinstance(child, not_splitable_modules):
                     accumulated_layers += 1
                     current_ratio = accumulated_layers / total_layers
-                    print(
-                        f"{full_name} (not_splitable: {type(child)}) is treated as a single layer {accumulated_layers}/{total_layers}, current_ratio {current_ratio}"
+                    vprint(
+                        f"{full_name} (not_splitable: {type(child)}) is treated as a single layer {accumulated_layers}/{total_layers}, current_ratio {current_ratio}", 2
                     )
 
                     while split_ratios and current_ratio >= split_ratios[0]:
-                        print(f"layer {full_name} is split point")
+                        vprint(f"layer {full_name} is split point", 2)
                         split_points.append(full_name)
                         split_ratios.popleft()
 
@@ -115,12 +116,12 @@ class RatioStrategy(BaseStrategy):
                 else:
                     accumulated_layers += 1
                     current_ratio = accumulated_layers / total_layers
-                    print(
-                        f"{full_name} is layer {accumulated_layers}/{total_layers}, current_ratio {current_ratio}"
+                    vprint(
+                        f"{full_name} is layer {accumulated_layers}/{total_layers}, current_ratio {current_ratio}", 2
                     )
 
                     while split_ratios and current_ratio >= split_ratios[0]:
-                        print(f"layer {full_name} is split point")
+                        vprint(f"layer {full_name} is split point", 2)
                         split_points.append(full_name)
                         split_ratios.popleft()
 

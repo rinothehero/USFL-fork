@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 from server_args import parse_args
 
 from server import Server
+from utils.log_utils import vprint
 
 if TYPE_CHECKING:
     from server_args import Config
@@ -274,8 +275,8 @@ def _validate_usfl_freshness_parameters(config: "Config"):
                     f"got {config.freshness_decay_rate}"
                 )
 
-        print(f"[INFO] Freshness scoring enabled with decay rate: "
-              f"{getattr(config, 'freshness_decay_rate', 0.5)}")
+        vprint(f"[INFO] Freshness scoring enabled with decay rate: "
+              f"{getattr(config, 'freshness_decay_rate', 0.5)}", 1)
 
 
 def _validate_usfl_data_replication(config: "Config"):
@@ -283,8 +284,8 @@ def _validate_usfl_data_replication(config: "Config"):
     use_replication = getattr(config, 'use_data_replication', False)
 
     if use_replication:
-        print(f"[INFO] Data replication enabled: using max-based augmentation instead of min-based trimming")
-        print(f"[INFO] Clients will over-sample their data to balance class distribution")
+        vprint(f"[INFO] Data replication enabled: using max-based augmentation instead of min-based trimming", 1)
+        vprint(f"[INFO] Clients will over-sample their data to balance class distribution", 1)
 
 
 def validate_config(config: "Config"):

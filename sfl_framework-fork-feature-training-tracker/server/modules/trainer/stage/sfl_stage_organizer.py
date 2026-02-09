@@ -25,6 +25,7 @@ from utils.g_measurement import (
 
 # Drift Measurement (SCAFFOLD-style)
 from utils.drift_measurement import DriftMeasurementTracker
+from utils.log_utils import vprint
 
 if TYPE_CHECKING:
     from server_args import Config
@@ -89,7 +90,7 @@ class SFLStageOrganizer(BaseStageOrganizer):
         self.drift_tracker = None
         if getattr(config, "enable_drift_measurement", False):
             self.drift_tracker = DriftMeasurementTracker()
-            print("[Drift] DriftMeasurementTracker initialized")
+            vprint("[Drift] DriftMeasurementTracker initialized", 2)
 
     async def _pre_round(self, round_number: int):
         await self.pre_round.wait_for_client_informations()
@@ -152,8 +153,8 @@ class SFLStageOrganizer(BaseStageOrganizer):
 
             process = psutil.Process(os.getpid())
             mem_before_oracle = process.memory_info().rss / (1024**3)
-            print(
-                f"\n[G Measurement] === Round {round_number}: Computing Oracle === (mem={mem_before_oracle:.2f}GB)"
+            vprint(
+                f"\n[G Measurement] === Round {round_number}: Computing Oracle === (mem={mem_before_oracle:.2f}GB)", 1
             )
 
             if self.g_measurement_system.oracle_calculator is None:
@@ -168,8 +169,8 @@ class SFLStageOrganizer(BaseStageOrganizer):
                     drop_last=False,
                 )
                 self.g_measurement_system.initialize(full_trainloader)
-                print(
-                    f"[G Measurement] Oracle calculator initialized with {len(full_trainloader.dataset)} samples"
+                vprint(
+                    f"[G Measurement] Oracle calculator initialized with {len(full_trainloader.dataset)} samples", 1
                 )
 
             self.g_measurement_system.set_param_names(
@@ -190,8 +191,8 @@ class SFLStageOrganizer(BaseStageOrganizer):
             )
 
             mem_after_oracle = process.memory_info().rss / (1024**3)
-            print(
-                f"[G Measurement] Oracle computed (mem={mem_after_oracle:.2f}GB, Δ={mem_after_oracle - mem_before_oracle:+.2f}GB)"
+            vprint(
+                f"[G Measurement] Oracle computed (mem={mem_after_oracle:.2f}GB, Δ={mem_after_oracle - mem_before_oracle:+.2f}GB)", 1
             )
 
         await self.pre_round.send_customized_global_model(
@@ -318,11 +319,11 @@ class SFLStageOrganizer(BaseStageOrganizer):
                                     )
                                 else:
                                     self.g_measurement_system.split_g_tilde = split_grad
-                            print(
-                                f"[G Measurement] Split layer gradient collected (client={client_id})"
+                            vprint(
+                                f"[G Measurement] Split layer gradient collected (client={client_id})", 2
                             )
-                        print(
-                            f"[G Measurement] Server gradient collected (client={client_id}, batch_size={batch_weight})"
+                        vprint(
+                            f"[G Measurement] Server gradient collected (client={client_id}, batch_size={batch_weight})", 2
                         )
 
                 # Compute metrics (only if in-round evaluation is enabled)
@@ -376,12 +377,12 @@ class SFLStageOrganizer(BaseStageOrganizer):
             for metric in metrics:
                 result = metric.compute(predictions=predictions, references=references)
                 results.append(result)
-            print(
-                f"TRAIN ROUND {round_number}: Loss = {epoch_loss:.4f}, Accuracy = {results}, Total labels = {total_labels}"
+            vprint(
+                f"TRAIN ROUND {round_number}: Loss = {epoch_loss:.4f}, Accuracy = {results}, Total labels = {total_labels}", 1
             )
         else:
-            print(
-                f"TRAIN ROUND {round_number}: Loss = {epoch_loss:.4f}, Total labels = {total_labels}"
+            vprint(
+                f"TRAIN ROUND {round_number}: Loss = {epoch_loss:.4f}, Total labels = {total_labels}", 1
             )
 
     async def _post_round(self, round_number: int):
@@ -441,13 +442,13 @@ class SFLStageOrganizer(BaseStageOrganizer):
                             int(client_weights[cid])
                             for cid in sorted(client_weights.keys())
                         ]
-                        print(
+                        vprint(
                             "[G Measurement] Collected gradients from "
-                            f"{len(client_grads)} clients (batch_sizes={sorted_sizes})"
+                            f"{len(client_grads)} clients (batch_sizes={sorted_sizes})", 1
                         )
                     else:
-                        print(
-                            f"[G Measurement] Collected gradients from {len(client_grads)} clients"
+                        vprint(
+                            f"[G Measurement] Collected gradients from {len(client_grads)} clients", 1
                         )
 
                 result = self.g_measurement_system.compute_g(
@@ -455,14 +456,14 @@ class SFLStageOrganizer(BaseStageOrganizer):
                 )
                 if result:
                     self.global_dict.add_event("G_MEASUREMENT", result.to_dict())
-                    print(f"[G Measurement] Round {round_number} G computed and logged")
+                    vprint(f"[G Measurement] Round {round_number} G computed and logged", 1)
 
             self.g_measurement_system.clear_round_data()
             gc.collect()
 
             mem_after = process.memory_info().rss / (1024**3)
-            print(
-                f"[G Measurement] Memory: {mem_before:.2f}GB → {mem_after:.2f}GB (freed {mem_before - mem_after:.2f}GB)"
+            vprint(
+                f"[G Measurement] Memory: {mem_before:.2f}GB → {mem_after:.2f}GB (freed {mem_before - mem_after:.2f}GB)", 1
             )
 
         for item in model_queue.queue:
@@ -531,7 +532,7 @@ class SFLStageOrganizer(BaseStageOrganizer):
                 server_model.load_state_dict(aggregated_server_model.state_dict())
                 if hasattr(self.model, "sync_full_model_from_split"):
                     self.model.sync_full_model_from_split()
-                print("Updated global model (FlexibleResNet with server aggregation)")
+                vprint("Updated global model (FlexibleResNet with server aggregation)", 2)
         else:
             aggregated_client_model = self.post_round.aggregate_models(
                 self.aggregator, model_queue
@@ -546,7 +547,7 @@ class SFLStageOrganizer(BaseStageOrganizer):
                 client_model.load_state_dict(aggregated_client_model.state_dict())
                 if hasattr(self.model, "sync_full_model_from_split"):
                     self.model.sync_full_model_from_split()
-                print("Updated global model (FlexibleResNet)")
+                vprint("Updated global model (FlexibleResNet)", 2)
                 # Don't set aggregated_model - skip model_reshape which expects ModuleDict
 
         self.global_dict.add_event("MODEL_AGGREGATION_END", {"client_ids": client_ids})
@@ -554,7 +555,7 @@ class SFLStageOrganizer(BaseStageOrganizer):
         if aggregated_model != None:
             aggregated_model = self.aggregator.model_reshape(aggregated_model)
             self.post_round.update_global_model(aggregated_model, self.model)
-            print("Updated global model")
+            vprint("Updated global model", 2)
 
         # Drift Measurement: Compute G_drift after aggregation
         if self.drift_tracker is not None:
@@ -576,7 +577,7 @@ class SFLStageOrganizer(BaseStageOrganizer):
         accuracy = self.post_round.evaluate_global_model(self.model, self.testloader)
         self.global_dict.add_event("MODEL_EVALUATED", {"accuracy": accuracy})
 
-        print(f"[Round {round_number}] Accuracy: {accuracy}")
+        vprint(f"[Round {round_number}] Accuracy: {accuracy}", 1)
 
     def _load_metrics(self):
         if self.config.dataset in ["mrpc", "qqp"]:

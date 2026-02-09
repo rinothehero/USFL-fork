@@ -2,6 +2,8 @@ from typing import TYPE_CHECKING
 
 import psutil
 
+from utils.log_utils import vprint
+
 if TYPE_CHECKING:
     from client_args import Config, ServerConfig
     from modules.dataset.base_dataset import BaseDataset
@@ -19,7 +21,7 @@ class PreRound:
 
     async def notify_wait_for_training(self, api: "CommonAPI"):
         await api.notify_wait_for_training()
-        print("Notified wait for training")
+        vprint("Notified wait for training", 2)
 
     async def notify_client_information(
         self, api: "CommonAPI", filter: list = None, dataset: "BaseDataset" = None
@@ -65,7 +67,7 @@ class PreRound:
             {"cpu": cpu_dict, "memory": memory_dict, "dataset": dataset_dict}
         )
 
-        print(f"Sent client information: {cpu_dict}, {memory_dict}, {dataset_dict}")
+        vprint(f"Sent client information: {cpu_dict}, {memory_dict}, {dataset_dict}", 2)
 
     async def wait_for_start_round(self, api: "CommonAPI"):
         model, training_params = await api.wait_for_start_round()

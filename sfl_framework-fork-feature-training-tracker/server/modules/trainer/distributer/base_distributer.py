@@ -2,6 +2,8 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
+from utils.log_utils import vprint
+
 
 class BaseDistributer(ABC):
     def _remove_fraction_of_labels(self, label: list[int], fraction: float):
@@ -9,7 +11,7 @@ class BaseDistributer(ABC):
         remove_labels = np.random.choice(
             label_list, int(len(label_list) * fraction), replace=False
         )
-        print("remove_labels: ", remove_labels)
+        vprint(f"remove_labels: {remove_labels}", 2)
 
         for remove_label in remove_labels:
             indices = [i for i, x in enumerate(label) if x == remove_label]

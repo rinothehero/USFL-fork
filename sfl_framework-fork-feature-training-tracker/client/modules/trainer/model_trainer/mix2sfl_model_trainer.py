@@ -3,6 +3,8 @@ from typing import TYPE_CHECKING
 
 from tqdm import tqdm
 
+from utils.log_utils import vprint
+
 from .base_model_trainer import BaseModelTrainer
 from .propagator.propagator import get_propagator
 
@@ -150,7 +152,7 @@ class Mix2SFLModelTrainer(BaseModelTrainer):
             for name, grad in self._accumulated_grad_sum.items()
         }
         if self.g_measurement_mode == "k_batch":
-            print(f"[Client] K-batch finalized: {self._client_batch_count} batches, {self._accumulated_grad_samples} samples")
+            vprint(f"[Client] K-batch finalized: {self._client_batch_count} batches, {self._accumulated_grad_samples} samples", 2)
         self.accumulated_gradients = [avg_grad]
         self.gradient_weights = [self._accumulated_grad_samples]
 
@@ -198,8 +200,9 @@ class Mix2SFLModelTrainer(BaseModelTrainer):
                             if param.grad is not None
                         }
                         self.measurement_gradient_weight = len(labels)
-                        print(
-                            f"[Client {self.config.client_id}] Captured measurement gradient: {len(self.measurement_gradient)} params"
+                        vprint(
+                            f"[Client {self.config.client_id}] Captured measurement gradient: {len(self.measurement_gradient)} params",
+                            2,
                         )
                         return
 

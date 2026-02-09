@@ -8,6 +8,7 @@ from starlette.websockets import WebSocketState
 from tqdm import tqdm
 
 from .compressor import compress, decompress
+from utils.log_utils import vprint
 
 if TYPE_CHECKING:
     from modules.global_dict.global_dict import GlobalDict
@@ -30,14 +31,14 @@ class Connection:
         await websocket.accept()
         self.active_connections[client_id] = websocket
         self.global_dict.set_waiting_clients(client_id, False)
-        print(f"Client {client_id} connected")
+        vprint(f"Client {client_id} connected", 2)
 
     def disconnect(self, client_id: int):
         if client_id in self.active_connections:
             del self.active_connections[client_id]
             self.global_dict.remove_waiting_client(client_id)
 
-        print(f"Client {client_id} disconnected")
+        vprint(f"Client {client_id} disconnected", 2)
 
     def total_connections(self):
         return len(self.active_connections)
@@ -64,12 +65,12 @@ class Connection:
         on_end=None,
     ):
         if bool(self.config.networking_fairness):
-            print("Using networking fairness")
+            vprint("Using networking fairness", 2)
             return await self.send_bytes_round_robin(
                 data, client_ids, logging, on_start, on_end
             )
         else:
-            print("Using concurrent sending")
+            vprint("Using concurrent sending", 2)
             return await self.send_bytes_concurrently(
                 data, client_ids, logging, on_start, on_end
             )
@@ -125,7 +126,7 @@ class Connection:
                     not websocket
                     or websocket.client_state == WebSocketState.DISCONNECTED
                 ):
-                    print(f"Websocket {client_id} is not open, try to connect again")
+                    vprint(f"Websocket {client_id} is not open, try to connect again", 0)
                     self.active_connections[client_id] = None
                     raise DisconnectedError(f"Client {client_id} is not connected")
 
@@ -148,7 +149,7 @@ class Connection:
                             on_end(len(compressed_data[i]), client_id)
 
         if logging:
-            print("All clients have received their compressed data.")
+            vprint("All clients have received their compressed data.", 2)
 
         return True
 
@@ -178,7 +179,7 @@ class Connection:
         await asyncio.gather(*tasks)
 
         if logging:
-            print("All clients have received their data concurrently.")
+            vprint("All clients have received their data concurrently.", 2)
 
         return True
 
@@ -191,7 +192,7 @@ class Connection:
             websocket = self.active_connections[client_id]
 
             if not websocket or websocket.client_state == WebSocketState.DISCONNECTED:
-                print(f"Websocket {client_id} is not open, try to connect again")
+                vprint(f"Websocket {client_id} is not open, try to connect again", 0)
                 self.active_connections[client_id] = None
                 raise DisconnectedError(f"Client {client_id} is not connected")
 
@@ -231,7 +232,7 @@ class Connection:
             websocket = self.active_connections[client_id]
 
             if not websocket or websocket.client_state == WebSocketState.DISCONNECTED:
-                print(f"Websocket {client_id} is not open, try to connect again")
+                vprint(f"Websocket {client_id} is not open, try to connect again", 0)
                 self.active_connections[client_id] = None
                 raise DisconnectedError(f"Client {client_id} is not connected")
 
@@ -254,7 +255,7 @@ class Connection:
                     if receiving:
                         data += chunk
             except Exception as e:
-                print(f"Error receiving data from client {client_id}: {e}")
+                vprint(f"Error receiving data from client {client_id}: {e}", 0)
                 return None
 
             try:
@@ -262,7 +263,7 @@ class Connection:
 
                 return decompressed_data.decode("utf-8")
             except brotli.error as e:
-                print(f"Error decompressing data from client {client_id}: {e}")
+                vprint(f"Error decompressing data from client {client_id}: {e}", 0)
                 return None
         else:
             raise DisconnectedError(f"Client {client_id} is not connected")

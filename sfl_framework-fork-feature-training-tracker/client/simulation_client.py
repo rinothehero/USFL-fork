@@ -3,6 +3,8 @@ from typing import TYPE_CHECKING
 from client.modules.trainer.trainer import Trainer
 from client.modules.ws.inmemory_connection import InMemoryConnection
 
+from utils.log_utils import vprint
+
 if TYPE_CHECKING:
     from client_args import Config
 
@@ -18,10 +20,10 @@ class SimulationClient:
     async def run(self):
         try:
             await self.connection.connect()
-            print("Connected to server")
+            vprint("Connected to server", 2)
 
             await self.trainer.train()
         except Exception as e:
 
-            print(f"Error occurred: {e}")
+            vprint(f"Error occurred: {e}", 0)
             traceback.print_exc()

@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING
 import evaluate
 import torch
 
+from utils.log_utils import vprint
+
 from .base_stage_organizer import BaseStageOrganizer
 from .in_round.in_round import InRound
 from .post_round.post_round import PostRound
@@ -195,12 +197,12 @@ class SFLProxStageOrganizer(BaseStageOrganizer):
             for metric in metrics:
                 result = metric.compute(predictions=predictions, references=references)
                 results.append(result)
-            print(
-                f"TRAIN ROUND {round_number}: Loss = {epoch_loss:.4f}, Accuracy = {results}, Total labels = {total_labels}"
+            vprint(
+                f"TRAIN ROUND {round_number}: Loss = {epoch_loss:.4f}, Accuracy = {results}, Total labels = {total_labels}", 1
             )
         else:
-            print(
-                f"TRAIN ROUND {round_number}: Loss = {epoch_loss:.4f}, Total labels = {total_labels}"
+            vprint(
+                f"TRAIN ROUND {round_number}: Loss = {epoch_loss:.4f}, Total labels = {total_labels}", 1
             )
 
     async def _post_round(self, round_number: int):
@@ -234,7 +236,7 @@ class SFLProxStageOrganizer(BaseStageOrganizer):
                 server_model.load_state_dict(aggregated_server_model.state_dict())
                 if hasattr(self.model, "sync_full_model_from_split"):
                     self.model.sync_full_model_from_split()
-                print("Updated global model (FlexibleResNet with server aggregation)")
+                vprint("Updated global model (FlexibleResNet with server aggregation)", 2)
         else:
             aggregated_client_model = self.post_round.aggregate_models(
                 self.aggregator, model_queue
@@ -249,7 +251,7 @@ class SFLProxStageOrganizer(BaseStageOrganizer):
                 client_model.load_state_dict(aggregated_client_model.state_dict())
                 if hasattr(self.model, "sync_full_model_from_split"):
                     self.model.sync_full_model_from_split()
-                print("Updated global model (FlexibleResNet)")
+                vprint("Updated global model (FlexibleResNet)", 2)
                 # Don't set aggregated_model - skip model_reshape which expects ModuleDict
 
         self.global_dict.add_event("MODEL_AGGREGATION_END", {"client_ids": client_ids})
@@ -257,13 +259,13 @@ class SFLProxStageOrganizer(BaseStageOrganizer):
         if aggregated_model != None:
             aggregated_model = self.aggregator.model_reshape(aggregated_model)
             self.post_round.update_global_model(aggregated_model, self.model)
-            print("Updated global model")
+            vprint("Updated global model", 2)
 
         model_queue.clear()
         accuracy = self.post_round.evaluate_global_model(self.model, self.testloader)
         self.global_dict.add_event("MODEL_EVALUATED", {"accuracy": accuracy})
 
-        print(f"[Round {round_number}] Accuracy: {accuracy}")
+        vprint(f"[Round {round_number}] Accuracy: {accuracy}", 1)
 
     def _load_metrics(self):
         if self.config.dataset in ["mrpc", "qqp"]:

@@ -6,6 +6,8 @@ import numpy as np
 from typing import Tuple, Optional, Union, Literal, Dict, cast, List
 import torchvision.models as tv_models
 
+from .log_utils import vprint
+
 
 def disable_inplace(module: nn.Module) -> None:
     for name, child in module.named_children():
@@ -1406,7 +1408,7 @@ def load_torchvision_resnet18_init(
     initialization as SFL's torchvision-based ResNet18.
     """
     if not image_style:
-        print("[Warning] Torchvision init only supports image_style=True.")
+        vprint("[Warning] Torchvision init only supports image_style=True.", 0)
         return client_model, server_model
 
     tv_resnet = tv_models.resnet18(weights=None)
@@ -1524,8 +1526,8 @@ def load_torchvision_resnet18_init(
 
     server_model.load_state_dict(server_state)
 
-    print(
-        f"[TorchvisionInit] Loaded {loaded_client} client params, {loaded_server} server params from torchvision ResNet18"
+    vprint(
+        f"[TorchvisionInit] Loaded {loaded_client} client params, {loaded_server} server params from torchvision ResNet18", 1
     )
 
     return client_model, server_model

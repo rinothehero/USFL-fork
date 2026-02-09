@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING
 
 from modules.trainer.model_trainer.model_trainer import get_model_trainer
 
+from utils.log_utils import vprint
+
 from .base_stage_organizer import BaseStageOrganizer
 from .in_round.in_round import InRound
 from .post_round.post_round import PostRound
@@ -59,7 +61,7 @@ class SFLStageOrganizer(BaseStageOrganizer):
             self.api,
         )
 
-        print("Initialized model trainer")
+        vprint("Initialized model trainer", 2)
 
         return False
 
@@ -125,7 +127,7 @@ class SFLStageOrganizer(BaseStageOrganizer):
 
         while not task.done():
             if time.time() > self.training_params["round_end_time"]:
-                print("Round end time reached, cancelling in round")
+                vprint("Round end time reached, cancelling in round", 0)
                 task.cancel()
                 return
 
@@ -136,7 +138,7 @@ class SFLStageOrganizer(BaseStageOrganizer):
 
         while not task.done():
             if time.time() > self.training_params["round_end_time"]:
-                print("Round end time reached, cancelling post round")
+                vprint("Round end time reached, cancelling post round", 0)
                 task.cancel()
                 return
 

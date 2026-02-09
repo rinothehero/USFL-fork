@@ -6,6 +6,8 @@ from torch.utils.data import Dataset, Subset, DataLoader
 import torchvision
 import torchvision.transforms as transforms
 
+from .log_utils import vprint
+
 
 @dataclass
 class ClientData:
@@ -323,19 +325,19 @@ def partition_shard_dirichlet(
 
 
 def print_partition_stats(clients: List[ClientData], num_classes: int = 10) -> None:
-    print("\n" + "=" * 70)
-    print("PARTITION STATISTICS")
-    print("=" * 70)
+    vprint("\n" + "=" * 70, 2)
+    vprint("PARTITION STATISTICS", 2)
+    vprint("=" * 70, 2)
 
     total_samples = sum(len(cd.dataset) for cd in clients)
     sizes = [len(cd.dataset) for cd in clients]
-    print(f"Total clients: {len(clients)}, Total samples: {total_samples}")
-    print(
-        f"Samples per client: min={min(sizes)}, max={max(sizes)}, mean={total_samples / len(clients):.1f}"
+    vprint(f"Total clients: {len(clients)}, Total samples: {total_samples}", 2)
+    vprint(
+        f"Samples per client: min={min(sizes)}, max={max(sizes)}, mean={total_samples / len(clients):.1f}", 2
     )
 
-    print("\nPer-client class distribution (top 5 classes by count):")
-    print("-" * 70)
+    vprint("\nPer-client class distribution (top 5 classes by count):", 2)
+    vprint("-" * 70, 2)
 
     for cd in clients[: min(10, len(clients))]:
         class_counts = np.array(
@@ -349,20 +351,20 @@ def print_partition_stats(clients: List[ClientData], num_classes: int = 10) -> N
         )
 
         max_frac = class_counts.max() / max(total, 1)
-        print(
-            f"Client {cd.client_id:3d}: n={total:4d}, max_class_frac={max_frac:.2f}, top5=[{top5_str}]"
+        vprint(
+            f"Client {cd.client_id:3d}: n={total:4d}, max_class_frac={max_frac:.2f}, top5=[{top5_str}]", 2
         )
 
     if len(clients) > 10:
-        print(f"... and {len(clients) - 10} more clients")
+        vprint(f"... and {len(clients) - 10} more clients", 2)
 
     global_counts = np.zeros(num_classes, dtype=int)
     for cd in clients:
         for c in range(num_classes):
             global_counts[c] += len(cd.class_to_indices[c])
 
-    print(f"\nGlobal class distribution: {global_counts.tolist()}")
-    print("=" * 70 + "\n")
+    vprint(f"\nGlobal class distribution: {global_counts.tolist()}", 2)
+    vprint("=" * 70 + "\n", 2)
 
 
 def get_cifar10_test_loader(

@@ -27,6 +27,7 @@ from utils import (
 )
 from g_measurement import GMeasurementManager, compute_g_score
 from drift_measurement import DriftMeasurementTracker
+from log_utils import vprint
 
 
 def _set_batchnorm_eval(module: nn.Module) -> Dict[str, bool]:
@@ -259,9 +260,9 @@ for i in range(user_num):
 #          8730296.888630323, 11205899.934015611, 84048199.78995569, 13300281.995040257, 49783651.93687485]
 
 if WRTT is True:
-    print(clients_computing)
-    print(clients_position)
-    print(rates)
+    vprint(clients_computing, 2)
+    vprint(clients_position, 2)
+    vprint(rates, 2)
 
 
 """Class Definition"""
@@ -490,8 +491,8 @@ if WRTT is True:
             # users_data[i] is a DataLoader, len() gives number of batches
             client_steps = len(users_data[i]) * localEpoch
             if i == 0:  # Print log only for the first client
-                print(
-                    f"[GAS][Client {i}] Configured for full epochs: {localEpoch} epochs * {len(users_data[i])} batches = {client_steps} iterations"
+                vprint(
+                    f"[GAS][Client {i}] Configured for full epochs: {localEpoch} epochs * {len(users_data[i])} batches = {client_steps} iterations", 1
                 )
         else:
             client_steps = localEpoch
@@ -512,8 +513,8 @@ else:
         if use_full_epochs:
             client_steps = len(users_data[i]) * localEpoch
             if i == 0:
-                print(
-                    f"[GAS][Client {i}] Configured for full epochs: {localEpoch} epochs * {len(users_data[i])} batches = {client_steps} iterations"
+                vprint(
+                    f"[GAS][Client {i}] Configured for full epochs: {localEpoch} epochs * {len(users_data[i])} batches = {client_steps} iterations", 1
                 )
         else:
             client_steps = localEpoch
@@ -541,8 +542,8 @@ if G_Measurement:
         shuffle=False,
         drop_last=False,
     )
-    print(f"[G Measurement] Initialized. Frequency: every {G_Measure_Frequency} epochs")
-    print(f"[G Measurement] Accumulation mode: {G_Measurement_Accumulation}")
+    vprint(f"[G Measurement] Initialized. Frequency: every {G_Measure_Frequency} epochs", 1)
+    vprint(f"[G Measurement] Accumulation mode: {G_Measurement_Accumulation}", 1)
 
     g_measure_state = {
         "active": False,
@@ -571,7 +572,7 @@ if DRIFT_MEASUREMENT:
         sample_interval=DRIFT_SAMPLE_INTERVAL,
         device=str(device),
     )
-    print(f"[Drift Measurement] Initialized. Sample interval: {DRIFT_SAMPLE_INTERVAL}")
+    vprint(f"[Drift Measurement] Initialized. Sample interval: {DRIFT_SAMPLE_INTERVAL}", 1)
 
 
 def finalize_g_measurement(g_measure_state, g_manager, user_parti_num):
@@ -621,7 +622,7 @@ def finalize_g_measurement(g_measure_state, g_manager, user_parti_num):
             # Store for batch_sizes (use total samples)
             g_measure_state["client_batch_sizes"][client_id] = total_samples
         mode_str = "K-batch" if G_Measurement_Accumulation == "k_batch" else "Accumulated"
-        print(f"[G Measurement] {mode_str} mode: averaged client gradients from {len(per_client_g)} clients")
+        vprint(f"[G Measurement] {mode_str} mode: averaged client gradients from {len(per_client_g)} clients", 2)
     else:
         # Single mode: original logic
         for client_id in g_measure_state["client_order"]:
@@ -664,7 +665,7 @@ def finalize_g_measurement(g_measure_state, g_manager, user_parti_num):
             server_g_list.append(g_details)
             server_vecs.append(flatten_grad_list(avg_server_grads))
             g_measure_state["server_batch_sizes"] = [total_server_samples]
-        print(f"[G Measurement] Accumulated mode: averaged server gradients from {total_server_samples} samples")
+        vprint(f"[G Measurement] Accumulated mode: averaged server gradients from {total_server_samples} samples", 2)
     else:
         # Single mode: original logic
         for server_grad in g_measure_state["server_grads"]:
@@ -745,39 +746,39 @@ def finalize_g_measurement(g_measure_state, g_manager, user_parti_num):
         for cid in g_measure_state["client_order"]
     ]
     server_sizes = list(g_measure_state["server_batch_sizes"])
-    print(f"[G] Batch Sizes: client={client_sizes}, server={server_sizes}")
+    vprint(f"[G] Batch Sizes: client={client_sizes}, server={server_sizes}", 2)
 
     for cid, gd in per_client_g.items():
-        print(
+        vprint(
             f"[G] Client {cid}: G={gd['G']:.6f}, G_rel={gd['G_rel']:.4f}, "
-            f"D={gd['D_cosine']:.4f}"
+            f"D={gd['D_cosine']:.4f}", 2
         )
     if per_client_g:
-        print(
+        vprint(
             f"[G] Client Summary: G={avg_client_g:.6f}, G_rel={avg_g_rel:.4f}, "
-            f"D={avg_d_cosine:.4f}"
+            f"D={avg_d_cosine:.4f}", 1
         )
 
     for idx, gd in enumerate(server_g_list):
         batch_size = server_sizes[idx] if idx < len(server_sizes) else 0
-        print(
+        vprint(
             f"[G] Server {idx}: G={gd['G']:.6f}, G_rel={gd['G_rel']:.4f}, "
-            f"D={gd['D_cosine']:.4f} (batch_size={batch_size})"
+            f"D={gd['D_cosine']:.4f} (batch_size={batch_size})", 2
         )
     if server_g_list:
-        print(
+        vprint(
             f"[G] Server Summary: G={avg_server_g:.6f}, G_rel={avg_server_g_rel:.4f}, "
-            f"D={avg_server_d:.4f}"
+            f"D={avg_server_d:.4f}", 1
         )
 
     if USE_VARIANCE_G:
-        print(
+        vprint(
             f"[G] Variance Client: G={variance_client_g:.6f}, "
-            f"G_rel={variance_client_g_rel:.6f}"
+            f"G_rel={variance_client_g_rel:.6f}", 2
         )
-        print(
+        vprint(
             f"[G] Variance Server: G={variance_server_g:.6f}, "
-            f"G_rel={variance_server_g_rel:.6f}"
+            f"G_rel={variance_server_g_rel:.6f}", 2
         )
 
     per_client_g_payload = {
@@ -1274,7 +1275,7 @@ while epoch != epochs:
             if WRTT:
                 if test_flag:
                     time_record.append(max(local_models_time))
-                    print("Time: " + str(time_record[-1]))
+                    vprint("Time: " + str(time_record[-1]), 2)
                 local_models_time = []
 
             # Accuracy test
@@ -1294,9 +1295,9 @@ while epoch != epochs:
                         correct += (predicted == labels).sum().item()
                     accuracy = correct / total
                 total_accuracy.append(accuracy)
-                print("Global iteration: " + str(epoch))
-                print("Accuracy: " + str(total_accuracy[-1]))
-                print()
+                vprint("Global iteration: " + str(epoch), 1)
+                vprint("Accuracy: " + str(total_accuracy[-1]), 1)
+                vprint("", 1)
 
             # V test
             if V_Test and (epoch + 1) % V_Test_Frequency == 0:
@@ -1309,7 +1310,7 @@ while epoch != epochs:
                     criterion,
                     device,
                 )
-                print(f"Epoch {epoch + 1}, V Value: {v_value}")
+                vprint(f"Epoch {epoch + 1}, V Value: {v_value}", 1)
                 total_v_value.append(v_value)
 
             # G Measurement (Async-faithful 3-perspective)
@@ -1354,14 +1355,14 @@ while epoch != epochs:
                         split_shape = [split_grad.shape]
                     total_samples = len(full_train_loader.dataset)
                     num_batches = len(full_train_loader)
-                    print(
+                    vprint(
                         f"[G] Oracle: samples={total_samples}, batches={num_batches}, "
-                        f"split_layer={split_layer}, split_shape={split_shape}"
+                        f"split_layer={split_layer}, split_shape={split_shape}", 2
                     )
-                    print(
+                    vprint(
                         f"[G] Oracle Norms: client={torch.norm(client_vec).item():.4f} "
                         f"(numel={client_vec.numel()}), server={torch.norm(server_vec).item():.4f} "
-                        f"(numel={server_vec.numel()})"
+                        f"(numel={server_vec.numel()})", 2
                     )
 
                 g_measure_state["active"] = True
@@ -1371,8 +1372,8 @@ while epoch != epochs:
                 g_measure_state["client_split_grads"].clear()
                 g_measure_state["server_grads"].clear()
 
-                print(
-                    f"[G Measurement] Epoch {epoch}: capturing async gradients (client/server)"
+                vprint(
+                    f"[G Measurement] Epoch {epoch}: capturing async gradients (client/server)", 1
                 )
 
             # Save intermediate results after each round
@@ -1400,14 +1401,14 @@ while epoch != epochs:
             clients[selected_client].transmit_activation()
 
 # Output results
-print(time_record)
-print(total_accuracy)
-print(total_v_value)
+vprint(time_record, 0)
+vprint(total_accuracy, 0)
+vprint(total_v_value, 0)
 time_record_str = ", ".join(str(x) for x in time_record)
 total_accuracy_str = ", ".join(str(x) for x in total_accuracy)
 total_v_value_str = ", ".join(str(x) for x in total_v_value)
-print("time = [" + time_record_str + "]")
-print("GAS = [" + total_accuracy_str + "]")
+vprint("time = [" + time_record_str + "]", 0)
+vprint("GAS = [" + total_accuracy_str + "]", 0)
 
 end_time = datetime.datetime.now()
 begin_time_str = train_begin_time.strftime("%Y-%m-%d %H:%M:%S")
@@ -1510,9 +1511,9 @@ if G_Measurement and g_manager is not None:
 
 if DRIFT_MEASUREMENT and drift_tracker is not None:
     results["drift_history"] = drift_tracker.get_history()
-    print(f"\n[Drift Measurement] Final G_drift values: {results['drift_history']['G_drift'][-5:]}")
+    vprint(f"\n[Drift Measurement] Final G_drift values: {results['drift_history']['G_drift'][-5:]}", 0)
 
 with open(_intermediate_json_filename, "w") as f_json:
     json.dump(results, f_json, indent=4)
 
-print(f"\nResults saved to {_intermediate_json_filename}")
+vprint(f"\nResults saved to {_intermediate_json_filename}", 0)

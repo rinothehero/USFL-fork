@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING
 
 import torch
 
+from utils.log_utils import vprint
+
 from .base_stage_organizer import BaseStageOrganizer
 from .dependency.functions.nestfl_functions import restore_group
 from .dependency.torch_pruning.pruner.algorithms.metapruner import MetaPruner
@@ -78,7 +80,7 @@ class NestFLStageOrganizer(BaseStageOrganizer):
         return ignored_layers
 
     def _prune(self, torch_model, pruning_ratio):
-        print(f"Before pruning parameters: {self._count_parameters(torch_model)}")
+        vprint(f"Before pruning parameters: {self._count_parameters(torch_model)}", 2)
 
         pruner = MetaPruner(
             model=torch_model,
@@ -98,7 +100,7 @@ class NestFLStageOrganizer(BaseStageOrganizer):
                 pruning_record.append((target_module, pruning_fn, idxs))
                 group.prune()
 
-        print(f"After pruning parameters: {self._count_parameters(torch_model)}")
+        vprint(f"After pruning parameters: {self._count_parameters(torch_model)}", 2)
 
         return pruning_record, pruner
 
@@ -127,14 +129,14 @@ class NestFLStageOrganizer(BaseStageOrganizer):
         pruned_models = []
         for client in self.selected_clients:
             pruned_model = copy.deepcopy(self.model.get_torch_model())
-            print(v_cpus)
+            vprint(v_cpus, 2)
             pruning_ratio = 1 - (v_cpus[int(client)] / max_v_cpu)
 
             if pruning_ratio in [0.8, 0.9]:
                 pruning_ratio = 0.55
 
-            print(
-                f"Pruning ratio for client {client}: {pruning_ratio}, max_v_cpu: {max_v_cpu}, v_cpu: {v_cpus[int(client)]}"
+            vprint(
+                f"Pruning ratio for client {client}: {pruning_ratio}, max_v_cpu: {max_v_cpu}, v_cpu: {v_cpus[int(client)]}", 2
             )
 
             self.global_dict.add_event(
@@ -224,11 +226,11 @@ class NestFLStageOrganizer(BaseStageOrganizer):
 
         if updated_torch_model != None:
             self.post_round.update_global_model(updated_torch_model, self.model)
-            print("Updated global model")
+            vprint("Updated global model", 2)
 
         model_queue.clear()
         accuracy = self.post_round.evaluate_global_model(self.model, self.testloader)
 
         self.global_dict.add_event("MODEL_EVALUATED", {"accuracy": accuracy})
 
-        print(f"[Round {round_number}] Accuracy: {accuracy}")
+        vprint(f"[Round {round_number}] Accuracy: {accuracy}", 1)

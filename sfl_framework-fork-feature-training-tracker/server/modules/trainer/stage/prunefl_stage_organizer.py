@@ -3,6 +3,8 @@ from typing import TYPE_CHECKING
 
 import torch
 
+from utils.log_utils import vprint
+
 from .base_stage_organizer import BaseStageOrganizer
 from .dependency.torch_pruning.pruner.algorithms.metapruner import MetaPruner
 from .dependency.torch_pruning.pruner.importance import MagnitudeImportance
@@ -75,7 +77,7 @@ class PruneFLStageOrganizer(BaseStageOrganizer):
         return ignored_layers
 
     def _prune(self):
-        print("Parameter count before pruning: ", self.parameters)
+        vprint(f"Parameter count before pruning: {self.parameters}", 2)
 
         pruner = MetaPruner(
             model=self.model.get_torch_model(),
@@ -89,7 +91,7 @@ class PruneFLStageOrganizer(BaseStageOrganizer):
         pruner.step()
         self.parameters = self._count_parameters(self.model.get_torch_model())
 
-        print("Parameter count after pruning: ", self.parameters)
+        vprint(f"Parameter count after pruning: {self.parameters}", 2)
 
     async def _pre_round(self, round_number: int):
         await self.pre_round.wait_for_clients()
@@ -161,15 +163,15 @@ class PruneFLStageOrganizer(BaseStageOrganizer):
 
         if updated_torch_model != None:
             self.post_round.update_global_model(updated_torch_model, self.model)
-            print("Updated global model")
+            vprint("Updated global model", 2)
 
         if round_number == 1:
             self._prune()
-            print("Pruning completed for round 1")
+            vprint("Pruning completed for round 1", 2)
 
         model_queue.clear()
         accuracy = self.post_round.evaluate_global_model(self.model, self.testloader)
 
         self.global_dict.add_event("MODEL_EVALUATED", {"accuracy": accuracy})
 
-        print(f"[Round {round_number}] Accuracy: {accuracy}")
+        vprint(f"[Round {round_number}] Accuracy: {accuracy}", 1)

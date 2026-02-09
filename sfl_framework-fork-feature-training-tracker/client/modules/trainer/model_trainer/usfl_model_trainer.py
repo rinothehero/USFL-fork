@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING
 
 from tqdm import tqdm
 
+from utils.log_utils import vprint
+
 from .base_model_trainer import BaseModelTrainer
 from .propagator.propagator import get_propagator
 
@@ -93,7 +95,7 @@ class USFLModelTrainer(BaseModelTrainer):
         self.accumulated_gradients = [avg_grad]
         self.gradient_weights = [self._accumulated_grad_samples]
         if self.g_measurement_mode == "k_batch":
-            print(f"[Client] K-batch finalized: {self._client_batch_count} batches, {self._accumulated_grad_samples} samples")
+            vprint(f"[Client] K-batch finalized: {self._client_batch_count} batches, {self._accumulated_grad_samples} samples", 2)
 
     # Drift Measurement Methods (SCAFFOLD-style)
     def _reset_drift_measurement(self):
@@ -155,7 +157,7 @@ class USFLModelTrainer(BaseModelTrainer):
             self._snapshot_round_start()
 
         for epoch in range(self.training_params["local_epochs"]):
-            print(f"Epoch: {epoch}, client_id: {self.config.client_id}")
+            vprint(f"Epoch: {epoch}, client_id: {self.config.client_id}", 2)
             total_labels = 0
             completed_iterations = 0
             dataloader_iterator = iter(self.trainloader)
@@ -235,8 +237,8 @@ class USFLModelTrainer(BaseModelTrainer):
                             if param.grad is not None
                         }
                         self.measurement_gradient_weight = len(labels)
-                        print(
-                            f"[Client {self.config.client_id}] Captured measurement gradient: {len(self.measurement_gradient)} params"
+                        vprint(
+                            f"[Client {self.config.client_id}] Captured measurement gradient: {len(self.measurement_gradient)} params", 2
                         )
                         return  # 1-step만 하고 종료
 
@@ -315,8 +317,8 @@ class USFLModelTrainer(BaseModelTrainer):
                             if param.grad is not None
                         }
                         self.measurement_gradient_weight = len(labels)
-                        print(
-                            f"[Client {self.config.client_id}] Captured measurement gradient: {len(self.measurement_gradient)} params"
+                        vprint(
+                            f"[Client {self.config.client_id}] Captured measurement gradient: {len(self.measurement_gradient)} params", 2
                         )
                         return  # 1-step만 하고 종료
 

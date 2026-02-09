@@ -1,6 +1,8 @@
 import math
 from typing import List, Tuple
 
+from utils.log_utils import vprint
+
 
 def create_schedule(B: int, C_list: list[int]) -> Tuple[int, List[List[int]]]:
     """
@@ -109,9 +111,9 @@ def create_schedule(B: int, C_list: list[int]) -> Tuple[int, List[List[int]]]:
     # 최종 검증
     if C_list != cumulative_consumed:
         # 스케줄링 오류가 발생할 경우 경고
-        print(f"Warning: Schedule consumption mismatch!")
-        print(f"Initial Data: {C_list}")
-        print(f"Total Consumed: {cumulative_consumed}")
+        vprint(f"Warning: Schedule consumption mismatch!", 0)
+        vprint(f"Initial Data: {C_list}", 2)
+        vprint(f"Total Consumed: {cumulative_consumed}", 2)
 
 
     return k, schedule

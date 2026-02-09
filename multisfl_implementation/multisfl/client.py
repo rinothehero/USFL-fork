@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader
 
 from .utils import count_labels, to_dense_label_dist
 from .data import build_class_to_indices
+from .log_utils import vprint
 
 
 SplitOutput = Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]
@@ -132,7 +133,7 @@ class Client:
             pre_clip_norm = torch.nn.utils.clip_grad_norm_(
                 w_c.parameters(), max_norm=clip_grad_max_norm
             )
-            print(f"[Clip][Client] pre_norm={float(pre_clip_norm):.6f}")
+            vprint(f"[Clip][Client] pre_norm={float(pre_clip_norm):.6f}", 2)
 
         opt_c.step()
 

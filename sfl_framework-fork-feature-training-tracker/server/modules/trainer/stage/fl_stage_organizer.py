@@ -1,5 +1,7 @@
 from typing import TYPE_CHECKING
 
+from utils.log_utils import vprint
+
 from .base_stage_organizer import BaseStageOrganizer
 from .decorator.disconnect_handler import disconnect_handler
 from .in_round.in_round import InRound
@@ -116,10 +118,10 @@ class FLStageOrganizer(BaseStageOrganizer):
 
         if updated_torch_model != None:
             self.post_round.update_global_model(updated_torch_model, self.model)
-            print("Updated global model")
+            vprint("Updated global model", 2)
 
         model_queue.clear()
         accuracy = self.post_round.evaluate_global_model(self.model, self.testloader)
         self.global_dict.add_event("MODEL_EVALUATED", {"accuracy": accuracy})
 
-        print(f"[Round {round_number}] Accuracy: {accuracy}")
+        vprint(f"[Round {round_number}] Accuracy: {accuracy}", 1)

@@ -2,6 +2,8 @@ from typing import TYPE_CHECKING
 import torch
 from tqdm import tqdm
 
+from utils.log_utils import vprint
+
 from .base_model_trainer import BaseModelTrainer
 from .propagator.propagator import get_propagator
 
@@ -103,7 +105,7 @@ class ScaffoldSFLModelTrainer(BaseModelTrainer):
         self.accumulated_gradients = [avg_grad]
         self.gradient_weights = [self._accumulated_grad_samples]
         if self.g_measurement_mode == "k_batch":
-            print(f"[Client] K-batch finalized: {self._client_batch_count} batches, {self._accumulated_grad_samples} samples")
+            vprint(f"[Client] K-batch finalized: {self._client_batch_count} batches, {self._accumulated_grad_samples} samples", 2)
 
     # Drift Measurement Methods
     def _reset_drift_measurement(self):
@@ -190,7 +192,7 @@ class ScaffoldSFLModelTrainer(BaseModelTrainer):
         K = self.local_step_count
 
         if K == 0:
-            print("[SCAFFOLD] Warning: No local steps taken, skipping delta_c computation")
+            vprint("[SCAFFOLD] Warning: No local steps taken, skipping delta_c computation", 0)
             return
 
         c_i_new = {}
@@ -264,8 +266,8 @@ class ScaffoldSFLModelTrainer(BaseModelTrainer):
                         if param.grad is not None
                     }
                     self.measurement_gradient_weight = len(labels)
-                    print(
-                        f"[Client {self.config.client_id}] Captured measurement gradient: {len(self.measurement_gradient)} params"
+                    vprint(
+                        f"[Client {self.config.client_id}] Captured measurement gradient: {len(self.measurement_gradient)} params", 2
                     )
                     return  # 1-step only
 
@@ -366,7 +368,7 @@ class ScaffoldSFLModelTrainer(BaseModelTrainer):
         if "control_variate" in self.training_params:
             import pickle
             self.c = pickle.loads(bytes.fromhex(self.training_params["control_variate"]))
-            print(f"[SCAFFOLD Client {self.config.client_id}] Received global control variate c")
+            vprint(f"[SCAFFOLD Client {self.config.client_id}] Received global control variate c", 2)
         else:
             # Initialize c to zeros if not provided (on CPU)
             self.c = {}
@@ -395,4 +397,4 @@ class ScaffoldSFLModelTrainer(BaseModelTrainer):
 
         # SCAFFOLD: Compute control variate update
         self._compute_delta_c()
-        print(f"[SCAFFOLD Client {self.config.client_id}] Computed delta_c after {self.local_step_count} steps")
+        vprint(f"[SCAFFOLD Client {self.config.client_id}] Computed delta_c after {self.local_step_count} steps", 2)

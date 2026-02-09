@@ -19,6 +19,7 @@ from .models import SplitModel, get_full_model, get_split_models, ClientNet, Ser
 from .utils import set_seed
 from .g_measurement import GMeasurementSystem
 from .drift_measurement import MultiSFLDriftTracker
+from .log_utils import vprint
 from torch.utils.data import DataLoader, ConcatDataset
 
 
@@ -91,7 +92,7 @@ class MultiSFLTrainer:
                 sample_interval=cfg.drift_sample_interval,
                 device=cfg.device,
             )
-            print(f"[Drift Measurement] Initialized. Sample interval: {cfg.drift_sample_interval}")
+            vprint(f"[Drift Measurement] Initialized. Sample interval: {cfg.drift_sample_interval}", 2)
 
         self.stats: List[RoundStats] = []
 
@@ -209,8 +210,8 @@ class MultiSFLTrainer:
 
             perm = np.random.permutation(main_ids)
             mapping = {b: int(perm[b % len(perm)]) for b in range(self.B)}
-            print(
-                f"\n[Round {r + 1}/{self.cfg.num_rounds}] Branch-Client mapping: {mapping}"
+            vprint(
+                f"\n[Round {r + 1}/{self.cfg.num_rounds}] Branch-Client mapping: {mapping}", 1
             )
 
             # Drift Measurement: Snapshot master client and server models at round start
@@ -350,8 +351,8 @@ class MultiSFLTrainer:
                     if n_batches < 1:
                         n_batches = 1
                     steps_to_run = n_batches * self.cfg.local_steps
-                    print(
-                        f"[MultiSFL][Client {client_id}] data={dataset_size}, batch={self.cfg.batch_size}, batches={n_batches}, epochs={self.cfg.local_steps}, steps={steps_to_run}"
+                    vprint(
+                        f"[MultiSFL][Client {client_id}] data={dataset_size}, batch={self.cfg.batch_size}, batches={n_batches}, epochs={self.cfg.local_steps}, steps={steps_to_run}", 2
                     )
 
                 for local_step in range(steps_to_run):
@@ -541,9 +542,9 @@ class MultiSFLTrainer:
             p_prev = p_r
             p_r = self.scheduler.update(fgn_r)
 
-            print(f"[Round {r + 1}] p_r: {p_prev:.6f} -> {p_r:.6f} (FGN={fgn_r:.6f})")
-            print(
-                f"[Round {r + 1}] Replay: requested={requested_total}, collected={collected_total}, trials={trials_total}"
+            vprint(f"[Round {r + 1}] p_r: {p_prev:.6f} -> {p_r:.6f} (FGN={fgn_r:.6f})", 1)
+            vprint(
+                f"[Round {r + 1}] Replay: requested={requested_total}, collected={collected_total}, trials={trials_total}", 1
             )
 
             mean_grad_f = (
@@ -559,8 +560,8 @@ class MultiSFLTrainer:
                 if server_update_norm_list
                 else 0.0
             )
-            print(
-                f"[Round {r + 1}] Diagnostics: ||grad_f_main||={mean_grad_f:.6f}, ||client_upd||={mean_client_upd:.6f}, ||server_upd||={mean_server_upd:.6f}"
+            vprint(
+                f"[Round {r + 1}] Diagnostics: ||grad_f_main||={mean_grad_f:.6f}, ||client_upd||={mean_client_upd:.6f}, ||server_upd||={mean_server_upd:.6f}", 1
             )
 
             self.fed.compute_master()
@@ -583,8 +584,8 @@ class MultiSFLTrainer:
                 and ws_measure is not None
             ):
                 if not g_f_all_list:
-                    print(
-                        f"[G Measurement] No data collected for round {r + 1}, skipping."
+                    vprint(
+                        f"[G Measurement] No data collected for round {r + 1}, skipping.", 0
                     )
                 else:
                     self.g_system.measure_round(
@@ -603,7 +604,7 @@ class MultiSFLTrainer:
                     )
 
             acc = self.evaluate_master()
-            print(f"[Round {r + 1}] Accuracy: {acc:.4f}")
+            vprint(f"[Round {r + 1}/{self.cfg.num_rounds}] Accuracy: {acc:.4f}", 1)
 
             self.stats.append(
                 RoundStats(

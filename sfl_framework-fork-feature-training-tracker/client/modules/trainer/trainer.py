@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING
 
 from client_args import ServerConfig
 
+from utils.log_utils import vprint
+
 from ..dataset.dataset import get_dataset
 from .apis.common import CommonAPI
 from .stage.stage_organizer import get_stage_organizer
@@ -31,12 +33,12 @@ class Trainer:
         server_config = await self.api.request_server_config()
         self.server_config = ServerConfig(**server_config)
 
-        print("Initialized server config")
+        vprint("Initialized server config", 2)
 
         self.dataset = get_dataset(self.server_config)
         self.dataset.initialize()
 
-        print("Initialized dataset")
+        vprint("Initialized dataset", 2)
 
         self.stage_organizer = get_stage_organizer(
             self.config,
@@ -44,7 +46,7 @@ class Trainer:
             self.api,
             self.dataset,
         )
-        print("Initialized stage organizer")
+        vprint("Initialized stage organizer", 2)
         self.stage = "PRE_ROUND"
 
     async def pre_round(self):
@@ -73,5 +75,5 @@ class Trainer:
             elif self.stage == "POST_ROUND":
                 await self.post_round()
             elif self.stage == "FINISH":
-                print("Training finished. Terminating process in client")
+                vprint("Training finished. Terminating process in client", 1)
                 break

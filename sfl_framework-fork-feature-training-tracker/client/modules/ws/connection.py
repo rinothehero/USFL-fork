@@ -7,6 +7,8 @@ import websockets
 from tqdm import tqdm
 from websockets.exceptions import ConnectionClosedError, InvalidHandshake
 
+from utils.log_utils import vprint
+
 if TYPE_CHECKING:
     from client_args import Config
 
@@ -28,7 +30,7 @@ class Connection:
                     max_size=10 * 1024 * 1024,
                 )
             except Exception as e:
-                print(f"Connection failed: {e}. Retrying...")
+                vprint(f"Connection failed: {e}. Retrying...", 2)
                 await asyncio.sleep(5)
 
     async def disconnect(self):

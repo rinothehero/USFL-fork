@@ -18,6 +18,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
+from .log_utils import vprint
+
 
 @dataclass
 class GMetrics:
@@ -269,8 +271,8 @@ class OracleCalculator:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        print(
-            f"[Oracle] Computed from {total_samples} samples over {num_batches} batches"
+        vprint(
+            f"[Oracle] Computed from {total_samples} samples over {num_batches} batches", 2
         )
 
         return client_grad_accum, server_grad_accum
@@ -315,8 +317,8 @@ class OracleCalculator:
                         return out_clone
 
                     hook_handle = module.register_forward_hook(hook_fn)
-                    print(
-                        f"[Oracle Split Hook] Registered forward hook on '{split_layer_name}'"
+                    vprint(
+                        f"[Oracle Split Hook] Registered forward hook on '{split_layer_name}'", 2
                     )
                     break
 
@@ -335,9 +337,9 @@ class OracleCalculator:
 
             outputs = full_model(data)
             if not debug_logged:
-                print(f"[DEBUG] Oracle Input shape: {data.shape}")
-                print(f"[DEBUG] Oracle Output shape: {outputs.shape}")
-                print(f"[DEBUG] Oracle Labels shape: {labels.shape}")
+                vprint(f"[DEBUG] Oracle Input shape: {data.shape}", 2)
+                vprint(f"[DEBUG] Oracle Output shape: {outputs.shape}", 2)
+                vprint(f"[DEBUG] Oracle Labels shape: {labels.shape}", 2)
                 debug_logged = True
             loss = F.cross_entropy(outputs, labels, reduction="sum")
             loss.backward()
@@ -355,8 +357,8 @@ class OracleCalculator:
                     batch_split_grad = activation_grad.detach().sum(dim=0).cpu()
                     if split_grad_sum is None:
                         split_grad_sum = batch_split_grad
-                        print(
-                            f"[Oracle Split Hook] Split layer grad shape: {batch_split_grad.shape}"
+                        vprint(
+                            f"[Oracle Split Hook] Split layer grad shape: {batch_split_grad.shape}", 2
                         )
                     else:
                         split_grad_sum += batch_split_grad
@@ -371,8 +373,8 @@ class OracleCalculator:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        print(
-            f"[Oracle] Computed from {total_samples} samples over {num_batches} batches"
+        vprint(
+            f"[Oracle] Computed from {total_samples} samples over {num_batches} batches", 2
         )
 
         divisor = total_samples if total_samples > 0 else 1
@@ -387,17 +389,17 @@ class OracleCalculator:
         split_grad = split_grad_sum / divisor if split_grad_sum is not None else None
 
         split_flag = "yes" if split_grad is not None else "no"
-        print(
-            f"[Oracle Split Hook] Split: client={len(oracle_client)}, server={len(oracle_server)}, split_layer={split_flag}"
+        vprint(
+            f"[Oracle Split Hook] Split: client={len(oracle_client)}, server={len(oracle_server)}, split_layer={split_flag}", 2
         )
 
         client_vec = gradient_to_vector(oracle_client)
-        print(
-            f"[DEBUG Oracle] Client: ||g*||={torch.norm(client_vec).item():.4f}, numel={client_vec.numel()}"
+        vprint(
+            f"[DEBUG Oracle] Client: ||g*||={torch.norm(client_vec).item():.4f}, numel={client_vec.numel()}", 2
         )
         server_vec = gradient_to_vector(oracle_server)
-        print(
-            f"[DEBUG Oracle] Server: ||g*||={torch.norm(server_vec).item():.4f}, numel={server_vec.numel()}"
+        vprint(
+            f"[DEBUG Oracle] Server: ||g*||={torch.norm(server_vec).item():.4f}, numel={server_vec.numel()}", 2
         )
 
         return oracle_client, oracle_server, split_grad
@@ -485,11 +487,11 @@ class GMeasurementSystem:
         self._accumulated_round_active: bool = False
 
         if measurement_mode == "accumulated":
-            print("[G Measurement] Mode: ACCUMULATED (full round average)")
+            vprint("[G Measurement] Mode: ACCUMULATED (full round average)", 2)
         elif measurement_mode == "k_batch":
-            print(f"[G Measurement] Mode: K_BATCH (first {measurement_k} batches)")
+            vprint(f"[G Measurement] Mode: K_BATCH (first {measurement_k} batches)", 2)
         else:
-            print("[G Measurement] Mode: SINGLE (1-step)")
+            vprint("[G Measurement] Mode: SINGLE (1-step)", 2)
 
     def is_diagnostic_round(self, round_idx: int) -> bool:
         return (round_idx + 1) % self.diagnostic_frequency == 0
@@ -506,7 +508,7 @@ class GMeasurementSystem:
         self._client_accumulators = {}
         self._server_accumulator.reset()
         self._accumulated_round_active = True
-        print("[G Measurement] Accumulated round started - accumulators reset")
+        vprint("[G Measurement] Accumulated round started - accumulators reset", 2)
 
     def accumulate_client_gradient(
         self, client_id: int, client_grad: Dict[str, torch.Tensor], batch_size: int
@@ -544,19 +546,19 @@ class GMeasurementSystem:
             client_avg = accumulator.get_weighted_average()
             if client_avg:
                 client_grads[client_id] = client_avg
-                print(
-                    f"[G Measurement] Client {client_id} accumulated: {accumulator.total_weight:.0f} samples"
+                vprint(
+                    f"[G Measurement] Client {client_id} accumulated: {accumulator.total_weight:.0f} samples", 2
                 )
 
         server_grad = self._server_accumulator.get_weighted_average()
         if server_grad:
-            print(
-                f"[G Measurement] Server accumulated: {self._server_accumulator.total_weight:.0f} samples"
+            vprint(
+                f"[G Measurement] Server accumulated: {self._server_accumulator.total_weight:.0f} samples", 2
             )
 
         self._accumulated_round_active = False
-        print(
-            f"[G Measurement] Accumulated round finalized: {len(client_grads)} clients"
+        vprint(
+            f"[G Measurement] Accumulated round finalized: {len(client_grads)} clients", 2
         )
 
         return client_grads, server_grad
@@ -577,14 +579,14 @@ class GMeasurementSystem:
 
         client_vec = gradient_to_vector(self.oracle_client_grad)
         server_vec = gradient_to_vector(self.oracle_server_grad)
-        print(
+        vprint(
             f"[G] Oracle: samples={total_samples}, batches={num_batches}, "
-            f"split_layer={split_layer_name or 'none'}, split_shape={split_shape_display}"
+            f"split_layer={split_layer_name or 'none'}, split_shape={split_shape_display}", 2
         )
-        print(
+        vprint(
             f"[G] Oracle Norms: client={torch.norm(client_vec).item():.4f} "
             f"(numel={client_vec.numel()}), server={torch.norm(server_vec).item():.4f} "
-            f"(numel={server_vec.numel()})"
+            f"(numel={server_vec.numel()})", 2
         )
 
     def set_branch_oracle_grads(
@@ -603,7 +605,7 @@ class GMeasurementSystem:
         split_layer_name: Optional[str] = None,
         use_sfl_oracle: bool = False,
     ):
-        print(f"[G Measurement] Computing Oracle gradient...")
+        vprint(f"[G Measurement] Computing Oracle gradient...", 2)
         split_grad = None
         if use_sfl_oracle and full_model is not None:
             client_param_names = {name for name, _ in client_model.named_parameters()}
@@ -632,14 +634,14 @@ class GMeasurementSystem:
 
         client_vec = gradient_to_vector(self.oracle_client_grad)
         server_vec = gradient_to_vector(self.oracle_server_grad)
-        print(
+        vprint(
             f"[G] Oracle: samples={total_samples}, batches={num_batches}, "
-            f"split_layer={split_layer_name or 'none'}, split_shape={split_shape}"
+            f"split_layer={split_layer_name or 'none'}, split_shape={split_shape}", 2
         )
-        print(
+        vprint(
             f"[G] Oracle Norms: client={torch.norm(client_vec).item():.4f} "
             f"(numel={client_vec.numel()}), server={torch.norm(server_vec).item():.4f} "
-            f"(numel={server_vec.numel()})"
+            f"(numel={server_vec.numel()})", 2
         )
 
     def _measure_client_g_accumulated(
@@ -721,7 +723,7 @@ class GMeasurementSystem:
                 pre_clip_norm = torch.nn.utils.clip_grad_norm_(
                     client_model.parameters(), max_norm=self.clip_grad_max_norm
                 )
-                print(f"[Clip][G][Client] pre_norm={float(pre_clip_norm):.6f}")
+                vprint(f"[Clip][G][Client] pre_norm={float(pre_clip_norm):.6f}", 2)
 
             current_client_grad = {
                 name: param.grad.clone().detach().cpu()
@@ -918,7 +920,7 @@ class GMeasurementSystem:
                 pre_clip_norm = torch.nn.utils.clip_grad_norm_(
                     client_model.parameters(), max_norm=self.clip_grad_max_norm
                 )
-                print(f"[Clip][G][Client] pre_norm={float(pre_clip_norm):.6f}")
+                vprint(f"[Clip][G][Client] pre_norm={float(pre_clip_norm):.6f}", 2)
 
             current_client_grad = {
                 name: param.grad.clone().detach().cpu()
@@ -1041,7 +1043,7 @@ class GMeasurementSystem:
                 pre_clip_norm = torch.nn.utils.clip_grad_norm_(
                     server_model.parameters(), max_norm=self.clip_grad_max_norm
                 )
-                print(f"[Clip][G][Server] pre_norm={float(pre_clip_norm):.6f}")
+                vprint(f"[Clip][G][Server] pre_norm={float(pre_clip_norm):.6f}", 2)
 
             current_server_grad = {
                 name: param.grad.clone().detach().cpu()
@@ -1200,7 +1202,7 @@ class GMeasurementSystem:
                 pre_clip_norm = torch.nn.utils.clip_grad_norm_(
                     server_model.parameters(), max_norm=self.clip_grad_max_norm
                 )
-                print(f"[Clip][G][Server] pre_norm={float(pre_clip_norm):.6f}")
+                vprint(f"[Clip][G][Server] pre_norm={float(pre_clip_norm):.6f}", 2)
 
             current_server_grad = {
                 name: param.grad.clone().detach().cpu()
@@ -1351,38 +1353,38 @@ class GMeasurementSystem:
 
         client_batch_sizes = [int(y.size(0)) for y in y_all_client]
         server_batch_sizes = [int(y.size(0)) for y in y_all_server]
-        print(
-            f"[G] Batch Sizes: client={client_batch_sizes}, server={server_batch_sizes}"
+        vprint(
+            f"[G] Batch Sizes: client={client_batch_sizes}, server={server_batch_sizes}", 1
         )
         for client_id in sorted(per_client_g.keys()):
             metrics = per_client_g[client_id]
-            print(
+            vprint(
                 f"[G] Client {client_id}: G={metrics.G:.6f}, "
-                f"G_rel={metrics.G_rel:.4f}, D={metrics.D_cosine:.4f}"
+                f"G_rel={metrics.G_rel:.4f}, D={metrics.D_cosine:.4f}", 1
             )
-        print(
+        vprint(
             f"[G] Client Summary: G={client_g.G:.6f}, G_rel={client_g.G_rel:.4f}, "
-            f"D={client_g.D_cosine:.4f}"
+            f"D={client_g.D_cosine:.4f}", 1
         )
-        print(
+        vprint(
             f"[G] Server Summary: G={server_g.G:.6f}, G_rel={server_g.G_rel:.4f}, "
-            f"D={server_g.D_cosine:.4f}"
+            f"D={server_g.D_cosine:.4f}", 1
         )
         if per_branch_server_g:
             for branch_idx in sorted(per_branch_server_g.keys()):
                 branch_metrics = per_branch_server_g[branch_idx]
-                print(
+                vprint(
                     f"[G] Server {branch_idx}: G={branch_metrics.G:.6f}, "
-                    f"G_rel={branch_metrics.G_rel:.4f}, D={branch_metrics.D_cosine:.4f}"
+                    f"G_rel={branch_metrics.G_rel:.4f}, D={branch_metrics.D_cosine:.4f}", 1
                 )
         if self.use_variance_g:
-            print(
+            vprint(
                 f"[G] Variance Client: G={variance_client_g:.6f}, "
-                f"G_rel={variance_client_g_rel:.6f}"
+                f"G_rel={variance_client_g_rel:.6f}", 1
             )
-            print(
+            vprint(
                 f"[G] Variance Server: G={variance_server_g:.6f}, "
-                f"G_rel={variance_server_g_rel:.6f}"
+                f"G_rel={variance_server_g_rel:.6f}", 1
             )
 
         self.oracle_client_grad = None

@@ -27,6 +27,7 @@ from utils.g_measurement import (
 
 # Drift Measurement (SCAFFOLD-style)
 from utils.drift_measurement import DriftMeasurementTracker
+from utils.log_utils import vprint
 
 if TYPE_CHECKING:
     from server_args import Config
@@ -110,7 +111,7 @@ class USFLStageOrganizer(BaseStageOrganizer):
         self.drift_tracker = None
         if getattr(config, "enable_drift_measurement", False):
             self.drift_tracker = DriftMeasurementTracker()
-            print("[Drift] DriftMeasurementTracker initialized (USFL)")
+            vprint("[Drift] DriftMeasurementTracker initialized (USFL)", 2)
 
     @staticmethod
     def _get_exponential_bin(usage_count: int) -> int:
@@ -146,7 +147,7 @@ class USFLStageOrganizer(BaseStageOrganizer):
     def _print_memory_usage(self, step):
         allocated = torch.cuda.memory_allocated() / 1024**2
         reserved = torch.cuda.memory_reserved() / 1024**2
-        print(f"{step} - Allocated: {allocated:.2f} MiB, Reserved: {reserved:.2f} MiB")
+        vprint(f"{step} - Allocated: {allocated:.2f} MiB, Reserved: {reserved:.2f} MiB", 2)
 
     def _calculate_batch_size(
         self, dataset_sizes: dict[int, int], selected_clients: list[int]
@@ -165,8 +166,8 @@ class USFLStageOrganizer(BaseStageOrganizer):
             * (len(selected_clients) / self.config.num_clients_per_round)
         )
 
-        print(
-            f"batch size: {self.config.batch_size}, selected_count: {len(selected_clients)}, num_clients_per_round: {self.config.num_clients_per_round}, global batch size: {global_batch_size}"
+        vprint(
+            f"batch size: {self.config.batch_size}, selected_count: {len(selected_clients)}, num_clients_per_round: {self.config.num_clients_per_round}, global batch size: {global_batch_size}", 2
         )
 
         # 1. 각 클라이언트의 이상적인 (소수점 포함) 배치 사이즈와 소수부 계산
@@ -184,7 +185,7 @@ class USFLStageOrganizer(BaseStageOrganizer):
             if batch_sizes[client_id] <= 0:
                 batch_sizes[client_id] = 1
                 zero_batch_clients.append(client_id)
-                print(f"Warning: Client {client_id} had zero batch size, set to 1")
+                vprint(f"Warning: Client {client_id} had zero batch size, set to 1", 0)
 
         # 3. 버려진 소수점들의 합 (나머지) 계산
         remainder = global_batch_size - sum(batch_sizes.values())
@@ -482,8 +483,8 @@ class USFLStageOrganizer(BaseStageOrganizer):
             )
 
         # Select clients (selector has internal retry logic with up to 1000 attempts)
-        print(
-            f"[Round {round_number}] Selecting clients..."
+        vprint(
+            f"[Round {round_number}] Selecting clients...", 2
         )  # Terminal progress update
         self.selected_clients = self.pre_round.select_clients(
             self.selector,
@@ -513,7 +514,7 @@ class USFLStageOrganizer(BaseStageOrganizer):
             )
 
         # Terminal: Show selected clients summary
-        print(f"[Round {round_number}] Selected clients: {self.selected_clients}")
+        vprint(f"[Round {round_number}] Selected clients: {self.selected_clients}", 2)
 
         # 전역 및 각 클라이언트별 라벨별 데이터셋 크기 초기화
         local_dataset_sizes = {
@@ -602,8 +603,8 @@ class USFLStageOrganizer(BaseStageOrganizer):
             USFLLogger.log_debug(
                 f"Target-based balancing: strategy={target_type}, target_size={target_size}"
             )
-            print(
-                f"[Round {round_number}] Target-based balancing: target={target_size} (strategy={target_type})"
+            vprint(
+                f"[Round {round_number}] Target-based balancing: target={target_size} (strategy={target_type})", 2
             )
 
             # Calculate per-label adjustment
@@ -700,8 +701,8 @@ class USFLStageOrganizer(BaseStageOrganizer):
                         client_total_counts[client_id_str] += label_count
 
             USFLLogger.log_debug(f"Total added count (via replication): {added_count}")
-            print(
-                f"[Round {round_number}] Data replication: {added_count} samples added (max_size={max_dataset_size})"
+            vprint(
+                f"[Round {round_number}] Data replication: {added_count} samples added (max_size={max_dataset_size})", 2
             )
 
         else:  # "trimming" (default)
@@ -867,8 +868,8 @@ class USFLStageOrganizer(BaseStageOrganizer):
 
             process = psutil.Process(os.getpid())
             mem_before_oracle = process.memory_info().rss / (1024**3)
-            print(
-                f"\n[G Measurement] === Round {round_number}: Computing Oracle === (mem={mem_before_oracle:.2f}GB)"
+            vprint(
+                f"\n[G Measurement] === Round {round_number}: Computing Oracle === (mem={mem_before_oracle:.2f}GB)", 1
             )
 
             # Lazy initialize oracle_calculator if needed
@@ -884,8 +885,8 @@ class USFLStageOrganizer(BaseStageOrganizer):
                     drop_last=False,
                 )
                 self.g_measurement_system.initialize(full_trainloader)
-                print(
-                    f"[G Measurement] Oracle calculator initialized with {len(full_trainloader.dataset)} samples"
+                vprint(
+                    f"[G Measurement] Oracle calculator initialized with {len(full_trainloader.dataset)} samples", 1
                 )
 
             # Set param names for gradient splitting
@@ -908,8 +909,8 @@ class USFLStageOrganizer(BaseStageOrganizer):
             )
 
             mem_after_oracle = process.memory_info().rss / (1024**3)
-            print(
-                f"[G Measurement] Oracle computed (mem={mem_after_oracle:.2f}GB, Δ={mem_after_oracle - mem_before_oracle:+.2f}GB)"
+            vprint(
+                f"[G Measurement] Oracle computed (mem={mem_after_oracle:.2f}GB, Δ={mem_after_oracle - mem_before_oracle:+.2f}GB)", 1
             )
 
         await self.pre_round.send_customized_global_model(
@@ -943,9 +944,9 @@ class USFLStageOrganizer(BaseStageOrganizer):
             else:
                 server_lr = self.config.learning_rate
         scale_tag = "scaled" if self.config.scale_server_lr else "unscaled"
-        print(
+        vprint(
             f"[USFL] Server LR: {server_lr} ({scale_tag}, "
-            f"client_lr={self.config.learning_rate}, K={self.config.num_clients_per_round})"
+            f"client_lr={self.config.learning_rate}, K={self.config.num_clients_per_round})", 2
         )
 
         server_optimizer = self.in_round._get_optimizer(
@@ -1065,8 +1066,8 @@ class USFLStageOrganizer(BaseStageOrganizer):
                             self.g_measurement_system.store_server_gradient(
                                 server_grad, batch_weight
                             )
-                            print(
-                                f"[G Measurement] Server gradient collected (batch_size={batch_weight})"
+                            vprint(
+                                f"[G Measurement] Server gradient collected (batch_size={batch_weight})", 2
                             )
 
                     # G Measurement: Store split layer gradient ONLY on first batch
@@ -1095,8 +1096,8 @@ class USFLStageOrganizer(BaseStageOrganizer):
                             split_shapes = [
                                 self.g_measurement_system.split_g_tilde.shape
                             ]
-                        print(
-                            f"[G Measurement] Split layer gradient collected, shape: {split_shapes}"
+                        vprint(
+                            f"[G Measurement] Split layer gradient collected, shape: {split_shapes}", 2
                         )
 
                     if self.config.gradient_shuffle:
@@ -1196,12 +1197,12 @@ class USFLStageOrganizer(BaseStageOrganizer):
                             )  # [num_samples, 1]
 
                             # Log statistics
-                            print(f"  → Adaptive alpha (β={beta}):")
-                            print(
-                                f"     Cosine similarity: min={cos_sim.min().item():.3f}, mean={cos_sim.mean().item():.3f}, max={cos_sim.max().item():.3f}"
+                            vprint(f"  → Adaptive alpha (β={beta}):", 2)
+                            vprint(
+                                f"     Cosine similarity: min={cos_sim.min().item():.3f}, mean={cos_sim.mean().item():.3f}, max={cos_sim.max().item():.3f}", 2
                             )
-                            print(
-                                f"     Alpha (local weight): min={alpha_dynamic.min().item():.3f}, mean={alpha_dynamic.mean().item():.3f}, max={alpha_dynamic.max().item():.3f}"
+                            vprint(
+                                f"     Alpha (local weight): min={alpha_dynamic.min().item():.3f}, mean={alpha_dynamic.mean().item():.3f}, max={alpha_dynamic.max().item():.3f}", 2
                             )
 
                             # Mix: alpha * local + (1 - alpha) * global
@@ -1342,13 +1343,13 @@ class USFLStageOrganizer(BaseStageOrganizer):
                             int(client_weights[cid])
                             for cid in sorted(client_weights.keys())
                         ]
-                        print(
+                        vprint(
                             "[G Measurement] Collected gradients from "
-                            f"{len(client_grads)} clients (batch_sizes={sorted_sizes})"
+                            f"{len(client_grads)} clients (batch_sizes={sorted_sizes})", 1
                         )
                     else:
-                        print(
-                            f"[G Measurement] Collected gradients from {len(client_grads)} clients"
+                        vprint(
+                            f"[G Measurement] Collected gradients from {len(client_grads)} clients", 1
                         )
 
                 # Compute G metrics
@@ -1357,15 +1358,15 @@ class USFLStageOrganizer(BaseStageOrganizer):
                 )
                 if result:
                     self.global_dict.add_event("G_MEASUREMENT", result.to_dict())
-                    print(f"[G Measurement] Round {round_number} G computed and logged")
+                    vprint(f"[G Measurement] Round {round_number} G computed and logged", 1)
 
             # Clear gradient data to release memory
             self.g_measurement_system.clear_round_data()
             gc.collect()
 
             mem_after = process.memory_info().rss / (1024**3)
-            print(
-                f"[G Measurement] Memory: {mem_before:.2f}GB → {mem_after:.2f}GB (freed {mem_before - mem_after:.2f}GB)"
+            vprint(
+                f"[G Measurement] Memory: {mem_before:.2f}GB → {mem_after:.2f}GB (freed {mem_before - mem_after:.2f}GB)", 1
             )
 
         # ===== CLEANUP: Always remove client_gradient from model_queue to prevent JSON bloat =====
@@ -1532,7 +1533,7 @@ class USFLStageOrganizer(BaseStageOrganizer):
                             del usage_bins[bin_key]
 
         # Terminal: Show round completion with accuracy
-        print(f"[Round {round_number}] Completed - Accuracy: {accuracy:.4f}")
+        vprint(f"[Round {round_number}] Completed - Accuracy: {accuracy:.4f}", 1)
 
         if self.config.device == "cuda":
             self._print_memory_usage(f"[Round {round_number} Before]")

@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
 
+from utils.log_utils import vprint
+
 
 class BaseStageOrganizer(ABC):
     def _count_parameters(self, model):
@@ -21,13 +23,13 @@ class BaseStageOrganizer(ABC):
         pass
 
     async def run_pre_round(self, round_number: int):
-        print(f"[Round {round_number}] Pre-round")
+        vprint(f"[Round {round_number}] Pre-round", 2)
         await self._pre_round(round_number)
 
     async def run_in_round(self, round_number: int):
-        print(f"[Round {round_number}] In-round")
+        vprint(f"[Round {round_number}] In-round", 2)
         await self._in_round(round_number)
 
     async def run_post_round(self, round_number: int):
-        print(f"[Round {round_number}] Post-round")
+        vprint(f"[Round {round_number}] Post-round", 2)
         await self._post_round(round_number)

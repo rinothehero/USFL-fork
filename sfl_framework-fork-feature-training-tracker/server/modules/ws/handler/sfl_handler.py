@@ -3,6 +3,7 @@ import time
 from typing import TYPE_CHECKING, Callable
 
 from .fl_handler import FLHandler
+from utils.log_utils import vprint
 
 if TYPE_CHECKING:
     from server_args import Config
@@ -23,7 +24,7 @@ class SFLHandler(FLHandler):
         model_queue = self.global_dict.get("model_queue")
 
         if signiture != model_queue.signiture:
-            print(f"Signiture mismatch: {signiture} != {model_queue.signiture}")
+            vprint(f"Signiture mismatch: {signiture} != {model_queue.signiture}", 0)
             return {"event": "submit_activations", "data": {}}
 
         activations = pickle.loads(bytes.fromhex(params["activations"]))

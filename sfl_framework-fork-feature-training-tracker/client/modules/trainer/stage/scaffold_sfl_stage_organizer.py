@@ -5,6 +5,8 @@ import pickle
 
 from modules.trainer.model_trainer.model_trainer import get_model_trainer
 
+from utils.log_utils import vprint
+
 from .base_stage_organizer import BaseStageOrganizer
 from .in_round.in_round import InRound
 from .post_round.post_round import PostRound
@@ -61,7 +63,7 @@ class ScaffoldSFLStageOrganizer(BaseStageOrganizer):
             self.api,
         )
 
-        print("Initialized model trainer")
+        vprint("Initialized model trainer", 2)
 
         return False
 
@@ -103,7 +105,7 @@ class ScaffoldSFLStageOrganizer(BaseStageOrganizer):
         # SCAFFOLD: Include delta_c in submission
         if hasattr(self.model_trainer, "delta_c") and self.model_trainer.delta_c:
             submit_params["delta_c"] = pickle.dumps(self.model_trainer.delta_c).hex()
-            print(f"[SCAFFOLD Client {self.config.client_id}] Submitting delta_c")
+            vprint(f"[SCAFFOLD Client {self.config.client_id}] Submitting delta_c", 2)
 
         # Drift Measurement: Include drift metrics if collected
         if (
@@ -130,7 +132,7 @@ class ScaffoldSFLStageOrganizer(BaseStageOrganizer):
 
         while not task.done():
             if time.time() > self.training_params["round_end_time"]:
-                print("Round end time reached, cancelling in round")
+                vprint("Round end time reached, cancelling in round", 2)
                 task.cancel()
                 return
 
@@ -141,7 +143,7 @@ class ScaffoldSFLStageOrganizer(BaseStageOrganizer):
 
         while not task.done():
             if time.time() > self.training_params["round_end_time"]:
-                print("Round end time reached, cancelling post round")
+                vprint("Round end time reached, cancelling post round", 2)
                 task.cancel()
                 return
 

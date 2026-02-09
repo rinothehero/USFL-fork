@@ -3,6 +3,8 @@ from typing import TYPE_CHECKING
 import torch
 from torch.utils.data import DataLoader
 
+from utils.log_utils import vprint
+
 from ....global_dict.model_queue.model_queue import ModelQueue
 from ....model.base_model import BaseModel
 from ....trainer.aggregator.base_aggregator import BaseAggregator
@@ -25,7 +27,7 @@ class PostRound:
         params: list[dict],
     ):
         if len(models) == 0:
-            print("No models to aggregate")
+            vprint("No models to aggregate", 2)
             return None
         if self.config.method == "nestfl" and self.config.aggregator == "fedavg":
             updated_model = aggregator.aggregate(models, params, True)
@@ -38,7 +40,7 @@ class PostRound:
         ids, models, params = model_queue.get_all_models()
 
         if len(models) == 0:
-            print("No models to aggregate")
+            vprint("No models to aggregate", 2)
             return None
         else:
             updated_model = aggregator.aggregate(models, params)

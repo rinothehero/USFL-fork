@@ -5,6 +5,7 @@ import torch
 
 from .base_aggregator import BaseAggregator
 from ..utils.training_tracker import TrainingTracker
+from utils.log_utils import vprint
 
 if TYPE_CHECKING:
     from typing import List
@@ -68,7 +69,7 @@ class USFLAggregator(BaseAggregator):
         # 정규화(수치 안정성)
         norm = sum(device_weights) or 1.0
         device_weights = [w / norm for w in device_weights]
-        print("device_weights:", device_weights)
+        vprint(f"device_weights: {device_weights}", 2)
 
         # --- Log Aggregation Weights ---
         TrainingTracker.log_aggregation_weights(

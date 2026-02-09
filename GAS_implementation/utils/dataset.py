@@ -7,6 +7,7 @@ from PIL import Image
 import torch.utils.data.dataloader as dataloader
 import os
 import datetime
+from utils.log_utils import vprint
 
 
 class TrainSet(Data.Dataset):
@@ -79,28 +80,20 @@ class CustomDataset(Data.Dataset):
 
     def __getitem__(self, idx):
         image = self.data[idx]
-        # Print raw data shapes and types
-        print(f"Original shape: {image.shape}, dtype: {image.dtype}")
         # Make sure the data type is uint8
         if image.dtype != np.uint8:
             image = image.astype(np.uint8)
-        # Printing information after data type conversion
-        print(f"After conversion dtype: {image.dtype}")
         # Check and adjust the shape
         if len(image.shape) == 3 and image.shape[0] == 1:
-            image = image.squeeze(axis=0)  # 移除单通道维度
-        # Print the shape and type of processed data
-        print(f"Processed shape: {image.shape}, dtype: {image.dtype}")
+            image = image.squeeze(axis=0)
 
         # Checks if the array shape conforms to the (H, W, C) format.
         if image.shape[0] == 3:
             image = np.transpose(image, (1, 2, 0))
-        # Print the shape and type of converted data
-        print(f"Final shape before conversion: {image.shape}, dtype: {image.dtype}")
         try:
             image = Image.fromarray(image)
         except Exception as e:
-            print(f"Error in converting to image: {e}")
+            vprint(f"Error in converting to image: {e}", 0)
             raise
 
         if self.transform:
@@ -119,7 +112,7 @@ def Dataset(
     SVHN=False,
     use_sfl_transform=False,
 ):
-    print("data preprocessing...")
+    vprint("data preprocessing...", 2)
     if cifar == True:
         if use_sfl_transform:
             train_transform = transforms.Compose([transforms.ToTensor()])
@@ -322,8 +315,8 @@ def Data_Partition(
             users_data.append(loader)
     elif dirichlet and shard > 0:
         # Shard + Dirichlet: Each client gets exactly 'shard' classes with Dirichlet distribution
-        print(
-            f"Using Shard + Dirichlet mode: each client gets {shard} classes with alpha={alpha}"
+        vprint(
+            f"Using Shard + Dirichlet mode: each client gets {shard} classes with alpha={alpha}", 2
         )
         indexOfClients = Shard_Dirichlet(
             train_label,
@@ -368,8 +361,8 @@ def Data_Partition(
     elif label_dirichlet:
         # Hybrid mode: shard-based class restriction + Dirichlet-based quantity distribution
         # Use the robust Shard_Dirichlet function
-        print(
-            f"[label_dirichlet] Using Shard_Dirichlet: each client gets {shard} classes with alpha={alpha}"
+        vprint(
+            f"[label_dirichlet] Using Shard_Dirichlet: each client gets {shard} classes with alpha={alpha}", 2
         )
         indexOfClients = Shard_Dirichlet(
             train_label,
@@ -398,7 +391,7 @@ def Data_Partition(
             class_index[int(train_label[i])].append(i)
         # The classOfLabel array is further subdivided into shard arrays.
         if (shard * user_num) % classOfLabel != 0:
-            print("Invalid Data Segmentation")
+            vprint("Invalid Data Segmentation", 0)
             interClassShardNum = 0
         else:
             interClassShardNum = int(
@@ -416,7 +409,7 @@ def Data_Partition(
 
         order = np.arange(classOfLabel * interClassShardNum)
         rng.shuffle(order)
-        print(order)
+        vprint(order, 2)
         for i in range(user_num):
             local_data = None
             local_label = None
@@ -436,7 +429,7 @@ def Data_Partition(
                 dataset=train_set, batch_size=batchSize, shuffle=True, drop_last=drop
             )
             users_data.append(loader)
-    print("Data processing completed.")
+    vprint("Data processing completed.", 2)
     return users_data
 
 
@@ -552,13 +545,13 @@ def Shard_Dirichlet(
         party2dataidx[j] = idx_batch[j]
 
     # Print final statistics
-    print(
-        f"[Shard_Dirichlet] Completed: {n_parties} clients, {shard} classes/client, alpha={alpha}"
+    vprint(
+        f"[Shard_Dirichlet] Completed: {n_parties} clients, {shard} classes/client, alpha={alpha}", 2
     )
     for j in range(n_parties):
         labels_in_client = np.unique(y_train[party2dataidx[j]])
-        print(
-            f"  Client {j}: {len(party2dataidx[j])} samples, classes: {labels_in_client}"
+        vprint(
+            f"  Client {j}: {len(party2dataidx[j])} samples, classes: {labels_in_client}", 2
         )
 
     return party2dataidx

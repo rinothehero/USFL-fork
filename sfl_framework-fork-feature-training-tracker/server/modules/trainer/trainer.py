@@ -13,6 +13,7 @@ from .distributer.distributer import get_distributer
 from .seletor.selector import get_selector
 from .splitter.splitter import get_splitter
 from .stage.stage_organizer import get_stage_organizer
+from utils.log_utils import vprint
 
 if TYPE_CHECKING:
     from modules.global_dict.global_dict import GlobalDict
@@ -98,7 +99,7 @@ class Trainer:
             self.stage = "PRE_ROUND"
 
     async def finish(self):
-        print("Training finished. Terminating process.")
+        vprint("Training finished. Terminating process.", 1)
         self.global_dict.add_event("FINISH_START")
         all_clients = self.connection.get_all_clients()
 
@@ -123,7 +124,7 @@ class Trainer:
 
         while True:
             if self.stage == "PRE_ROUND":
-                print("=" * 50)
+                vprint("=" * 50, 2)
                 await self.pre_round()
             elif self.stage == "IN_ROUND":
                 await self.in_round()

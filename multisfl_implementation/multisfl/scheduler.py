@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from typing import List, Literal
 import numpy as np
 
+from .log_utils import vprint
+
 
 @dataclass
 class SamplingState:
@@ -29,8 +31,8 @@ class SamplingProportionScheduler:
         self.verbose = verbose
 
         if self.p_min <= 0.0:
-            print(
-                f"[WARNING] p_min={self.p_min} <= 0. Multiplicative updates may kill p permanently. Setting p_min=1e-4."
+            vprint(
+                f"[WARNING] p_min={self.p_min} <= 0. Multiplicative updates may kill p permanently. Setting p_min=1e-4.", 0
             )
             self.p_min = 1e-4
 
@@ -71,9 +73,9 @@ class SamplingProportionScheduler:
         st.p = p_clipped
 
         if self.verbose:
-            print(
+            vprint(
                 f"[p_update] mode={self.mode}, p_prev={p_prev:.8f}, factor/delta={factor_or_delta:.6f}, "
-                f"p_unclipped={p_unclipped:.8f}, p_clipped={p_clipped:.8f}, FGN_prev={fgn_prev}, FGN_r={fgn_r:.8f}"
+                f"p_unclipped={p_unclipped:.8f}, p_clipped={p_clipped:.8f}, FGN_prev={fgn_prev}, FGN_r={fgn_r:.8f}", 2
             )
 
         return st.p

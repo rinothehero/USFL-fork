@@ -4,6 +4,7 @@ import numpy as np
 import torch
 
 from .base_distributer import BaseDistributer
+from utils.log_utils import vprint
 
 if TYPE_CHECKING:
     from server_args import Config
@@ -86,7 +87,7 @@ class ShardDirichletDistributer(BaseDistributer):
             targets = self._remove_fraction_of_labels(targets, 0.5)
 
         num_classes = len(set(targets) - {int("9999999")})
-        print(f"[ShardDirichlet] num_classes: {num_classes}")
+        vprint(f"[ShardDirichlet] num_classes: {num_classes}", 2)
 
         labels_per_client = self.config.labels_per_client
         seed = getattr(self.config, "seed", 42)
@@ -103,18 +104,18 @@ class ShardDirichletDistributer(BaseDistributer):
             min_size = min(len(idx) for idx in idx_clients) if idx_clients else 0
             
             if min_size >= self.min_require_size:
-                print(f"[ShardDirichlet] Success on attempt {retry + 1}: min_size={min_size} >= {self.min_require_size}")
+                vprint(f"[ShardDirichlet] Success on attempt {retry + 1}: min_size={min_size} >= {self.min_require_size}", 2)
                 break
             else:
                 if retry < self.MAX_RETRIES - 1:
-                    print(f"[ShardDirichlet] Retry {retry + 1}: min_size={min_size} < {self.min_require_size}")
+                    vprint(f"[ShardDirichlet] Retry {retry + 1}: min_size={min_size} < {self.min_require_size}", 2)
         else:
-            print(f"[ShardDirichlet] Warning: Could not achieve min_size={self.min_require_size} after {self.MAX_RETRIES} retries. Final min_size={min_size}")
+            vprint(f"[ShardDirichlet] Warning: Could not achieve min_size={self.min_require_size} after {self.MAX_RETRIES} retries. Final min_size={min_size}", 0)
 
         # Fallback: Handle empty clients by borrowing from the richest client
         for j in range(num_clients):
             if len(idx_clients[j]) == 0:
-                print(f"[ShardDirichlet] Client {clients[j]} has no samples. Finding samples to assign...")
+                vprint(f"[ShardDirichlet] Client {clients[j]} has no samples. Finding samples to assign...", 2)
                 max_samples_client = max(
                     range(num_clients), key=lambda x: len(idx_clients[x])
                 )
@@ -126,16 +127,16 @@ class ShardDirichletDistributer(BaseDistributer):
                     if len(idx_clients[max_samples_client]) > 1:
                         idx_clients[j].append(idx_clients[max_samples_client].pop())
                 
-                print(f"  Assigned {len(idx_clients[j])} samples from client {clients[max_samples_client]} to client {clients[j]}")
+                vprint(f"  Assigned {len(idx_clients[j])} samples from client {clients[max_samples_client]} to client {clients[j]}", 2)
 
         # Final stats
         total_assigned_samples = 0
         for i, idx_j in enumerate(idx_clients):
             num_samples = len(idx_j)
             total_assigned_samples += num_samples
-            print(f"Client {clients[i]}: {num_samples} samples, labels: {contains[i]}")
-        print(f"Total assigned samples: {total_assigned_samples}")
-        print(f"Total dataset size: {dataset_size}")
+            vprint(f"Client {clients[i]}: {num_samples} samples, labels: {contains[i]}", 2)
+        vprint(f"Total assigned samples: {total_assigned_samples}", 2)
+        vprint(f"Total dataset size: {dataset_size}", 2)
 
         return idx_clients
 
@@ -192,7 +193,7 @@ class ShardDirichletDistributer(BaseDistributer):
             clients_with_class_k = [i for i in range(num_clients) if k in client2classes[i]]
             
             if not clients_with_class_k:
-                print(f"[ShardDirichlet] Warning: Class {k} has no assigned clients")
+                vprint(f"[ShardDirichlet] Warning: Class {k} has no assigned clients", 0)
                 continue
             
             idx_k = np.where(targets == k)[0]

@@ -3,6 +3,8 @@ from typing import TYPE_CHECKING
 import orjson
 from fastapi import WebSocket, WebSocketDisconnect
 
+from utils.log_utils import vprint
+
 if TYPE_CHECKING:
     from typing import Callable
 
@@ -37,7 +39,7 @@ class Endpoint:
                 params = message_data.get("params", {})
 
                 if event not in self.handlers:
-                    print(f"Event {event} not found (client_id: {client_id})")
+                    vprint(f"Event {event} not found (client_id: {client_id})", 0)
                     continue
 
                 handler = self.handlers[event]

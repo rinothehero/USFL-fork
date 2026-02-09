@@ -27,6 +27,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 from shared.update_alignment import flatten_delta, compute_update_alignment
+from utils.log_utils import vprint
 
 
 @dataclass
@@ -391,9 +392,9 @@ class DriftMeasurementTracker:
                 sorted_deltas = sorted(self._early_delta_norms)
                 median_delta = sorted_deltas[len(sorted_deltas) // 2]
                 self._adaptive_epsilon = 1e-3 * median_delta
-                print(
+                vprint(
                     f"[Drift] Adaptive epsilon set to {self._adaptive_epsilon:.6e} "
-                    f"(median delta: {median_delta:.6f})"
+                    f"(median delta: {median_delta:.6f})", 1
                 )
 
         epsilon = self._adaptive_epsilon if self._adaptive_epsilon is not None else self.epsilon
@@ -451,12 +452,12 @@ class DriftMeasurementTracker:
 
         self.measurements.append(result)
 
-        print(
+        vprint(
             f"[Drift] Round {round_number}: "
             f"Client(G_drift={G_drift_client:.6f}, G_end={G_end_client:.6f}) "
             f"Server(G_drift={G_drift_server:.6f}, G_end={G_end_server:.6f}, steps={self._server_batch_steps}) "
             f"Total(G_drift={G_drift_total:.6f}) "
-            f"A_cos={alignment.A_cos:.4f}"
+            f"A_cos={alignment.A_cos:.4f}", 1
         )
 
         return result

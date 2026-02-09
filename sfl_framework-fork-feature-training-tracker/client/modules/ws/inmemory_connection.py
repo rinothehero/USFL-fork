@@ -2,6 +2,8 @@ import orjson
 from client_args import Config
 from tqdm import tqdm
 
+from utils.log_utils import vprint
+
 
 class InMemoryConnection:
     def __init__(self, config: "Config", server):
@@ -12,7 +14,7 @@ class InMemoryConnection:
 
     async def connect(self):
         self.conn = await self.server.connect(self.client_id)
-        print(f"Client: Connected as Client {self.client_id}")
+        vprint(f"Client: Connected as Client {self.client_id}", 2)
 
     async def disconnect(self):
         if self.conn and self.conn["connected"]:
@@ -24,7 +26,7 @@ class InMemoryConnection:
 
     async def send_bytes(self, data: bytes, logging=True):
         if not self.conn or not self.conn["connected"]:
-            print("Client: Not connected, reconnecting...")
+            vprint("Client: Not connected, reconnecting...", 2)
             await self.connect()
 
         start_marker = b"<START>"
@@ -37,7 +39,7 @@ class InMemoryConnection:
 
     async def receive_message(self) -> str:
         if not self.conn or not self.conn["connected"]:
-            print("Client: Not connected, reconnecting...")
+            vprint("Client: Not connected, reconnecting...", 2)
             await self.connect()
 
         data = b""
@@ -59,7 +61,7 @@ class InMemoryConnection:
                 if receiving:
                     data += chunk
         except Exception as e:
-            print(f"Client: Error receiving data: {e}")
+            vprint(f"Client: Error receiving data: {e}", 0)
             return None
 
         return data.decode("utf-8")

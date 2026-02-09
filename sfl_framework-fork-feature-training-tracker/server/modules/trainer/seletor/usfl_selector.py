@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Dict, List
 
 from .base_selector import BaseSelector
 from ..utils.usfl_logger import USFLLogger
+from utils.log_utils import vprint
 
 if TYPE_CHECKING:
     from server_args import Config
@@ -309,7 +310,7 @@ class USFLSelector(BaseSelector):
                 "This should have been caught by config validation. "
                 "Falling back to alpha-based scoring for this round."
             )
-            print(f"[WARNING] {warning_msg}")  # Keep in terminal as it's a critical warning
+            vprint(f"[WARNING] {warning_msg}", 0)
             USFLLogger.log_warning(warning_msg)
             fresh_scoring = False
             data["fresh_scoring"] = False  # Update for this round
@@ -365,10 +366,10 @@ class USFLSelector(BaseSelector):
                     current_missing = sum(1 for v in aggregated_counts.values() if v == 0)
 
                     # Log current state
-                    print(f"\n[Selection Step {len(selected_ids) + 1}/{n}] Current missing labels: {current_missing}")
+                    vprint(f"\n[Selection Step {len(selected_ids) + 1}/{n}] Current missing labels: {current_missing}", 2)
                     if current_missing > 0:
                         missing_labels_list = [lbl for lbl, cnt in aggregated_counts.items() if cnt == 0]
-                        print(f"  Missing label IDs: {missing_labels_list}")
+                        vprint(f"  Missing label IDs: {missing_labels_list}", 2)
 
                     # 1. Calculate both missing_labels and temp_min for all candidates
                     candidate_scores = []
@@ -392,15 +393,15 @@ class USFLSelector(BaseSelector):
                     candidate_scores.sort(key=lambda x: (x["missing_after"], -x["temp_min"]))
 
                     # Log top candidates after sorting
-                    print(f"  Top 5 candidates by (missing_after, temp_min):")
+                    vprint(f"  Top 5 candidates by (missing_after, temp_min):", 2)
                     for i, cs in enumerate(candidate_scores[:5]):
                         reduction = current_missing - cs["missing_after"]
-                        print(f"    {i+1}. Client {cs['id']}: missing_after={cs['missing_after']} (reduces {reduction}), temp_min={cs['temp_min']}")
+                        vprint(f"    {i+1}. Client {cs['id']}: missing_after={cs['missing_after']} (reduces {reduction}), temp_min={cs['temp_min']}", 2)
 
                     # 3. Phase 2 Filter: Get top-N candidates (by the combined criteria)
                     # Take candidates with best (missing_after, temp_min) combinations
                     primary_candidates = [cs["id"] for cs in candidate_scores[:top_n]]
-                    print(f"  Primary candidates (top-{top_n}): {primary_candidates}")
+                    vprint(f"  Primary candidates (top-{top_n}): {primary_candidates}", 2)
 
                     # 4. Phase 3: Freshness scoring among primary candidates
                     # "신선도" 점수 기반 최종 선택
@@ -510,9 +511,9 @@ class USFLSelector(BaseSelector):
                     if selected_score:
                         freshness = freshness_scores_dict.get(best_cand, "N/A")
                         freshness_str = f"{freshness:.2f}" if isinstance(freshness, float) else str(freshness)
-                        print(f"  ✓ Selected: Client {best_cand} (missing_after={selected_score['missing_after']}, temp_min={selected_score['temp_min']}, freshness={freshness_str})")
+                        vprint(f"  Selected: Client {best_cand} (missing_after={selected_score['missing_after']}, temp_min={selected_score['temp_min']}, freshness={freshness_str})", 2)
                 else:
-                    print(f"  ✓ Selected: Client {best_cand}")
+                    vprint(f"  Selected: Client {best_cand}", 2)
 
                 ld = client_informations[best_cand]["dataset"]["label_distribution"]
                 selected_dataset_sizes[best_cand] = sum(ld.values())
@@ -549,9 +550,9 @@ class USFLSelector(BaseSelector):
             ):
                 # Log final selection summary
                 final_missing = sum(1 for v in aggregated_counts.values() if v == 0)
-                print(f"\n✓ Selection Complete: {len(selected_ids)} clients selected (target: {n})")
-                print(f"  Final missing labels: {final_missing}")
-                print(f"  Selected clients: {selected_ids}")
+                vprint(f"\nSelection Complete: {len(selected_ids)} clients selected (target: {n})", 1)
+                vprint(f"  Final missing labels: {final_missing}", 1)
+                vprint(f"  Selected clients: {selected_ids}", 1)
 
                 self.selection_history.append(list(selected_ids))
 

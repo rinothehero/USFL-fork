@@ -5,6 +5,7 @@ import orjson
 from server_args import Config
 
 from .inmemory_connection import DisconnectedError, InMemoryConnection
+from utils.log_utils import vprint
 
 
 class InMemoryEndpoint:
@@ -31,14 +32,14 @@ class InMemoryEndpoint:
                 try:
                     message_data = orjson.loads(message)
                 except orjson.JSONDecodeError:
-                    print(f"Invalid JSON from client {client_id}")
+                    vprint(f"Invalid JSON from client {client_id}", 0)
                     continue
 
                 event = message_data.get("event")
                 params = message_data.get("params", {})
 
                 if event not in self.handlers:
-                    print(f"Event {event} not found (client_id: {client_id})")
+                    vprint(f"Event {event} not found (client_id: {client_id})", 0)
                     continue
 
                 handler = self.handlers[event]

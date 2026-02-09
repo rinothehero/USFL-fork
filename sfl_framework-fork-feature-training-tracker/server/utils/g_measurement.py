@@ -24,6 +24,7 @@ from typing import Dict, List, Optional, Tuple, Set, Union
 from dataclasses import dataclass, field
 
 from server.modules.trainer.propagator.propagator import get_propagator
+from utils.log_utils import vprint
 
 
 @dataclass
@@ -235,8 +236,9 @@ def compute_g_metrics(
     CRITICAL: 동일한 parameter name 순서로 flatten (sorted)
     """
     if not g_tilde or not g_star:
-        print(
-            f"[DEBUG] compute_g_metrics: Empty input - g_tilde={len(g_tilde) if g_tilde else 0}, g_star={len(g_star) if g_star else 0}"
+        vprint(
+            f"[DEBUG] compute_g_metrics: Empty input - g_tilde={len(g_tilde) if g_tilde else 0}, g_star={len(g_star) if g_star else 0}",
+            2,
         )
         return GMetrics()
 
@@ -258,9 +260,9 @@ def compute_g_metrics(
     common_keys = sorted(tilde_keys)
 
     if not common_keys:
-        print(f"[DEBUG] compute_g_metrics: No common keys!")
-        print(f"[DEBUG]   g_tilde keys: {list(g_tilde_norm.keys())[:5]}...")
-        print(f"[DEBUG]   g_star keys: {list(g_star_norm.keys())[:5]}...")
+        vprint(f"[DEBUG] compute_g_metrics: No common keys!", 2)
+        vprint(f"[DEBUG]   g_tilde keys: {list(g_tilde_norm.keys())[:5]}...", 2)
+        vprint(f"[DEBUG]   g_star keys: {list(g_star_norm.keys())[:5]}...", 2)
         return GMetrics()
 
     # 동일한 순서로 flatten
@@ -269,10 +271,10 @@ def compute_g_metrics(
 
     # Check for NaN/Inf
     if torch.isnan(g_tilde_flat).any() or torch.isinf(g_tilde_flat).any():
-        print(f"[DEBUG] compute_g_metrics: g_tilde contains NaN/Inf!")
+        vprint(f"[DEBUG] compute_g_metrics: g_tilde contains NaN/Inf!", 2)
         return GMetrics(G=float("nan"), G_rel=float("nan"), D_cosine=1.0)
     if torch.isnan(g_star_flat).any() or torch.isinf(g_star_flat).any():
-        print(f"[DEBUG] compute_g_metrics: g_star contains NaN/Inf!")
+        vprint(f"[DEBUG] compute_g_metrics: g_star contains NaN/Inf!", 2)
         return GMetrics(G=float("nan"), G_rel=float("nan"), D_cosine=1.0)
 
     diff = g_tilde_flat - g_star_flat
@@ -379,8 +381,9 @@ class OracleGradientCalculator:
         restore_bn_stats(model, bn_backup)
 
         avg_loss = total_loss / total_samples if total_samples > 0 else 0.0
-        print(
-            f"[Oracle] Computed from {total_samples} samples over {num_batches} batches, avg_loss={avg_loss:.4f}"
+        vprint(
+            f"[Oracle] Computed from {total_samples} samples over {num_batches} batches, avg_loss={avg_loss:.4f}",
+            2,
         )
 
         if return_loss:
@@ -431,8 +434,9 @@ class OracleGradientCalculator:
 
         if split_layer is not None:
             hook_handle = split_layer.register_forward_hook(forward_hook)
-            print(
-                f"[Oracle Split Hook] Registered forward hook on '{split_layer_name}'"
+            vprint(
+                f"[Oracle Split Hook] Registered forward hook on '{split_layer_name}'",
+                2,
             )
 
         bn_backup = backup_bn_stats(full_model)
@@ -535,12 +539,13 @@ class OracleGradientCalculator:
                 else:
                     oracle_split_grad = split_grad_sum / divisor
                     split_shapes = [oracle_split_grad.shape]
-                print(f"[Oracle Split Hook] Split layer grad shape: {split_shapes}")
+                vprint(f"[Oracle Split Hook] Split layer grad shape: {split_shapes}", 2)
 
-        print(
+        vprint(
             f"[Oracle Split Hook] Split: client={len(oracle_client_grad)}, "
             f"server={len(oracle_server_grad)}, "
-            f"split_layer={'yes' if oracle_split_grad is not None else 'no'}"
+            f"split_layer={'yes' if oracle_split_grad is not None else 'no'}",
+            2,
         )
 
         if torch.cuda.is_available():
@@ -702,13 +707,13 @@ class OracleGradientCalculator:
         restore_bn_stats(client_model, client_bn_backup)
         restore_bn_stats(server_model, server_bn_backup)
 
-        print(f"[Oracle Split] Computed from {total_samples} samples")
+        vprint(f"[Oracle Split] Computed from {total_samples} samples", 2)
         if oracle_split_grad is not None:
             if isinstance(oracle_split_grad, tuple):
                 split_shapes = [g.shape for g in oracle_split_grad]
             else:
                 split_shapes = [oracle_split_grad.shape]
-            print(f"[Oracle Split] Split grad shape: {split_shapes}")
+            vprint(f"[Oracle Split] Split grad shape: {split_shapes}", 2)
 
         return oracle_client_grad, oracle_server_grad, oracle_split_grad
 
@@ -825,11 +830,11 @@ class GMeasurementSystem:
         self.measurements: List[RoundGMeasurement] = []
 
         if measurement_mode == "accumulated":
-            print("[G Measurement] Mode: ACCUMULATED (full round average)")
+            vprint("[G Measurement] Mode: ACCUMULATED (full round average)", 2)
         elif measurement_mode == "k_batch":
-            print(f"[G Measurement] Mode: K_BATCH (first {measurement_k} batches)")
+            vprint(f"[G Measurement] Mode: K_BATCH (first {measurement_k} batches)", 2)
         else:
-            print("[G Measurement] Mode: SINGLE (1-step)")
+            vprint("[G Measurement] Mode: SINGLE (1-step)", 2)
 
     def is_diagnostic_round(self, round_number: int) -> bool:
         return (round_number + 1) % self.diagnostic_frequency == 0
@@ -852,7 +857,7 @@ class GMeasurementSystem:
         self._accumulated_round_active = True
         self._server_batch_count = 0
         mode_str = f"K_BATCH (K={self.measurement_k})" if self.measurement_mode == "k_batch" else "ACCUMULATED"
-        print(f"[G Measurement] {mode_str} round started - accumulators reset")
+        vprint(f"[G Measurement] {mode_str} round started - accumulators reset", 2)
 
     def accumulate_server_gradient(
         self, server_grad: Dict[str, torch.Tensor], batch_size: int
@@ -939,8 +944,9 @@ class GMeasurementSystem:
             self.server_g_tildes = [server_avg]
             self.server_weights = [self._server_accumulator.total_weight]
             batch_info = f" ({self._server_batch_count} batches)" if self.measurement_mode == "k_batch" else ""
-            print(
-                f"[G Measurement] Server {mode_str}: {self._server_accumulator.total_weight:.0f} samples{batch_info}"
+            vprint(
+                f"[G Measurement] Server {mode_str}: {self._server_accumulator.total_weight:.0f} samples{batch_info}",
+                2,
             )
 
         # Client gradient averages
@@ -951,20 +957,23 @@ class GMeasurementSystem:
                 self.client_g_tildes[client_id] = client_avg
                 batch_count = getattr(accumulator, '_batch_count', 'N/A')
                 batch_info = f" ({batch_count} batches)" if self.measurement_mode == "k_batch" else ""
-                print(
-                    f"[G Measurement] Client {client_id} {mode_str}: {accumulator.total_weight:.0f} samples{batch_info}"
+                vprint(
+                    f"[G Measurement] Client {client_id} {mode_str}: {accumulator.total_weight:.0f} samples{batch_info}",
+                    2,
                 )
 
         self._accumulated_round_active = False
-        print(
-            f"[G Measurement] {mode_str} round finalized: server + {len(self.client_g_tildes)} clients"
+        vprint(
+            f"[G Measurement] {mode_str} round finalized: server + {len(self.client_g_tildes)} clients",
+            2,
         )
 
     def initialize(self, full_dataloader: DataLoader):
         """Oracle calculator 초기화"""
         self.oracle_calculator = OracleGradientCalculator(full_dataloader, self.device)
-        print(
-            f"[G Measurement] Initialized with {len(full_dataloader.dataset)} samples"
+        vprint(
+            f"[G Measurement] Initialized with {len(full_dataloader.dataset)} samples",
+            2,
         )
 
     def set_param_names(self, client_model: nn.Module, server_model: nn.Module):
@@ -973,8 +982,9 @@ class GMeasurementSystem:
         """
         self.client_param_names = get_param_names(client_model)
         self.server_param_names = get_param_names(server_model)
-        print(
-            f"[G Measurement] Param names set: client={len(self.client_param_names)}, server={len(self.server_param_names)}"
+        vprint(
+            f"[G Measurement] Param names set: client={len(self.client_param_names)}, server={len(self.server_param_names)}",
+            2,
         )
 
     def compute_oracle_for_round(self, full_model: nn.Module):
@@ -985,10 +995,10 @@ class GMeasurementSystem:
             full_model: Client + Server 결합된 full model
         """
         if self.oracle_calculator is None:
-            print("[G Measurement] Error: Oracle calculator not initialized")
+            vprint("[G Measurement] Error: Oracle calculator not initialized", 0)
             return
 
-        print("[G Measurement] Computing oracle gradient from full dataset...")
+        vprint("[G Measurement] Computing oracle gradient from full dataset...", 2)
 
         # Full model에서 oracle 계산
         full_oracle = self.oracle_calculator.compute_oracle_gradient(full_model)
@@ -998,8 +1008,9 @@ class GMeasurementSystem:
             full_oracle, self.client_param_names, self.server_param_names
         )
 
-        print(
-            f"[G Measurement] Oracle split: client={len(self.oracle_client_grad)}, server={len(self.oracle_server_grad)}"
+        vprint(
+            f"[G Measurement] Oracle split: client={len(self.oracle_client_grad)}, server={len(self.oracle_server_grad)}",
+            1,
         )
 
     def compute_oracle_split_for_round(
@@ -1023,10 +1034,10 @@ class GMeasurementSystem:
             split_layer_name: Name of the split layer to hook
         """
         if self.oracle_calculator is None:
-            print("[G Measurement] Error: Oracle calculator not initialized")
+            vprint("[G Measurement] Error: Oracle calculator not initialized", 0)
             return
 
-        print("[G Measurement] Computing oracle gradient with split layer...")
+        vprint("[G Measurement] Computing oracle gradient with split layer...", 2)
 
         # Get client param names for split layer detection
         client_param_names = set(name for name, _ in client_model.named_parameters())
@@ -1042,8 +1053,8 @@ class GMeasurementSystem:
             )
         else:
             # Fallback: compute regular oracle without split layer gradient
-            print(
-                "[G Measurement] Warning: full_model not provided, split layer gradient not available"
+            vprint(
+                "[G Measurement] Warning: full_model not provided, split layer gradient not available", 0
             )
             full_oracle = self.oracle_calculator.compute_oracle_gradient(
                 return_loss=False
@@ -1135,17 +1146,19 @@ class GMeasurementSystem:
             total_samples = 0
             num_batches = 0
 
-        print(
+        vprint(
             f"[G] Oracle: samples={total_samples}, batches={num_batches}, "
-            f"split_layer={split_layer_name or 'none'}, split_shape={split_shape}"
+            f"split_layer={split_layer_name or 'none'}, split_shape={split_shape}",
+            1,
         )
         client_oracle_norm = client_oracle_norm or 0.0
         server_oracle_norm = server_oracle_norm or 0.0
         client_numel = client_numel or 0
         server_numel = server_numel or 0
-        print(
+        vprint(
             f"[G] Oracle Norms: client={client_oracle_norm:.4f} (numel={client_numel}), "
-            f"server={server_oracle_norm:.4f} (numel={server_numel})"
+            f"server={server_oracle_norm:.4f} (numel={server_numel})",
+            1,
         )
 
     def store_measurement_gradient(
@@ -1177,8 +1190,9 @@ class GMeasurementSystem:
                 for name, g in grad.items()
             }
 
-        print(
-            f"[G Measurement] Stored 1-step gradients: server + {len(self.client_g_tildes)} clients"
+        vprint(
+            f"[G Measurement] Stored 1-step gradients: server + {len(self.client_g_tildes)} clients",
+            2,
         )
 
     def store_server_gradient(
@@ -1258,7 +1272,7 @@ class GMeasurementSystem:
         server_sizes = (
             [int(w) for w in self.server_weights] if self.server_weights else []
         )
-        print(f"[G] Batch Sizes: client={client_sizes}, server={server_sizes}")
+        vprint(f"[G] Batch Sizes: client={client_sizes}, server={server_sizes}", 1)
 
         # Server G
         if self.server_g_tildes and self.oracle_server_grad:
@@ -1266,8 +1280,9 @@ class GMeasurementSystem:
             for idx, server_grad in enumerate(self.server_g_tildes):
                 metrics = compute_g_metrics(server_grad, self.oracle_server_grad)
                 server_metrics.append(metrics)
-                print(
-                    f"[G] Server {idx}: G={metrics.G:.6f}, G_rel={metrics.G_rel:.4f}, D={metrics.D_cosine:.4f}"
+                vprint(
+                    f"[G] Server {idx}: G={metrics.G:.6f}, G_rel={metrics.G_rel:.4f}, D={metrics.D_cosine:.4f}",
+                    1,
                 )
 
             if server_metrics:
@@ -1277,8 +1292,9 @@ class GMeasurementSystem:
                     D_cosine=sum(m.D_cosine for m in server_metrics)
                     / len(server_metrics),
                 )
-                print(
-                    f"[G] Server Summary: G={result.server.G:.6f}, G_rel={result.server.G_rel:.4f}, D={result.server.D_cosine:.4f}"
+                vprint(
+                    f"[G] Server Summary: G={result.server.G:.6f}, G_rel={result.server.G_rel:.4f}, D={result.server.D_cosine:.4f}",
+                    1,
                 )
 
         # Client G
@@ -1293,8 +1309,9 @@ class GMeasurementSystem:
                 client_Gs.append(metrics.G)
                 client_G_rel.append(metrics.G_rel)
                 client_Ds.append(metrics.D_cosine)
-                print(
-                    f"[G] Client {client_id}: G={metrics.G:.6f}, G_rel={metrics.G_rel:.4f}, D={metrics.D_cosine:.4f}"
+                vprint(
+                    f"[G] Client {client_id}: G={metrics.G:.6f}, G_rel={metrics.G_rel:.4f}, D={metrics.D_cosine:.4f}",
+                    1,
                 )
 
         if client_Gs:
@@ -1302,8 +1319,9 @@ class GMeasurementSystem:
             result.client_G_max = max(client_Gs)
             result.client_D_mean = sum(client_Ds) / len(client_Ds)
             client_G_rel_mean = sum(client_G_rel) / len(client_G_rel)
-            print(
-                f"[G] Client Summary: G={result.client_G_mean:.6f}, G_rel={client_G_rel_mean:.4f}, D={result.client_D_mean:.4f}"
+            vprint(
+                f"[G] Client Summary: G={result.client_G_mean:.6f}, G_rel={client_G_rel_mean:.4f}, D={result.client_D_mean:.4f}",
+                1,
             )
 
         if self.use_variance_g:
@@ -1366,11 +1384,13 @@ class GMeasurementSystem:
             result.variance_server_g = variance_server_g
             result.variance_server_g_rel = variance_server_g_rel
 
-            print(
-                f"[G] Variance Client: G={variance_client_g:.6f}, G_rel={variance_client_g_rel:.6f}"
+            vprint(
+                f"[G] Variance Client: G={variance_client_g:.6f}, G_rel={variance_client_g_rel:.6f}",
+                1,
             )
-            print(
-                f"[G] Variance Server: G={variance_server_g:.6f}, G_rel={variance_server_g_rel:.6f}"
+            vprint(
+                f"[G] Variance Server: G={variance_server_g:.6f}, G_rel={variance_server_g_rel:.6f}",
+                1,
             )
 
         self.measurements.append(result)

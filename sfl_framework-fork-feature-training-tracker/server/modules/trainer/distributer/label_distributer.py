@@ -4,6 +4,7 @@ import numpy as np
 import torch
 
 from .base_distributer import BaseDistributer
+from utils.log_utils import vprint
 
 if TYPE_CHECKING:
     from server_args import Config
@@ -36,7 +37,7 @@ class LabelDistributer(BaseDistributer):
             targets = self._remove_fraction_of_labels(targets, 0.5)
 
         num_classes = len(set(targets) - {int("9999999")})
-        print("num_classes: ", num_classes)
+        vprint(f"num_classes: {num_classes}", 2)
 
         labels_per_client = self.config.labels_per_client
         seed = self.config.seed if hasattr(self.config, "seed") else 42
@@ -69,7 +70,7 @@ class LabelDistributer(BaseDistributer):
 
         for i in range(num_classes):
             if times[i] == 0:
-                print(f"Class {i} was not assigned to any client.")
+                vprint(f"Class {i} was not assigned to any client.", 0)
                 continue
 
             idx_k = np.where(targets == i)[0]
@@ -85,9 +86,9 @@ class LabelDistributer(BaseDistributer):
         for i, idx_j in enumerate(idx_clients):
             num_samples = len(idx_j)
             total_assigned_samples += num_samples
-            print(f"Client {clients[i]}: {num_samples} samples, labels: {contains[i]}")
-        print(f"Total assigned samples: {total_assigned_samples}")
-        print(f"Total dataset size: {dataset_size}")
+            vprint(f"Client {clients[i]}: {num_samples} samples, labels: {contains[i]}", 2)
+        vprint(f"Total assigned samples: {total_assigned_samples}", 2)
+        vprint(f"Total dataset size: {dataset_size}", 2)
 
         client_indices_list = idx_clients
         return client_indices_list

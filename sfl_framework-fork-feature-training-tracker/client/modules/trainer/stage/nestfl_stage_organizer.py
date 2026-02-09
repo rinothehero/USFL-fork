@@ -2,6 +2,8 @@ from typing import TYPE_CHECKING
 
 from modules.trainer.model_trainer.model_trainer import get_model_trainer
 
+from utils.log_utils import vprint
+
 from .fl_stage_organizer import FLStageOrganizer
 from .in_round.in_round import InRound
 from .post_round.post_round import PostRound
@@ -44,6 +46,6 @@ class NestFLStageOrganizer(FLStageOrganizer):
             self.api,
         )
 
-        print("Initialized model trainer")
+        vprint("Initialized model trainer", 2)
 
         return False

@@ -3,6 +3,8 @@ import random
 from collections import deque
 from typing import TYPE_CHECKING
 
+from utils.log_utils import vprint
+
 if TYPE_CHECKING:
     from torch.nn import Module
 
@@ -37,16 +39,16 @@ class ModelQueue:
         params: dict,
     ):
         if self.signiture != signiture:
-            print(f"Signiture mismatch: {self.signiture} != {signiture} (late model)")
+            vprint(f"Signiture mismatch: {self.signiture} != {signiture} (late model)", 0)
             return
 
-        print(f"client {id} submitted model")
+        vprint(f"client {id} submitted model", 2)
 
         if self.insert_mode:
             self.queue.append([id, model, params])
             return True
         else:
-            print(f"Model queue is not in insert mode (late model)")
+            vprint(f"Model queue is not in insert mode (late model)", 0)
             return False
 
     def get_model(self):

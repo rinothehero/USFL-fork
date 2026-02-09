@@ -19,6 +19,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import copy
+from utils.log_utils import vprint
 
 
 class GradientCollector:
@@ -199,7 +200,7 @@ def compute_oracle_gradients(
     # Clear GPU cache
     torch.cuda.empty_cache()
 
-    print(f"[Oracle] Computed from {total_samples} samples over {batch_count} batches")
+    vprint(f"[Oracle] Computed from {total_samples} samples over {batch_count} batches", 2)
 
     return {
         "client": client_grad_accum,
@@ -265,8 +266,8 @@ def compute_oracle_with_split_hook(
                     return out_clone
 
                 hook_handle = module.register_forward_hook(hook_fn)
-                print(
-                    f"[Oracle Split Hook] Registered forward hook on '{split_layer_name}'"
+                vprint(
+                    f"[Oracle Split Hook] Registered forward hook on '{split_layer_name}'", 2
                 )
                 break
 
@@ -280,9 +281,9 @@ def compute_oracle_with_split_hook(
 
         outputs = full_model(images)
         if not debug_logged:
-            print(f"[DEBUG] Oracle Input shape: {images.shape}")
-            print(f"[DEBUG] Oracle Output shape: {outputs.shape}")
-            print(f"[DEBUG] Oracle Labels shape: {labels.shape}")
+            vprint(f"[DEBUG] Oracle Input shape: {images.shape}", 2)
+            vprint(f"[DEBUG] Oracle Output shape: {outputs.shape}", 2)
+            vprint(f"[DEBUG] Oracle Labels shape: {labels.shape}", 2)
             debug_logged = True
         loss = F.cross_entropy(outputs, labels.long(), reduction="sum")
         loss.backward()
@@ -300,8 +301,8 @@ def compute_oracle_with_split_hook(
                 batch_split_grad = activation_grad.detach().sum(dim=0).cpu()
                 if split_grad_sum is None:
                     split_grad_sum = batch_split_grad
-                    print(
-                        f"[Oracle Split Hook] Split layer grad shape: {batch_split_grad.shape}"
+                    vprint(
+                        f"[Oracle Split Hook] Split layer grad shape: {batch_split_grad.shape}", 2
                     )
                 else:
                     split_grad_sum += batch_split_grad
@@ -329,19 +330,19 @@ def compute_oracle_with_split_hook(
     split_grad = split_grad_sum / divisor if split_grad_sum is not None else None
 
     split_flag = "yes" if split_grad is not None else "no"
-    print(
-        f"[Oracle Split Hook] Split: client={len(oracle_client)}, server={len(oracle_server)}, split_layer={split_flag}"
+    vprint(
+        f"[Oracle Split Hook] Split: client={len(oracle_client)}, server={len(oracle_server)}, split_layer={split_flag}", 2
     )
 
     if client_grad_list:
         client_flat = torch.cat([g.flatten().float() for g in client_grad_list])
-        print(
-            f"[DEBUG Oracle] Client: ||g*||={torch.norm(client_flat).item():.4f}, numel={client_flat.numel()}"
+        vprint(
+            f"[DEBUG Oracle] Client: ||g*||={torch.norm(client_flat).item():.4f}, numel={client_flat.numel()}", 2
         )
     if server_grad_list:
         server_flat = torch.cat([g.flatten().float() for g in server_grad_list])
-        print(
-            f"[DEBUG Oracle] Server: ||g*||={torch.norm(server_flat).item():.4f}, numel={server_flat.numel()}"
+        vprint(
+            f"[DEBUG Oracle] Server: ||g*||={torch.norm(server_flat).item():.4f}, numel={server_flat.numel()}", 2
         )
 
     return {
@@ -541,7 +542,7 @@ class GMeasurementManager:
         split_layer_name=None,
         use_sfl_oracle=False,
     ):
-        print("[G Measurement] Computing Oracle gradients...")
+        vprint("[G Measurement] Computing Oracle gradients...", 2)
         if use_sfl_oracle and full_model is not None:
             self.oracle_grads = compute_oracle_with_split_hook(
                 user_model,
@@ -557,7 +558,7 @@ class GMeasurementManager:
                 user_model, server_model, train_loader, criterion, self.device
             )
         self.oracle_computed = True
-        print("[G Measurement] Oracle computation complete.")
+        vprint("[G Measurement] Oracle computation complete.", 2)
 
     def measure_and_record(self, user_model, server_model, split_output, loss, epoch):
         """
@@ -566,7 +567,7 @@ class GMeasurementManager:
         This should be called AFTER loss.backward() but BEFORE optimizer.step().
         """
         if not self.oracle_computed:
-            print("[G Measurement] Warning: Oracle not computed, skipping measurement.")
+            vprint("[G Measurement] Warning: Oracle not computed, skipping measurement.", 0)
             return None
 
         # Collect current gradients
@@ -582,11 +583,11 @@ class GMeasurementManager:
         self.g_history["server_g"].append(g_scores["server_g"])
         self.g_history["split_g"].append(g_scores["split_g"])
 
-        print(
+        vprint(
             f"[G Measurement] Epoch {epoch + 1}: "
             f"Client G = {g_scores['client_g']:.6f}, "
             f"Server G = {g_scores['server_g']:.6f}, "
-            f"Split G = {g_scores['split_g']:.6f}"
+            f"Split G = {g_scores['split_g']:.6f}", 1
         )
 
         # Clean up for next round

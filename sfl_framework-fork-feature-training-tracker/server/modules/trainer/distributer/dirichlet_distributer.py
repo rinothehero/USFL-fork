@@ -4,6 +4,7 @@ import numpy as np
 import torch
 
 from .base_distributer import BaseDistributer
+from utils.log_utils import vprint
 
 if TYPE_CHECKING:
     from server_args import Config
@@ -77,9 +78,9 @@ class DirichletDistributer(BaseDistributer):
         for i, idx_j in enumerate(idx_clients):
             num_samples = len(idx_j)
             total_assigned_samples += num_samples
-            print(f"Client {clients[i]}: {num_samples} samples")
-        print(f"Total assigned samples: {total_assigned_samples}")
-        print(f"Total dataset size: {dataset_size}")
+            vprint(f"Client {clients[i]}: {num_samples} samples", 2)
+        vprint(f"Total assigned samples: {total_assigned_samples}", 2)
+        vprint(f"Total dataset size: {dataset_size}", 2)
 
         client_indices_list = idx_clients
         return client_indices_list

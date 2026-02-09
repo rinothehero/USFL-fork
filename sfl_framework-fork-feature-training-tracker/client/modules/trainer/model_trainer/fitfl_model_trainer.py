@@ -3,6 +3,8 @@ import math
 import time
 from typing import TYPE_CHECKING
 
+from utils.log_utils import vprint
+
 from .base_model_trainer import BaseModelTrainer
 
 if TYPE_CHECKING:
@@ -43,8 +45,9 @@ class FitFLModelTrainer(BaseModelTrainer):
         return total_parameters
 
     def _freezing(self, ratio, prev_ratio):
-        print(
-            f"Client freezing the model (freeze {ratio * 100:.3f}% of the parameters)"
+        vprint(
+            f"Client freezing the model (freeze {ratio * 100:.3f}% of the parameters)",
+            2,
         )
 
         keep_ratio = 1 - ratio
@@ -81,7 +84,7 @@ class FitFLModelTrainer(BaseModelTrainer):
                     params.requires_grad = False
 
         self.prev_learnable_module_count = learnable_module_count
-        print(f"Client frozen the model (keep {learnable_module_count} modules)")
+        vprint(f"Client frozen the model (keep {learnable_module_count} modules)", 2)
 
     def _custom_sigmoid(self, x):
         return 1 / (1 + math.exp(4 * -x)) - 0.5
@@ -94,7 +97,7 @@ class FitFLModelTrainer(BaseModelTrainer):
         new_alpha = self._custom_sigmoid(self.alpha + diff_ratio)
         self.alpha = new_alpha
 
-        print(f"Client alpha: {self.alpha:.3f}")
+        vprint(f"Client alpha: {self.alpha:.3f}", 2)
 
     async def _train_default_dataset(self, params: dict):
         self.model.train()
@@ -109,8 +112,8 @@ class FitFLModelTrainer(BaseModelTrainer):
         self.toggle = not self.toggle
         training_time_per_epochs = []
 
-        print(f"Client starts training for {local_epochs} epochs")
-        print(f"Client has {round_time:.3f}s for training")
+        vprint(f"Client starts training for {local_epochs} epochs", 2)
+        vprint(f"Client has {round_time:.3f}s for training", 2)
 
         self.cur_freezing_ratio = 0
         self._freezing(self.cur_freezing_ratio, self.cur_freezing_ratio)
@@ -139,7 +142,7 @@ class FitFLModelTrainer(BaseModelTrainer):
             training_time_per_epochs.append(epoch_elapsed_time)
             round_time = round_time - epoch_elapsed_time
 
-            print(f"[Epoch {trained_epochs}/{local_epochs}] loss: {loss:.3f}")
+            vprint(f"[Epoch {trained_epochs}/{local_epochs}] loss: {loss:.3f}", 2)
 
             if alpha_readjust:
                 self._update_alpha(epoch_elapsed_time, alpha_readjust_expected_time)
@@ -152,11 +155,13 @@ class FitFLModelTrainer(BaseModelTrainer):
                 desired_time_per_epoch = round_time / left_epochs
                 estimated_time = epoch_elapsed_time * left_epochs
 
-                print(
-                    f"Estimated time left: {estimated_time:.3f}s | Desired epoch time: {desired_time_per_epoch:.3f}s"
+                vprint(
+                    f"Estimated time left: {estimated_time:.3f}s | Desired epoch time: {desired_time_per_epoch:.3f}s",
+                    2,
                 )
-                print(
-                    f"Round time: {round_time:.3f}s | Epoch time: {epoch_elapsed_time:.3f}s"
+                vprint(
+                    f"Round time: {round_time:.3f}s | Epoch time: {epoch_elapsed_time:.3f}s",
+                    2,
                 )
 
                 if round_time < training_time_per_epochs[-1]:
@@ -184,7 +189,7 @@ class FitFLModelTrainer(BaseModelTrainer):
                     self.cur_freezing_ratio = freezing_ratio
                     alpha_readjust_expected_time = desired_time_per_epoch
 
-                    print(f"Client freezing ratio: {freezing_ratio:.3f}")
+                    vprint(f"Client freezing ratio: {freezing_ratio:.3f}", 2)
 
                     self._freezing(freezing_ratio, prev_ratio)
 
@@ -215,7 +220,7 @@ class FitFLModelTrainer(BaseModelTrainer):
                         self.cur_freezing_ratio = freezing_ratio
                         alpha_readjust_expected_time = desired_time_per_epoch
 
-                        print(f"Client freezing ratio: {freezing_ratio:.3f}")
+                        vprint(f"Client freezing ratio: {freezing_ratio:.3f}", 2)
 
                         self._freezing(freezing_ratio, prev_ratio)
                     else:
@@ -226,7 +231,7 @@ class FitFLModelTrainer(BaseModelTrainer):
                     round_time * 0.9 > epoch_elapsed_time
                     and num_extra_epoch < self.server_config.num_extra_epoch
                 ):
-                    print(f"Client has time left for training more epochs")
+                    vprint(f"Client has time left for training more epochs", 2)
                     num_extra_epoch += 1
                     continue
                 else:

@@ -4,6 +4,7 @@ import torch.nn as nn
 import numpy as np
 from typing import Optional, TypedDict, Tuple
 import torchvision.models as tv_models
+from utils.log_utils import vprint
 
 
 def disable_inplace(module: nn.Module) -> None:
@@ -1511,9 +1512,9 @@ def load_torchvision_resnet18_init(
           torchvision weights directly
     """
     if not image_style:
-        print(
+        vprint(
             "[Warning] Torchvision init only supports image_style=True. "
-            "CIFAR-style models have different architecture."
+            "CIFAR-style models have different architecture.", 1
         )
         return client_model, server_model
 
@@ -1664,8 +1665,8 @@ def load_torchvision_resnet18_init(
 
     server_model.load_state_dict(server_state)
 
-    print(
-        f"[TorchvisionInit] Loaded {loaded_client} client params, {loaded_server} server params from torchvision ResNet18"
+    vprint(
+        f"[TorchvisionInit] Loaded {loaded_client} client params, {loaded_server} server params from torchvision ResNet18", 1
     )
 
     return client_model, server_model

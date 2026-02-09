@@ -2,6 +2,7 @@ import random
 from typing import List
 
 from .base_selector import BaseSelector
+from utils.log_utils import vprint
 
 
 class MissingClassSelector(BaseSelector):
@@ -66,8 +67,8 @@ class MissingClassSelector(BaseSelector):
                         selected.append(candidate)
                         remaining.remove(candidate)
 
-                print(aggregated_set)
-                print(target_union_size)
+                vprint(aggregated_set, 2)
+                vprint(target_union_size, 2)
                 if len(aggregated_set) != target_union_size:
                     raise ValueError(
                         "최종 aggregated label set이 요구하는 missing class 조건을 만족하지 않습니다."

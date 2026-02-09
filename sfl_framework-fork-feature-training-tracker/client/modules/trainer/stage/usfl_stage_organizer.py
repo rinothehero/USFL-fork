@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING
 
 from modules.trainer.model_trainer.model_trainer import get_model_trainer
 
+from utils.log_utils import vprint
+
 from .base_stage_organizer import BaseStageOrganizer
 from .in_round.in_round import InRound
 from .post_round.post_round import PostRound
@@ -55,8 +57,8 @@ class USFLStageOrganizer(BaseStageOrganizer):
             self.dataset.update_batch_size(
                 self.training_params["batch_sizes"][str(self.config.client_id)]
             )
-            print(
-                f"Batch size updated as {self.training_params['batch_sizes'][str(self.config.client_id)]}"
+            vprint(
+                f"Batch size updated as {self.training_params['batch_sizes'][str(self.config.client_id)]}", 2
             )
 
         dataset_size = self.training_params["augmented_dataset_sizes"][
@@ -73,7 +75,7 @@ class USFLStageOrganizer(BaseStageOrganizer):
             self.api,
         )
 
-        print("Initialized model trainer")
+        vprint("Initialized model trainer", 2)
 
         return False
 
@@ -151,7 +153,7 @@ class USFLStageOrganizer(BaseStageOrganizer):
 
         while not task.done():
             if time.time() > self.training_params["round_end_time"]:
-                print("Round end time reached, cancelling in round")
+                vprint("Round end time reached, cancelling in round", 0)
                 task.cancel()
                 return
 
@@ -162,7 +164,7 @@ class USFLStageOrganizer(BaseStageOrganizer):
 
         while not task.done():
             if time.time() > self.training_params["round_end_time"]:
-                print("Round end time reached, cancelling post round")
+                vprint("Round end time reached, cancelling post round", 0)
                 task.cancel()
                 return
 

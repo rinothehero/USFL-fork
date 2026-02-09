@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING, Callable, Dict
 import orjson
 from tqdm import tqdm
 
+from utils.log_utils import vprint
+
 if TYPE_CHECKING:
     from modules.global_dict.global_dict import GlobalDict
     from server_args import Config
@@ -28,7 +30,7 @@ class InMemoryConnection:
             "connected": True,
         }
         self.global_dict.set_waiting_clients(client_id, False)
-        print(f"Server: Client {client_id} connected")
+        vprint(f"Server: Client {client_id} connected", 2)
         return self.active_connections[client_id]
 
     def disconnect(self, client_id: int):
@@ -36,7 +38,7 @@ class InMemoryConnection:
             self.active_connections[client_id]["connected"] = False
             del self.active_connections[client_id]
             self.global_dict.remove_waiting_client(client_id)
-        print(f"Server: Client {client_id} disconnected")
+        vprint(f"Server: Client {client_id} disconnected", 2)
 
     def total_connections(self):
         return len(self.active_connections)
@@ -96,7 +98,7 @@ class InMemoryConnection:
         await asyncio.gather(*tasks)
 
         if logging:
-            print("Server: All clients have received their data concurrently.")
+            vprint("Server: All clients have received their data concurrently.", 2)
 
         return True
 
@@ -153,7 +155,7 @@ class InMemoryConnection:
                 if receiving:
                     data += chunk
         except Exception as e:
-            print(f"Server: Error receiving data from client {client_id}: {e}")
+            vprint(f"Server: Error receiving data from client {client_id}: {e}", 0)
             return None
 
         # self.global_dict.add_event(

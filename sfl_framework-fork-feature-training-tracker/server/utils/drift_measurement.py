@@ -28,6 +28,7 @@ import torch.nn as nn
 # shared/update_alignment.py lives at repo root: USFL-fork/shared
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 from shared.update_alignment import flatten_delta, compute_update_alignment
+from utils.log_utils import vprint
 
 
 @dataclass
@@ -198,11 +199,11 @@ class DriftMeasurementTracker:
             self._round_start_server_params = {}
 
         # Debug: Log parameter counts and model types
-        print(
+        vprint(
             f"[Drift] on_round_start: client_model={type(client_model).__name__} "
             f"({len(self._round_start_client_params)} params), "
             f"server_model={type(server_model).__name__ if server_model else 'None'} "
-            f"({len(self._round_start_server_params)} params)"
+            f"({len(self._round_start_server_params)} params)", 2
         )
 
         # Reset per-round accumulators
@@ -375,9 +376,9 @@ class DriftMeasurementTracker:
                     delta_server_norm_sq += (diff ** 2).sum().item()
 
         # Debug: Log parameter matching stats
-        print(
+        vprint(
             f"[Drift] on_round_end: client_matched={client_matched_params}/{client_total_params}, "
-            f"server_matched={server_matched_params}/{server_total_params}"
+            f"server_matched={server_matched_params}/{server_total_params}", 2
         )
 
         # G_drift_server = S_server / B_server
@@ -395,9 +396,9 @@ class DriftMeasurementTracker:
                 sorted_deltas = sorted(self._early_delta_norms)
                 median_delta = sorted_deltas[len(sorted_deltas) // 2]
                 self._adaptive_epsilon = 1e-3 * median_delta
-                print(
+                vprint(
                     f"[Drift] Adaptive epsilon set to {self._adaptive_epsilon:.6e} "
-                    f"(median delta: {median_delta:.6f})"
+                    f"(median delta: {median_delta:.6f})", 2
                 )
 
         epsilon = (
@@ -457,12 +458,12 @@ class DriftMeasurementTracker:
         self.measurements.append(result)
 
         # Log results
-        print(
+        vprint(
             f"[Drift] Round {round_number}: "
             f"Client(G_drift={G_drift_client:.6f}, G_end={G_end_client:.6f}) "
             f"Server(G_drift={G_drift_server:.6f}, G_end={G_end_server:.6f}, steps={self._server_batch_steps}) "
             f"Total(G_drift={G_drift_total:.6f}) "
-            f"A_cos={alignment.A_cos:.6f} M_norm={alignment.M_norm:.6f} (n_valid={alignment.n_valid})"
+            f"A_cos={alignment.A_cos:.6f} M_norm={alignment.M_norm:.6f} (n_valid={alignment.n_valid})", 1
         )
 
         return result
