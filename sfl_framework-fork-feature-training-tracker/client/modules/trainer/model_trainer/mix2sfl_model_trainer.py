@@ -61,6 +61,7 @@ class Mix2SFLModelTrainer(BaseModelTrainer):
         self._round_start_params: dict = {}
         self._drift_trajectory_sum: float = 0.0
         self._batch_step_count: int = 0
+        self._drift_sample_count: int = 0
         self._endpoint_drift: float = 0.0
 
     def _reset_g_accumulation(self):
@@ -76,6 +77,7 @@ class Mix2SFLModelTrainer(BaseModelTrainer):
         self._round_start_params = {}
         self._drift_trajectory_sum = 0.0
         self._batch_step_count = 0
+        self._drift_sample_count = 0
         self._endpoint_drift = 0.0
 
     def _snapshot_round_start(self):
@@ -98,11 +100,12 @@ class Mix2SFLModelTrainer(BaseModelTrainer):
                 drift_sq += (diff ** 2).sum().item()
         return drift_sq
 
-    def _accumulate_drift(self):
+    def _accumulate_drift(self, batch_size: int = 0):
         """Accumulate drift after optimizer step."""
         if not self.enable_drift_measurement:
             return
         self._batch_step_count += 1
+        self._drift_sample_count += int(max(batch_size, 0))
         if self._batch_step_count % self.drift_sample_interval == 0:
             drift_sq = self._compute_drift_to_start()
             self._drift_trajectory_sum += drift_sq
@@ -126,6 +129,7 @@ class Mix2SFLModelTrainer(BaseModelTrainer):
         return {
             "drift_trajectory_sum": self._drift_trajectory_sum,
             "drift_batch_steps": self._batch_step_count,
+            "drift_sample_count": self._drift_sample_count,
             "drift_endpoint": self._endpoint_drift,
         }
 
@@ -160,6 +164,7 @@ class Mix2SFLModelTrainer(BaseModelTrainer):
         self.model.train()
         optimizer = self.get_optimizer(self.server_config)
         iterations = int(params.get("iterations", len(self.trainloader)))
+        self.used_samples = 0
 
         # Snapshot parameters at round start for drift measurement
         self._snapshot_round_start()
@@ -226,7 +231,7 @@ class Mix2SFLModelTrainer(BaseModelTrainer):
                     optimizer.step()
 
                     # Accumulate drift after parameter update
-                    self._accumulate_drift()
+                    self._accumulate_drift(len(labels))
                 else:
                     await self.api.submit_activations(
                         {

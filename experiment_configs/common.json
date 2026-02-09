@@ -45,5 +45,18 @@
   "_section_drift": "=== Drift Measurement (SCAFFOLD-style client trajectory tracking) ===",
   "enable_drift_measurement": true,
   "_drift_sample_interval": "Accumulate drift every N local steps. 1 = every step.",
-  "drift_sample_interval": 1
+  "drift_sample_interval": 1,
+  "_section_probe": "=== Experiment A Probe Set Q (central direction) ===",
+  "_probe_source": "Probe source split: test | train",
+  "probe_source": "test",
+  "_probe_indices_path": "Optional JSON/TXT indices file for fixed probe set. Empty = no file.",
+  "probe_indices_path": "",
+  "_probe_num_samples": "If >0 and no indices file, sample fixed probe subset of this size with probe_seed.",
+  "probe_num_samples": 0,
+  "_probe_batch_size": "Probe DataLoader batch size. 0 = reuse default test loader batch size.",
+  "probe_batch_size": 0,
+  "_probe_max_batches": "Number of probe batches per round for c^t estimation.",
+  "probe_max_batches": 1,
+  "_probe_seed": "Seed used when probe_num_samples > 0.",
+  "probe_seed": 42
 }

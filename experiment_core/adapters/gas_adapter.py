@@ -88,7 +88,38 @@ class GASAdapter(FrameworkAdapter):
             "GAS_USE_SFL_TRANSFORM": _b(bool(common.get("use_sfl_transform", False))),
             "GAS_USE_TORCHVISION_INIT": _b(bool(common.get("use_torchvision_init", False))),
             "GAS_USE_FULL_EPOCHS": _b(bool(common.get("use_full_epochs", False))),
+            "GAS_PROBE_SOURCE": str(common.get("probe_source", "test")),
+            "GAS_PROBE_NUM_SAMPLES": str(common.get("probe_num_samples", 0)),
+            "GAS_PROBE_BATCH_SIZE": str(common.get("probe_batch_size", 0)),
+            "GAS_PROBE_MAX_BATCHES": str(common.get("probe_max_batches", 1)),
+            "GAS_PROBE_SEED": str(common.get("probe_seed", common.get("seed", 42))),
         }
+
+        client_schedule_path = (
+            common.get("client_schedule_path")
+            or spec.get("framework_overrides", {}).get("client_schedule_path")
+            or ""
+        )
+        if client_schedule_path:
+            p = Path(str(client_schedule_path))
+            if not p.is_absolute():
+                spec_path = spec.get("execution", {}).get("_spec_path")
+                if spec_path:
+                    p = (Path(spec_path).resolve().parent / p).resolve()
+            env["GAS_CLIENT_SCHEDULE_PATH"] = str(p)
+
+        probe_indices_path = (
+            common.get("probe_indices_path")
+            or spec.get("framework_overrides", {}).get("probe_indices_path")
+            or ""
+        )
+        if probe_indices_path:
+            p = Path(str(probe_indices_path))
+            if not p.is_absolute():
+                spec_path = spec.get("execution", {}).get("_spec_path")
+                if spec_path:
+                    p = (Path(spec_path).resolve().parent / p).resolve()
+            env["GAS_PROBE_INDICES_PATH"] = str(p)
 
         # Apply distribution mode flags
         env.update(dist_flags)

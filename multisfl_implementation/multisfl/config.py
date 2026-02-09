@@ -65,6 +65,13 @@ class MultiSFLConfig:
     # Drift Measurement (SCAFFOLD-style)
     enable_drift_measurement: bool = False
     drift_sample_interval: int = 1  # 1 = every step
+    client_schedule_path: Optional[str] = None
+    probe_source: Literal["test", "train"] = "test"
+    probe_indices_path: Optional[str] = None
+    probe_num_samples: int = 0
+    probe_batch_size: int = 0
+    probe_max_batches: int = 1
+    probe_seed: int = 42
 
     def __post_init__(self):
         if self.p_min <= 0:
@@ -73,6 +80,10 @@ class MultiSFLConfig:
             )
         if self.num_branches is None:
             self.num_branches = self.n_main_clients_per_round
+        if self.probe_max_batches < 1:
+            self.probe_max_batches = 1
+        if self.probe_num_samples < 0:
+            self.probe_num_samples = 0
         if self.split_layer is None and self.model_type in ["alexnet", "alexnet_light"]:
             is_grayscale = self.dataset in ["mnist", "fmnist"]
             if self.model_type == "alexnet_light" and not is_grayscale:

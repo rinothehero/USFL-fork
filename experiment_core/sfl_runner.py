@@ -62,6 +62,13 @@ _VALUE_FLAGS = {
     "g_measurement_k": "--g-measurement-k",
     "drift_sample_interval": "--drift-sample-interval",
     "result_output_dir": "--result-output-dir",
+    "client_schedule_path": "--client-schedule-path",
+    "probe_source": "--probe-source",
+    "probe_indices_path": "--probe-indices-path",
+    "probe_num_samples": "--probe-num-samples",
+    "probe_batch_size": "--probe-batch-size",
+    "probe_max_batches": "--probe-max-batches",
+    "probe_seed": "--probe-seed",
     "delete_fraction_of_data": "-df",
     # Mix2SFL
     "mix2sfl_smashmix_enabled": "--mix2sfl-smashmix-enabled",
@@ -172,6 +179,20 @@ def spec_to_workload(spec: Dict[str, Any]) -> Dict[str, str]:
     result_output_dir = spec.get("execution", {}).get("result_output_dir", "")
     if result_output_dir:
         workload["result_output_dir"] = result_output_dir
+    if common.get("client_schedule_path"):
+        workload["client_schedule_path"] = str(common["client_schedule_path"])
+    if "probe_source" in common:
+        workload["probe_source"] = str(common["probe_source"])
+    if common.get("probe_indices_path"):
+        workload["probe_indices_path"] = str(common.get("probe_indices_path", ""))
+    if "probe_num_samples" in common:
+        workload["probe_num_samples"] = str(common.get("probe_num_samples", 0))
+    if "probe_batch_size" in common:
+        workload["probe_batch_size"] = str(common.get("probe_batch_size", 0))
+    if "probe_max_batches" in common:
+        workload["probe_max_batches"] = str(common.get("probe_max_batches", 1))
+    if "probe_seed" in common:
+        workload["probe_seed"] = str(common.get("probe_seed", common.get("seed", 0)))
 
     # Per-method sfl_args overrides
     sfl_args = overrides.get("sfl_args", {})
@@ -252,6 +273,7 @@ def main() -> None:
         spec = json.load(f)
 
     repo_root = Path(args.repo_root).resolve()
+    spec_dir = Path(args.spec).resolve().parent
     sfl_dir = repo_root / "sfl_framework-fork-feature-training-tracker"
 
     # Add SFL framework paths (same as simulation.py lines 79-82)
@@ -265,6 +287,22 @@ def main() -> None:
     from simulation import run_simulation
 
     workload = spec_to_workload(spec)
+    if workload.get("client_schedule_path"):
+        schedule_path = Path(str(workload["client_schedule_path"]))
+        if not schedule_path.is_absolute():
+            from_spec = (spec_dir / schedule_path).resolve()
+            workload["client_schedule_path"] = str(
+                from_spec if from_spec.exists() else (repo_root / schedule_path).resolve()
+            )
+    if workload.get("probe_indices_path"):
+        probe_indices_path = Path(str(workload["probe_indices_path"]))
+        if not probe_indices_path.is_absolute():
+            from_spec = (spec_dir / probe_indices_path).resolve()
+            workload["probe_indices_path"] = str(
+                from_spec
+                if from_spec.exists()
+                else (repo_root / probe_indices_path).resolve()
+            )
     server_args = workload_to_server_args(workload)
     client_args = workload_to_client_args(workload)
 

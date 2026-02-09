@@ -59,6 +59,7 @@ class SFLModelTrainer(BaseModelTrainer):
         self._round_start_params: dict = {}  # x_c^{t,0} snapshot
         self._drift_trajectory_sum: float = 0.0  # S_n(t) = Σ||x^{t,b} - x^{t,0}||²
         self._batch_step_count: int = 0  # B_{n,t}
+        self._drift_sample_count: int = 0  # main samples processed in round
         self._endpoint_drift: float = 0.0  # E_n(t) = ||x^{t,B} - x^{t,0}||²
 
     def _reset_g_accumulation(self):
@@ -103,6 +104,7 @@ class SFLModelTrainer(BaseModelTrainer):
         self._round_start_params = {}
         self._drift_trajectory_sum = 0.0
         self._batch_step_count = 0
+        self._drift_sample_count = 0
         self._endpoint_drift = 0.0
 
     def _snapshot_round_start(self):
@@ -113,6 +115,7 @@ class SFLModelTrainer(BaseModelTrainer):
         }
         self._drift_trajectory_sum = 0.0
         self._batch_step_count = 0
+        self._drift_sample_count = 0
 
     def _compute_drift_to_start(self) -> float:
         """Compute ||x_c^{t,b} - x_c^{t,0}||²"""
@@ -123,9 +126,10 @@ class SFLModelTrainer(BaseModelTrainer):
                 drift_sq += (diff ** 2).sum().item()
         return drift_sq
 
-    def _accumulate_drift(self):
+    def _accumulate_drift(self, batch_size: int = 0):
         """Accumulate drift after each batch step"""
         self._batch_step_count += 1
+        self._drift_sample_count += int(max(batch_size, 0))
         # Sample according to interval
         if self._batch_step_count % self.drift_sample_interval == 0:
             drift = self._compute_drift_to_start()
@@ -150,6 +154,7 @@ class SFLModelTrainer(BaseModelTrainer):
         return {
             "drift_trajectory_sum": self._drift_trajectory_sum,  # S_n(t)
             "drift_batch_steps": self._batch_step_count,  # B_{n,t}
+            "drift_sample_count": self._drift_sample_count,  # main sample count B_i
             "drift_endpoint": self._endpoint_drift,  # E_n(t)
         }
 
@@ -225,7 +230,7 @@ class SFLModelTrainer(BaseModelTrainer):
 
                 # === DRIFT: Accumulate after optimizer step ===
                 if self.enable_drift_measurement:
-                    self._accumulate_drift()
+                    self._accumulate_drift(len(labels))
 
         # === DRIFT: Finalize at round end ===
         if self.enable_drift_measurement:
@@ -286,7 +291,7 @@ class SFLModelTrainer(BaseModelTrainer):
 
                 # === DRIFT: Accumulate after optimizer step ===
                 if self.enable_drift_measurement:
-                    self._accumulate_drift()
+                    self._accumulate_drift(len(labels))
 
         # === DRIFT: Finalize at round end ===
         if self.enable_drift_measurement:

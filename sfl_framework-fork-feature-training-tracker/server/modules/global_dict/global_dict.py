@@ -185,6 +185,61 @@ class GlobalDict:
                     "A_cos": [m["params"].get("A_cos") for m in drift_measurements],
                     "M_norm": [m["params"].get("M_norm") for m in drift_measurements],
                     "n_valid_alignment": [m["params"].get("n_valid_alignment") for m in drift_measurements],
+                    # Experiment A
+                    "expA_A_c_ratio": [
+                        (m["params"].get("experiment_a") or {}).get("A_c_ratio")
+                        for m in drift_measurements
+                    ],
+                    "expA_A_c_rel": [
+                        (m["params"].get("experiment_a") or {}).get("A_c_rel")
+                        for m in drift_measurements
+                    ],
+                    "expA_B_c": [
+                        (m["params"].get("experiment_a") or {}).get("B_c")
+                        for m in drift_measurements
+                    ],
+                    "expA_C_c": [
+                        (m["params"].get("experiment_a") or {}).get("C_c")
+                        for m in drift_measurements
+                    ],
+                    "expA_C_c_per_client_probe": [
+                        (m["params"].get("experiment_a") or {}).get(
+                            "C_c_per_client_probe"
+                        )
+                        for m in drift_measurements
+                    ],
+                    "expA_B_s": [
+                        (m["params"].get("experiment_a") or {}).get("B_s")
+                        for m in drift_measurements
+                    ],
+                    "expA_m2_c": [
+                        (m["params"].get("experiment_a") or {}).get("m2_c")
+                        for m in drift_measurements
+                    ],
+                    "expA_u2_c": [
+                        (m["params"].get("experiment_a") or {}).get("u2_c")
+                        for m in drift_measurements
+                    ],
+                    "expA_var_c": [
+                        (m["params"].get("experiment_a") or {}).get("var_c")
+                        for m in drift_measurements
+                    ],
+                    "expA_server_mag_per_step": [
+                        (m["params"].get("experiment_a") or {}).get(
+                            "server_mag_per_step"
+                        )
+                        for m in drift_measurements
+                    ],
+                    "expA_server_mag_per_step_sq": [
+                        (m["params"].get("experiment_a") or {}).get(
+                            "server_mag_per_step_sq"
+                        )
+                        for m in drift_measurements
+                    ],
+                    "experiment_a": [
+                        (m["params"].get("experiment_a") or {})
+                        for m in drift_measurements
+                    ],
                     # Per-round details
                     "per_round": [m["params"] for m in drift_measurements],
                 }

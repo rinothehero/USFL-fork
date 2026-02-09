@@ -17,7 +17,7 @@ import datetime
 import json
 from typing import Dict
 from network import model_selection, load_torchvision_resnet18_init
-from dataset import Dataset, Data_Partition
+from dataset import Dataset, Data_Partition, TrainSet
 from utils import (
     calculate_v_value,
     replace_user,
@@ -27,6 +27,7 @@ from utils import (
 )
 from g_measurement import GMeasurementManager, compute_g_score
 from drift_measurement import DriftMeasurementTracker
+from experiment_a_probe import compute_split_probe_directions, build_probe_loader
 from log_utils import vprint
 
 
@@ -188,6 +189,63 @@ G_Measurement_K = _env_int("GAS_G_MEASUREMENT_K", G_Measurement_K)
 # Drift Measurement Settings (SCAFFOLD-style client drift tracking)
 DRIFT_MEASUREMENT = _env_bool("GAS_DRIFT_MEASUREMENT", False)
 DRIFT_SAMPLE_INTERVAL = _env_int("GAS_DRIFT_SAMPLE_INTERVAL", 1)  # 1 = every step
+PROBE_SOURCE = _env_str("GAS_PROBE_SOURCE", "test").lower()
+if PROBE_SOURCE not in ("test", "train"):
+    PROBE_SOURCE = "test"
+PROBE_INDICES_PATH = _env_str("GAS_PROBE_INDICES_PATH", "")
+PROBE_NUM_SAMPLES = _env_int("GAS_PROBE_NUM_SAMPLES", 0)
+PROBE_BATCH_SIZE = _env_int("GAS_PROBE_BATCH_SIZE", 0)
+PROBE_MAX_BATCHES = max(_env_int("GAS_PROBE_MAX_BATCHES", 1), 1)
+PROBE_SEED = _env_int("GAS_PROBE_SEED", seed_value)
+
+# Optional fixed client schedule (Experiment A condition: same P_t across methods)
+CLIENT_SCHEDULE_PATH = _env_str("GAS_CLIENT_SCHEDULE_PATH", "")
+_client_schedule = None
+if CLIENT_SCHEDULE_PATH:
+    try:
+        with open(CLIENT_SCHEDULE_PATH, "r", encoding="utf-8") as _f:
+            _client_schedule = json.load(_f)
+        vprint(f"[Schedule] Loaded fixed client schedule: {CLIENT_SCHEDULE_PATH}", 1)
+    except Exception as exc:
+        _client_schedule = None
+        vprint(f"[Schedule] Failed to load {CLIENT_SCHEDULE_PATH}: {exc}", 0)
+
+
+def _get_scheduled_clients_for_round(round_number: int):
+    if _client_schedule is None:
+        return None
+    selected = None
+    if isinstance(_client_schedule, list):
+        idx = round_number - 1
+        if 0 <= idx < len(_client_schedule):
+            selected = _client_schedule[idx]
+    elif isinstance(_client_schedule, dict):
+        rounds = _client_schedule.get("rounds")
+        if isinstance(rounds, list):
+            idx = round_number - 1
+            if 0 <= idx < len(rounds):
+                selected = rounds[idx]
+        if selected is None:
+            selected = _client_schedule.get(str(round_number), _client_schedule.get(round_number))
+
+    if not isinstance(selected, list):
+        return None
+
+    out = []
+    seen = set()
+    for cid in selected:
+        try:
+            cid_int = int(cid)
+        except (TypeError, ValueError):
+            continue
+        if cid_int < 0 or cid_int >= user_num or cid_int in seen:
+            continue
+        out.append(cid_int)
+        seen.add(cid_int)
+
+    if len(out) < user_parti_num:
+        return None
+    return np.array(out[:user_parti_num], dtype=int)
 
 # G Measurement Mode: distance-based (default) vs variance-based (SFL-style)
 # Usage: python GAS_main.py true  -> variance-based
@@ -421,6 +479,29 @@ train_index = np.arange(0, len(alldata))
 random.shuffle(train_index)
 train_img = np.array(alldata)[train_index]
 train_label = np.array(alllabel)[train_index]
+probe_train_set = TrainSet(train_img, train_label, transform)
+try:
+    probe_loader, probe_loader_meta = build_probe_loader(
+        default_loader=test_loader,
+        train_dataset=probe_train_set,
+        test_dataset=test_set,
+        source=PROBE_SOURCE,
+        indices_path=PROBE_INDICES_PATH,
+        num_samples=PROBE_NUM_SAMPLES,
+        batch_size=PROBE_BATCH_SIZE,
+        seed=PROBE_SEED,
+    )
+    if probe_loader is None:
+        probe_loader = test_loader
+    vprint(
+        f"[Probe] source={probe_loader_meta.get('source', PROBE_SOURCE)} "
+        f"selected={probe_loader_meta.get('selected_samples', 0)} "
+        f"batch={probe_loader_meta.get('batch_size', 128)} max_batches={PROBE_MAX_BATCHES}",
+        1,
+    )
+except Exception as exc:
+    probe_loader = test_loader
+    vprint(f"[Probe] Failed to build dedicated probe loader: {exc}", 0)
 users_data = Data_Partition(
     iid,
     dirichlet,
@@ -533,8 +614,6 @@ full_train_loader = None
 if G_Measurement:
     g_manager = GMeasurementManager(device, measure_frequency=G_Measure_Frequency)
     # Create a DataLoader for full training data (for Oracle computation with proper transforms)
-    from dataset import TrainSet
-
     full_train_set = TrainSet(train_img, train_label, transform)
     full_train_loader = dataloader.DataLoader(
         dataset=full_train_set,
@@ -845,7 +924,11 @@ time_record = []
 epoch = 0
 order = np.random.choice(
     range(user_num), user_parti_num, replace=False
-)  # 初始选择的用户
+)  # Initial participating users
+scheduled_round_1 = _get_scheduled_clients_for_round(1)
+if scheduled_round_1 is not None:
+    order = scheduled_round_1
+    vprint(f"[Schedule] Round 1 fixed clients: {order.tolist()}", 1)
 if WRTT is True:  # initialize training time
     for i in order:
         clients[i].model_process()
@@ -867,6 +950,9 @@ for i in range(user_num):
     logit_local_adjustments.append(compute_local_adjustment(users_data[i], device))
 
 _drift_epoch_started = False  # Track if drift measurement started for this epoch
+_fixed_round_schedule = scheduled_round_1 is not None
+_round_client_start_states = {}
+_round_per_client_probe_directions = {}
 
 # Pre-define dataset name for intermediate saving
 selectDataset = (
@@ -921,6 +1007,13 @@ _intermediate_config = {
     "g_measure_frequency": G_Measure_Frequency,
     "seed": seed_value,
     "method": "Generative Activation-Aided" if Generate else "Original",
+    "client_schedule_path": CLIENT_SCHEDULE_PATH or None,
+    "probe_source": PROBE_SOURCE,
+    "probe_indices_path": PROBE_INDICES_PATH or None,
+    "probe_num_samples": PROBE_NUM_SAMPLES,
+    "probe_batch_size": PROBE_BATCH_SIZE,
+    "probe_max_batches": PROBE_MAX_BATCHES,
+    "probe_seed": PROBE_SEED,
 }
 
 
@@ -948,9 +1041,59 @@ while epoch != epochs:
     user_model.train()
     server_model.train()
 
+    if not _drift_epoch_started:
+        scheduled_for_round = _get_scheduled_clients_for_round(epoch + 1)
+        if scheduled_for_round is not None:
+            order = scheduled_for_round
+            usersParam = [copy.deepcopy(userParam) for _ in range(user_parti_num)]
+            _fixed_round_schedule = True
+            vprint(
+                f"[Schedule] Round {epoch + 1} fixed clients: {order.tolist()}",
+                1,
+            )
+        else:
+            _fixed_round_schedule = False
+
     # Drift Measurement: Start of epoch snapshot (client + server)
     if drift_tracker is not None and not _drift_epoch_started:
+        _round_client_start_states = {}
+        _round_per_client_probe_directions = {}
         drift_tracker.on_round_start(userParam, server_model.state_dict())
+        try:
+            user_model.load_state_dict(userParam, strict=True)
+            c_client, c_server, probe_meta = compute_split_probe_directions(
+                user_model,
+                server_model,
+                probe_loader,
+                device,
+                max_batches=PROBE_MAX_BATCHES,
+            )
+            drift_tracker.set_probe_directions(c_client, c_server, probe_meta)
+
+            # Async methods should also log per-client probe directions:
+            # c_{c,i} = -∇_{x_c} L_Q(x_{c,i}^{t,0}, x_s^{t,0})
+            per_client_probe_directions = {}
+            for idx, client_id in enumerate(order.tolist()):
+                start_state = copy.deepcopy(usersParam[idx])
+                _round_client_start_states[int(client_id)] = start_state
+                drift_tracker.record_client_start_state(int(client_id), start_state)
+                user_model.load_state_dict(start_state, strict=True)
+                c_client_i, _, _ = compute_split_probe_directions(
+                    user_model,
+                    server_model,
+                    probe_loader,
+                    device,
+                    max_batches=PROBE_MAX_BATCHES,
+                )
+                if c_client_i is not None:
+                    per_client_probe_directions[int(client_id)] = c_client_i
+            if per_client_probe_directions:
+                drift_tracker.set_per_client_probe_directions(
+                    per_client_probe_directions
+                )
+                _round_per_client_probe_directions = per_client_probe_directions
+        except Exception as exc:
+            vprint(f"[Drift][ExpA] Probe direction failed: {exc}", 0)
         _drift_epoch_started = True
 
     # select a client
@@ -958,9 +1101,28 @@ while epoch != epochs:
         selected_client = find_client_with_min_time(clients, order)
     else:
         selected_client = np.random.choice(order)
-    user_model.load_state_dict(
-        usersParam[np.where(order == selected_client)[0][0]], strict=True
-    )
+    selected_slot = int(np.where(order == selected_client)[0][0])
+    if drift_tracker is not None and selected_client not in _round_client_start_states:
+        start_state = copy.deepcopy(usersParam[selected_slot])
+        _round_client_start_states[int(selected_client)] = start_state
+        drift_tracker.record_client_start_state(int(selected_client), start_state)
+        try:
+            user_model.load_state_dict(start_state, strict=True)
+            c_client_i, _, _ = compute_split_probe_directions(
+                user_model,
+                server_model,
+                probe_loader,
+                device,
+                max_batches=PROBE_MAX_BATCHES,
+            )
+            if c_client_i is not None:
+                _round_per_client_probe_directions[int(selected_client)] = c_client_i
+                drift_tracker.set_per_client_probe_directions(
+                    _round_per_client_probe_directions
+                )
+        except Exception as exc:
+            vprint(f"[Drift][ExpA] Per-client probe failed ({selected_client}): {exc}", 0)
+    user_model.load_state_dict(usersParam[selected_slot], strict=True)
     # train
     images, labels = clients[selected_client].train_one_iteration()
     images = images.to(device)
@@ -1084,7 +1246,7 @@ while epoch != epochs:
     # Drift Measurement: Accumulate drift after optimizer step
     if drift_tracker is not None:
         drift_tracker.accumulate_client_drift(
-            selected_client, user_model.state_dict()
+            selected_client, user_model.state_dict(), batch_samples=int(labels.size(0))
         )
 
     if WRTT is True:  # Record the time of the backward pass
@@ -1271,6 +1433,8 @@ while epoch != epochs:
             if drift_tracker is not None:
                 drift_tracker.on_round_end(epoch, userParam, server_model.state_dict())
                 _drift_epoch_started = False  # Reset for next epoch
+                _round_client_start_states = {}
+                _round_per_client_probe_directions = {}
 
             if WRTT:
                 if test_flag:
@@ -1385,13 +1549,19 @@ while epoch != epochs:
 
         if WRTT is True:  # Initialize the time for the new client
             begin_time = clients[selected_client].time
-            order = replace_user(order, selected_client, user_num)
+            if _fixed_round_schedule:
+                order[index] = selected_client
+            else:
+                order = replace_user(order, selected_client, user_num)
             clients[order[index]].weight_count = total_weight_count
             clients[order[index]].time = begin_time
             clients[order[index]].model_process()
             clients[order[index]].transmit_activation()
         else:
-            order = replace_user(order, selected_client, user_num)
+            if _fixed_round_schedule:
+                order[index] = selected_client
+            else:
+                order = replace_user(order, selected_client, user_num)
             clients[order[index]].weight_count = total_weight_count
     else:
         if (

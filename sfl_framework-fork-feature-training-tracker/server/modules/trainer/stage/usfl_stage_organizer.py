@@ -1,4 +1,5 @@
 import asyncio
+import json
 import math
 import random
 from collections import Counter, defaultdict, deque
@@ -27,6 +28,7 @@ from utils.g_measurement import (
 
 # Drift Measurement (SCAFFOLD-style)
 from utils.drift_measurement import DriftMeasurementTracker
+from utils.experiment_a_probe import compute_split_probe_directions, build_probe_loader
 from utils.log_utils import vprint
 
 if TYPE_CHECKING:
@@ -87,6 +89,7 @@ class USFLStageOrganizer(BaseStageOrganizer):
         # per-client prior cache set during _pre_round
         self.client_priors: dict[str, dict[str, float]] = {}
         self.client_label_counts: dict[str, dict[str, int]] = {}
+        self._client_schedule_cache = None
 
         # Initialize USFL logger with unique filename
         USFLLogger.initialize(config)
@@ -95,6 +98,31 @@ class USFLStageOrganizer(BaseStageOrganizer):
 
         # G Measurement V2 (Oracle-based) - lazy initialization
         self._dataset = dataset  # Store reference for lazy loading (G measurement)
+        self.probe_loader = self.testloader
+        self.probe_max_batches = max(int(getattr(config, "probe_max_batches", 1)), 1)
+        try:
+            self.probe_loader, probe_meta = build_probe_loader(
+                default_loader=self.testloader,
+                train_dataset=self._dataset.get_trainset(),
+                test_dataset=self._dataset.get_testset(),
+                source=getattr(config, "probe_source", "test"),
+                indices_path=getattr(config, "probe_indices_path", ""),
+                num_samples=int(getattr(config, "probe_num_samples", 0)),
+                batch_size=int(getattr(config, "probe_batch_size", 0)),
+                seed=int(getattr(config, "probe_seed", getattr(config, "seed", 0))),
+            )
+            if self.probe_loader is None:
+                self.probe_loader = self.testloader
+            vprint(
+                f"[Probe] source={probe_meta.get('source', 'test')} selected={probe_meta.get('selected_samples', 0)} "
+                f"batch={probe_meta.get('batch_size', getattr(self.config, 'batch_size', 0))} "
+                f"max_batches={self.probe_max_batches}",
+                1,
+            )
+        except Exception as exc:
+            self.probe_loader = self.testloader
+            vprint(f"[Probe] Failed to build dedicated probe loader: {exc}", 1)
+
         self.g_measurement_system = None
         if getattr(config, "enable_g_measurement", False):
             measurement_mode = getattr(config, "g_measurement_mode", "single")
@@ -112,6 +140,49 @@ class USFLStageOrganizer(BaseStageOrganizer):
         if getattr(config, "enable_drift_measurement", False):
             self.drift_tracker = DriftMeasurementTracker()
             vprint("[Drift] DriftMeasurementTracker initialized (USFL)", 2)
+
+    def _load_client_schedule(self):
+        if self._client_schedule_cache is not None:
+            return
+        path = getattr(self.config, "client_schedule_path", "") or ""
+        if not path:
+            self._client_schedule_cache = {}
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                self._client_schedule_cache = json.load(f)
+            vprint(f"[Schedule] Loaded fixed client schedule: {path}", 1)
+        except Exception as exc:
+            self._client_schedule_cache = {}
+            vprint(f"[Schedule] Failed to load {path}: {exc}", 1)
+
+    def _get_scheduled_clients(self, round_number: int):
+        self._load_client_schedule()
+        schedule = self._client_schedule_cache
+        if not schedule:
+            return None
+        selected = None
+        if isinstance(schedule, list):
+            idx = round_number - 1
+            if 0 <= idx < len(schedule):
+                selected = schedule[idx]
+        elif isinstance(schedule, dict):
+            rounds = schedule.get("rounds")
+            if isinstance(rounds, list):
+                idx = round_number - 1
+                if 0 <= idx < len(rounds):
+                    selected = rounds[idx]
+            if selected is None:
+                selected = schedule.get(str(round_number), schedule.get(round_number))
+        if not isinstance(selected, list):
+            return None
+        out = []
+        for cid in selected:
+            try:
+                out.append(int(cid))
+            except (TypeError, ValueError):
+                continue
+        return out if out else None
 
     @staticmethod
     def _get_exponential_bin(usage_count: int) -> int:
@@ -491,6 +562,13 @@ class USFLStageOrganizer(BaseStageOrganizer):
             self.connection,
             selection_data,
         )
+        scheduled_clients = self._get_scheduled_clients(round_number)
+        if scheduled_clients is not None:
+            self.selected_clients = scheduled_clients[: self.config.num_clients_per_round]
+            vprint(
+                f"[Schedule] Round {round_number}: using fixed clients {self.selected_clients}",
+                1,
+            )
 
         # Sanity check: Verify all class labels are covered by selected clients
         global_dataset_sizes = {str(label): 0 for label in range(self.num_classes)}
@@ -837,6 +915,17 @@ class USFLStageOrganizer(BaseStageOrganizer):
         # Drift Measurement: Snapshot client and server models at round start
         if self.drift_tracker is not None and len(self.split_models) >= 2:
             self.drift_tracker.on_round_start(self.split_models[0], self.split_models[1])
+            try:
+                c_client, c_server, probe_meta = compute_split_probe_directions(
+                    self.split_models[0],
+                    self.split_models[1],
+                    self.probe_loader,
+                    self.config.device,
+                    max_batches=self.probe_max_batches,
+                )
+                self.drift_tracker.set_probe_directions(c_client, c_server, probe_meta)
+            except Exception as exc:
+                vprint(f"[Drift][ExpA] Probe direction failed: {exc}", 1)
 
         model_queue = self.global_dict.get("model_queue")
         model_queue.start_insert_mode()
@@ -1388,11 +1477,15 @@ class USFLStageOrganizer(BaseStageOrganizer):
                         drift_endpoint = num_samples.get("drift_endpoint", 0.0)
                         if drift_batch_steps > 0:
                             augmented_counts = num_samples.get("augmented_label_counts", {})
-                            client_weight = (
-                                sum(augmented_counts.values())
-                                if augmented_counts
-                                else num_samples.get("dataset_size", 0)
-                            )
+                            drift_sample_count = num_samples.get("drift_sample_count")
+                            if drift_sample_count is not None and drift_sample_count > 0:
+                                client_weight = drift_sample_count
+                            else:
+                                client_weight = (
+                                    sum(augmented_counts.values())
+                                    if augmented_counts
+                                    else num_samples.get("dataset_size", 0)
+                                )
                             self.drift_tracker.collect_client_drift(
                                 client_id,
                                 drift_trajectory_sum,

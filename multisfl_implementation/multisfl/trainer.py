@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import List, Dict, Tuple, Optional, Any
+import json
 import numpy as np
 import torch
 import torch.nn as nn
@@ -19,6 +20,7 @@ from .models import SplitModel, get_full_model, get_split_models, ClientNet, Ser
 from .utils import set_seed
 from .g_measurement import GMeasurementSystem
 from .drift_measurement import MultiSFLDriftTracker
+from .experiment_a_probe import compute_split_probe_directions
 from .log_utils import vprint
 from torch.utils.data import DataLoader, ConcatDataset
 
@@ -48,6 +50,7 @@ class MultiSFLTrainer:
         planner: KnowledgeRequestPlanner,
         scheduler: SamplingProportionScheduler,
         test_loader: Any = None,
+        probe_loader: Any = None,
     ):
         self.cfg = cfg
         self.clients = clients
@@ -57,6 +60,8 @@ class MultiSFLTrainer:
         self.planner = planner
         self.scheduler = scheduler
         self.test_loader = test_loader
+        self.probe_loader = probe_loader if probe_loader is not None else test_loader
+        self.probe_max_batches = max(int(getattr(cfg, "probe_max_batches", 1)), 1)
 
         self.g_system: Optional[GMeasurementSystem] = None
         if cfg.enable_g_measurement:
@@ -94,6 +99,7 @@ class MultiSFLTrainer:
             )
             vprint(f"[Drift Measurement] Initialized. Sample interval: {cfg.drift_sample_interval}", 2)
 
+        self._client_schedule_cache: Optional[Any] = None
         self.stats: List[RoundStats] = []
 
     def _average_grad_dicts(
@@ -144,6 +150,62 @@ class MultiSFLTrainer:
             len(self.clients), size=self.cfg.n_main_clients_per_round, replace=False
         ).tolist()
         return ids
+
+    def _load_client_schedule(self) -> None:
+        if self._client_schedule_cache is not None:
+            return
+        path = self.cfg.client_schedule_path or ""
+        if not path:
+            self._client_schedule_cache = {}
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                self._client_schedule_cache = json.load(f)
+            vprint(f"[Schedule] Loaded fixed client schedule: {path}", 1)
+        except Exception as exc:
+            self._client_schedule_cache = {}
+            vprint(f"[Schedule] Failed to load {path}: {exc}", 1)
+
+    def _get_scheduled_clients(self, round_number: int) -> Optional[List[int]]:
+        self._load_client_schedule()
+        schedule = self._client_schedule_cache
+        if not schedule:
+            return None
+
+        selected = None
+        if isinstance(schedule, list):
+            idx = round_number - 1
+            if 0 <= idx < len(schedule):
+                selected = schedule[idx]
+        elif isinstance(schedule, dict):
+            rounds = schedule.get("rounds")
+            if isinstance(rounds, list):
+                idx = round_number - 1
+                if 0 <= idx < len(rounds):
+                    selected = rounds[idx]
+            if selected is None:
+                selected = schedule.get(str(round_number), schedule.get(round_number))
+
+        if not isinstance(selected, list):
+            return None
+
+        out: List[int] = []
+        seen = set()
+        for cid in selected:
+            try:
+                cid_int = int(cid)
+            except (TypeError, ValueError):
+                continue
+            if cid_int < 0 or cid_int >= len(self.clients) or cid_int in seen:
+                continue
+            out.append(cid_int)
+            seen.add(cid_int)
+            if len(out) >= self.cfg.n_main_clients_per_round:
+                break
+
+        if len(out) < self.cfg.n_main_clients_per_round:
+            return None
+        return out
 
     def evaluate_master(self) -> float:
         if self.test_loader is None:
@@ -205,10 +267,20 @@ class MultiSFLTrainer:
         p_r = self.scheduler.state.p
 
         for r in range(self.cfg.num_rounds):
-            main_ids = self.sample_main_clients()
+            fixed_main_ids = self._get_scheduled_clients(r + 1)
+            if fixed_main_ids is None:
+                main_ids = self.sample_main_clients()
+                use_fixed_schedule = False
+            else:
+                main_ids = fixed_main_ids
+                use_fixed_schedule = True
+                vprint(f"[Schedule] Round {r + 1}: fixed clients {main_ids}", 1)
             inactive_ids = [i for i in range(len(self.clients)) if i not in main_ids]
 
-            perm = np.random.permutation(main_ids)
+            if use_fixed_schedule:
+                perm = np.array(main_ids, dtype=int)
+            else:
+                perm = np.random.permutation(main_ids)
             mapping = {b: int(perm[b % len(perm)]) for b in range(self.B)}
             vprint(
                 f"\n[Round {r + 1}/{self.cfg.num_rounds}] Branch-Client mapping: {mapping}", 1
@@ -220,6 +292,70 @@ class MultiSFLTrainer:
                 ws_master_sd = self.main.master_state_dict
                 if wc_master_sd is not None:
                     self.drift_tracker.on_round_start(wc_master_sd, ws_master_sd)
+                    try:
+                        if ws_master_sd is not None:
+                            if self.cfg.model_type == "simple":
+                                wc_probe = ClientNet().to(self.cfg.device)
+                                ws_probe = ServerNet(num_classes=self.cfg.num_classes).to(
+                                    self.cfg.device
+                                )
+                            else:
+                                wc_probe, ws_probe = get_split_models(
+                                    self.cfg.model_type,
+                                    self.cfg.dataset,
+                                    self.cfg.num_classes,
+                                    self.cfg.split_layer,
+                                )
+                                wc_probe = wc_probe.to(self.cfg.device)
+                                ws_probe = ws_probe.to(self.cfg.device)
+                            wc_probe.load_state_dict(wc_master_sd)
+                            ws_probe.load_state_dict(ws_master_sd)
+                            c_client, c_server, probe_meta = compute_split_probe_directions(
+                                wc_probe,
+                                ws_probe,
+                                self.probe_loader,
+                                self.cfg.device,
+                                max_batches=self.probe_max_batches,
+                            )
+                            self.drift_tracker.set_probe_directions(
+                                c_client, c_server, probe_meta
+                            )
+
+                            per_branch_probe_directions: Dict[int, torch.Tensor] = {}
+                            if self.probe_loader is not None:
+                                if self.cfg.model_type == "simple":
+                                    ws_anchor_probe = ServerNet(
+                                        num_classes=self.cfg.num_classes
+                                    ).to(self.cfg.device)
+                                else:
+                                    _, ws_anchor_probe = get_split_models(
+                                        self.cfg.model_type,
+                                        self.cfg.dataset,
+                                        self.cfg.num_classes,
+                                        self.cfg.split_layer,
+                                    )
+                                    ws_anchor_probe = ws_anchor_probe.to(self.cfg.device)
+                                ws_anchor_probe.load_state_dict(ws_master_sd)
+
+                                for b in range(self.B):
+                                    branch_client_model = self.fed.get_client_branch(
+                                        b
+                                    ).model
+                                    c_client_i, _, _ = compute_split_probe_directions(
+                                        branch_client_model,
+                                        ws_anchor_probe,
+                                        self.probe_loader,
+                                        self.cfg.device,
+                                        max_batches=self.probe_max_batches,
+                                    )
+                                    if c_client_i is not None:
+                                        per_branch_probe_directions[int(b)] = c_client_i
+                            if per_branch_probe_directions:
+                                self.drift_tracker.set_per_client_probe_directions(
+                                    per_branch_probe_directions
+                                )
+                    except Exception as exc:
+                        vprint(f"[Drift][ExpA] Probe direction failed: {exc}", 1)
 
             # G Measurement: Setup PRE-ROUND model and compute Oracle
             is_diagnostic = (
@@ -332,6 +468,10 @@ class MultiSFLTrainer:
 
                 bc = self.fed.get_client_branch(b)
                 bs = self.main.get_server_branch(b)
+                if self.drift_tracker is not None:
+                    self.drift_tracker.record_branch_start_state(
+                        b, bc.model.state_dict(), client_id=client_id
+                    )
 
                 branch_grad_norm_sq = 0.0
                 branch_grad_f_main_norm = 0.0
@@ -340,6 +480,8 @@ class MultiSFLTrainer:
                 branch_requested = 0
                 branch_collected = 0
                 branch_trials = 0
+                branch_main_samples = 0
+                branch_replay_samples = 0
                 q_remaining: Optional[np.ndarray] = None
 
                 # Determine actual steps to run (fixed steps vs full epochs)
@@ -359,6 +501,7 @@ class MultiSFLTrainer:
                     f_main, y_main, label_dist, cache, base_count_batch = (
                         main_client.forward_main(bc.model, self.cfg.batch_size)
                     )
+                    branch_main_samples += int(y_main.size(0))
 
                     if local_step == 0:
                         self.score_tracker.append_label_dist(b, label_dist)
@@ -410,6 +553,10 @@ class MultiSFLTrainer:
                                 provided = tmp
                             q_rem = np.maximum(0, q_rem - provided)
                             branch_collected += int(provided.sum())
+                        if y_rep_list:
+                            branch_replay_samples += int(
+                                sum(int(y_rep.size(0)) for y_rep in y_rep_list)
+                            )
                         branch_trials = trials
 
                     # G Measurement: Collect data (first step in single mode, first K in k_batch, all steps in accumulated mode)
@@ -522,6 +669,9 @@ class MultiSFLTrainer:
                     self.drift_tracker.collect_branch_delta(b, bc.model.state_dict())
                     bs_for_delta = self.main.get_server_branch(b)
                     self.drift_tracker.collect_branch_server_delta(b, bs_for_delta.model.state_dict())
+                    self.drift_tracker.record_branch_sample_counts(
+                        b, branch_main_samples, branch_replay_samples
+                    )
 
                 # Normalize by actual steps run
                 grad_norm_sq_list.append(branch_grad_norm_sq / steps_to_run)

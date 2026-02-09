@@ -45,6 +45,29 @@ def _parse_sfl_accuracy(metric_blob: Any) -> List[Optional[float]]:
     return out
 
 
+def _extract_experiment_a_history(drift_history: Dict[str, Any]) -> Dict[str, List[Any]]:
+    return {
+        "A_c_ratio": _safe_list(drift_history.get("expA_A_c_ratio")),
+        "A_c_rel": _safe_list(drift_history.get("expA_A_c_rel")),
+        "B_c": _safe_list(drift_history.get("expA_B_c")),
+        "C_c": _safe_list(drift_history.get("expA_C_c")),
+        "C_c_per_client_probe": _safe_list(
+            drift_history.get("expA_C_c_per_client_probe")
+        ),
+        "B_s": _safe_list(drift_history.get("expA_B_s")),
+        "m2_c": _safe_list(drift_history.get("expA_m2_c")),
+        "u2_c": _safe_list(drift_history.get("expA_u2_c")),
+        "var_c": _safe_list(drift_history.get("expA_var_c")),
+        "server_mag_per_step": _safe_list(
+            drift_history.get("expA_server_mag_per_step")
+        ),
+        "server_mag_per_step_sq": _safe_list(
+            drift_history.get("expA_server_mag_per_step_sq")
+        ),
+        "per_round": _safe_list(drift_history.get("experiment_a")),
+    }
+
+
 def normalize_sfl(raw: Dict[str, Any], raw_path: Path, run_meta: Dict[str, Any]) -> Dict[str, Any]:
     drift_history = raw.get("drift_history")
     if not isinstance(drift_history, dict):
@@ -68,6 +91,7 @@ def normalize_sfl(raw: Dict[str, Any], raw_path: Path, run_meta: Dict[str, Any])
         "accuracy_by_round": accuracy_by_round,
         "drift_history": drift_history,
         "alignment_history": alignment,
+        "experiment_a_history": _extract_experiment_a_history(drift_history),
         "g_measurements": _safe_list(raw.get("g_measurements")),
     }
 
@@ -93,6 +117,7 @@ def normalize_gas(raw: Dict[str, Any], raw_path: Path, run_meta: Dict[str, Any])
         "accuracy_by_round": _safe_list(raw.get("accuracy")),
         "drift_history": drift_history,
         "alignment_history": alignment,
+        "experiment_a_history": _extract_experiment_a_history(drift_history),
         "g_history": raw.get("g_history", {}),
     }
 
@@ -131,6 +156,7 @@ def normalize_multisfl(raw: Dict[str, Any], raw_path: Path, run_meta: Dict[str, 
         "accuracy_by_round": accuracy_by_round,
         "drift_history": drift_history,
         "alignment_history": alignment,
+        "experiment_a_history": _extract_experiment_a_history(drift_history),
         "g_measurements": _safe_list(raw.get("g_measurements")),
         "summary": raw.get("summary", {}),
     }

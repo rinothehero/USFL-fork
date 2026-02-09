@@ -84,7 +84,43 @@ class MultiSFLAdapter(FrameworkAdapter):
             # Transforms & init (from common)
             "--use_sfl_transform", _str_bool(bool(common.get("use_sfl_transform", False))),
             "--use_torchvision_init", _str_bool(bool(common.get("use_torchvision_init", False))),
+            # Probe (Experiment A central direction)
+            "--probe_source", str(common.get("probe_source", "test")),
+            "--probe_num_samples", str(common.get("probe_num_samples", 0)),
+            "--probe_batch_size", str(common.get("probe_batch_size", 0)),
+            "--probe_max_batches", str(common.get("probe_max_batches", 1)),
+            "--probe_seed", str(common.get("probe_seed", common.get("seed", 42))),
         ]
+
+        client_schedule_path = (
+            common.get("client_schedule_path")
+            or overrides.get("client_schedule_path")
+            or ""
+        )
+        if client_schedule_path:
+            p = Path(str(client_schedule_path))
+            if not p.is_absolute():
+                spec_path = execution.get("_spec_path")
+                if spec_path:
+                    p = (Path(spec_path).resolve().parent / p).resolve()
+                else:
+                    p = (repo_root / p).resolve()
+            cmd.extend(["--client_schedule_path", str(p)])
+
+        probe_indices_path = (
+            common.get("probe_indices_path")
+            or overrides.get("probe_indices_path")
+            or ""
+        )
+        if probe_indices_path:
+            p = Path(str(probe_indices_path))
+            if not p.is_absolute():
+                spec_path = execution.get("_spec_path")
+                if spec_path:
+                    p = (Path(spec_path).resolve().parent / p).resolve()
+                else:
+                    p = (repo_root / p).resolve()
+            cmd.extend(["--probe_indices_path", str(p)])
 
         # Result output directory (from batch_runner)
         result_output_dir = execution.get("result_output_dir", "")

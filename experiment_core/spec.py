@@ -95,6 +95,12 @@ def _defaults() -> Dict[str, Any]:
                 "enabled": True,
                 "sample_interval": 1,
             },
+            "probe_source": "test",
+            "probe_indices_path": "",
+            "probe_num_samples": 0,
+            "probe_batch_size": 0,
+            "probe_max_batches": 1,
+            "probe_seed": 42,
         },
         "execution": {
             "mode": "run",

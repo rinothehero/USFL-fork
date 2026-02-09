@@ -103,6 +103,13 @@ def build_common_spec(common_path: Path) -> Dict[str, Any]:
         "use_sfl_transform": cr.get("use_sfl_transform", False),
         "use_torchvision_init": cr.get("use_torchvision_init", False),
         "use_full_epochs": cr.get("use_full_epochs", False),
+        "client_schedule_path": cr.get("client_schedule_path", ""),
+        "probe_source": cr.get("probe_source", "test"),
+        "probe_indices_path": cr.get("probe_indices_path", ""),
+        "probe_num_samples": cr.get("probe_num_samples", 0),
+        "probe_batch_size": cr.get("probe_batch_size", 0),
+        "probe_max_batches": cr.get("probe_max_batches", 1),
+        "probe_seed": cr.get("probe_seed", cr.get("seed", 42)),
     }
 
 

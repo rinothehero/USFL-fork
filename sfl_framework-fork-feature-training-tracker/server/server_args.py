@@ -83,6 +83,7 @@ class Config:
     model_path: str  # File path to save/load the model.
     dataset_path: str  # File path to the dataset location.
     result_output_dir: str  # Directory for result JSON files (empty = CWD).
+    client_schedule_path: str  # Optional JSON file for fixed round-wise client IDs.
 
     # ==================
     #  METHOD OPTIONS
@@ -190,6 +191,12 @@ class Config:
     # ==================
     enable_drift_measurement: bool  # Enable client drift measurement
     drift_sample_interval: int  # Measure drift every n steps (1 = every step, default: 1)
+    probe_source: str  # Probe dataset source: "test" | "train"
+    probe_indices_path: str  # Optional JSON/TXT indices file for fixed probe set Q
+    probe_num_samples: int  # If >0 and indices file empty, sample fixed-size probe subset
+    probe_batch_size: int  # Probe loader batch size (0 = reuse default loader batch size)
+    probe_max_batches: int  # Number of probe batches used to estimate c^t
+    probe_seed: int  # Seed for random probe subset sampling
 
     # ==================
     #  IN-ROUND EVALUATION OPTIONS
@@ -447,6 +454,15 @@ def parse_args(custom_args=None):
         action="store",
         type=str,
         dest="result_output_dir",
+        default="",
+        required=False,
+    )
+    parser.add_argument(
+        "--client-schedule-path",
+        help="Optional JSON file for fixed per-round client schedules",
+        action="store",
+        type=str,
+        dest="client_schedule_path",
         default="",
         required=False,
     )
@@ -1125,6 +1141,55 @@ def parse_args(custom_args=None):
         type=int,
         dest="drift_sample_interval",
         default=1,
+    )
+    parser.add_argument(
+        "--probe-source",
+        help="Probe data source for Experiment A central direction: test or train",
+        action="store",
+        type=str,
+        choices=["test", "train"],
+        dest="probe_source",
+        default="test",
+    )
+    parser.add_argument(
+        "--probe-indices-path",
+        help="Optional JSON/TXT file containing fixed probe indices",
+        action="store",
+        type=str,
+        dest="probe_indices_path",
+        default="",
+    )
+    parser.add_argument(
+        "--probe-num-samples",
+        help="If >0 (and no indices file), sample this many probe items deterministically",
+        action="store",
+        type=int,
+        dest="probe_num_samples",
+        default=0,
+    )
+    parser.add_argument(
+        "--probe-batch-size",
+        help="Probe loader batch size (0 = reuse dataset default batch size)",
+        action="store",
+        type=int,
+        dest="probe_batch_size",
+        default=0,
+    )
+    parser.add_argument(
+        "--probe-max-batches",
+        help="Number of probe batches used for central direction per round",
+        action="store",
+        type=int,
+        dest="probe_max_batches",
+        default=1,
+    )
+    parser.add_argument(
+        "--probe-seed",
+        help="Random seed for probe subset sampling when probe_num_samples > 0",
+        action="store",
+        type=int,
+        dest="probe_seed",
+        default=2023,
     )
     parser.add_argument(
         "--enable-inround-evaluation",

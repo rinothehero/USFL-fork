@@ -27,6 +27,7 @@ import torch.nn as nn
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 from shared.update_alignment import flatten_delta, compute_update_alignment
+from shared.experiment_a_metrics import compute_experiment_a_metrics
 from .log_utils import vprint
 
 
@@ -100,6 +101,7 @@ class RoundDriftMeasurement:
     metrics: DriftMetrics = field(default_factory=DriftMetrics)
     per_branch_client: Dict[int, dict] = field(default_factory=dict)
     per_branch_server: Dict[int, dict] = field(default_factory=dict)
+    experiment_a: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -107,6 +109,7 @@ class RoundDriftMeasurement:
             **self.metrics.to_dict(),
             "per_branch_client": {str(k): v for k, v in self.per_branch_client.items()},
             "per_branch_server": {str(k): v for k, v in self.per_branch_server.items()},
+            "experiment_a": self.experiment_a,
         }
 
 
@@ -183,6 +186,15 @@ class MultiSFLDriftTracker:
         self._branch_deltas: List[Tuple[int, torch.Tensor]] = []
         self._branch_server_deltas: List[Tuple[int, torch.Tensor]] = []
 
+        # Experiment A support
+        self._probe_client_direction: Optional[torch.Tensor] = None
+        self._probe_server_direction: Optional[torch.Tensor] = None
+        self._probe_meta: Dict[str, float] = {}
+        self._per_client_probe_directions: Dict[int, torch.Tensor] = {}
+        self._branch_main_samples: Dict[int, int] = {}
+        self._branch_replay_samples: Dict[int, int] = {}
+        self._branch_start_client_params: Dict[int, Dict[str, torch.Tensor]] = {}
+
     def _is_trainable_param(self, name: str) -> bool:
         """Check if parameter name corresponds to trainable weights (not buffers)"""
         # Exclude BatchNorm running statistics and tracking buffers
@@ -222,6 +234,83 @@ class MultiSFLDriftTracker:
         self._branch_server_states.clear()
         self._branch_deltas = []
         self._branch_server_deltas = []
+        self._probe_client_direction = None
+        self._probe_server_direction = None
+        self._probe_meta = {}
+        self._per_client_probe_directions = {}
+        self._branch_main_samples = {}
+        self._branch_replay_samples = {}
+        self._branch_start_client_params = {}
+
+    def set_probe_directions(
+        self,
+        client_direction: Optional[torch.Tensor],
+        server_direction: Optional[torch.Tensor],
+        meta: Optional[dict] = None,
+    ):
+        self._probe_client_direction = (
+            client_direction.detach().cpu().float()
+            if isinstance(client_direction, torch.Tensor)
+            else None
+        )
+        self._probe_server_direction = (
+            server_direction.detach().cpu().float()
+            if isinstance(server_direction, torch.Tensor)
+            else None
+        )
+        self._probe_meta = dict(meta or {})
+
+    def set_per_client_probe_directions(self, per_client: Dict[int, torch.Tensor]):
+        self._per_client_probe_directions = {}
+        for cid, direction in (per_client or {}).items():
+            if isinstance(direction, torch.Tensor):
+                self._per_client_probe_directions[int(cid)] = (
+                    direction.detach().cpu().float()
+                )
+
+    def record_branch_sample_counts(
+        self, branch_id: int, main_samples: int, replay_samples: int = 0
+    ):
+        self._branch_main_samples[int(branch_id)] = int(max(main_samples, 0))
+        self._branch_replay_samples[int(branch_id)] = int(max(replay_samples, 0))
+
+    def record_branch_start_state(
+        self,
+        branch_id: int,
+        branch_client_state_dict: dict,
+        client_id: Optional[int] = None,
+    ):
+        start_params = {
+            name: param.clone().detach().cpu()
+            for name, param in branch_client_state_dict.items()
+            if self._is_trainable_param(name)
+        }
+        self._branch_start_client_params[int(branch_id)] = start_params
+        if client_id is not None:
+            if branch_id not in self._branch_client_states:
+                self._branch_client_states[branch_id] = BranchDriftState()
+            self._branch_client_states[branch_id].client_id = int(client_id)
+
+    def _flatten_state_delta(
+        self,
+        current_state_dict: dict,
+        start_params: Dict[str, torch.Tensor],
+    ) -> Optional[torch.Tensor]:
+        if not start_params:
+            return None
+        vecs = []
+        for name, start in start_params.items():
+            if name not in current_state_dict:
+                continue
+            end = current_state_dict[name]
+            if isinstance(end, torch.Tensor):
+                diff = end.detach().cpu().float() - start.float()
+            else:
+                diff = torch.tensor(end, dtype=torch.float32) - start.float()
+            vecs.append(diff.reshape(-1))
+        if not vecs:
+            return None
+        return torch.cat(vecs)
 
     def _compute_drift_from_start(
         self,
@@ -334,8 +423,11 @@ class MultiSFLDriftTracker:
             )
 
     def collect_branch_delta(self, branch_id: int, branch_client_state_dict: dict):
-        """Compute and store client Δ_b for A_cos computation."""
-        delta = flatten_delta(branch_client_state_dict, self._round_start_client_params)
+        """Compute and store client Δ_b for A_cos and Experiment A computation."""
+        start_params = self._branch_start_client_params.get(
+            int(branch_id), self._round_start_client_params
+        )
+        delta = flatten_delta(branch_client_state_dict, start_params)
         if delta is not None:
             self._branch_deltas.append((branch_id, delta))
 
@@ -486,6 +578,49 @@ class MultiSFLDriftTracker:
             n_valid_alignment=alignment_client.n_valid,
         )
 
+        client_delta_map: Dict[int, torch.Tensor] = {}
+        for bid, delta in self._branch_deltas:
+            client_delta_map[int(bid)] = delta.float()
+
+        server_delta_vec = None
+        if (
+            new_master_server_state_dict is not None
+            and self._round_start_server_params
+        ):
+            server_delta_vec = self._flatten_state_delta(
+                new_master_server_state_dict, self._round_start_server_params
+            )
+
+        client_weights = None
+        if self._branch_main_samples:
+            client_weights = {
+                int(bid): float(v) for bid, v in self._branch_main_samples.items()
+            }
+
+        experiment_a = compute_experiment_a_metrics(
+            client_deltas=client_delta_map,
+            client_weights=client_weights,
+            client_probe_direction=self._probe_client_direction,
+            per_client_probe_directions=self._per_client_probe_directions
+            if self._per_client_probe_directions
+            else None,
+            server_delta=server_delta_vec,
+            server_probe_direction=self._probe_server_direction,
+            server_steps=total_server_steps,
+            epsilon=epsilon,
+        )
+        experiment_a["probe"] = {
+            "used_batches": int(self._probe_meta.get("used_batches", 0)),
+            "used_samples": int(self._probe_meta.get("used_samples", 0)),
+        }
+        experiment_a["B_i"] = {
+            str(bid): int(v) for bid, v in self._branch_main_samples.items()
+        }
+        experiment_a["R_i"] = {
+            str(bid): int(v) for bid, v in self._branch_replay_samples.items()
+        }
+        result.experiment_a = experiment_a
+
         self.measurements.append(result)
 
         vprint(
@@ -524,6 +659,26 @@ class MultiSFLDriftTracker:
             "M_norm_client": [m.metrics.M_norm_client for m in self.measurements],
             "A_cos_server": [m.metrics.A_cos_server for m in self.measurements],
             "M_norm_server": [m.metrics.M_norm_server for m in self.measurements],
+            # Experiment A
+            "expA_A_c_ratio": [m.experiment_a.get("A_c_ratio") for m in self.measurements],
+            "expA_A_c_rel": [m.experiment_a.get("A_c_rel") for m in self.measurements],
+            "expA_B_c": [m.experiment_a.get("B_c") for m in self.measurements],
+            "expA_C_c": [m.experiment_a.get("C_c") for m in self.measurements],
+            "expA_C_c_per_client_probe": [
+                m.experiment_a.get("C_c_per_client_probe") for m in self.measurements
+            ],
+            "expA_B_s": [m.experiment_a.get("B_s") for m in self.measurements],
+            "expA_m2_c": [m.experiment_a.get("m2_c") for m in self.measurements],
+            "expA_u2_c": [m.experiment_a.get("u2_c") for m in self.measurements],
+            "expA_var_c": [m.experiment_a.get("var_c") for m in self.measurements],
+            "expA_server_mag_per_step": [
+                m.experiment_a.get("server_mag_per_step") for m in self.measurements
+            ],
+            "expA_server_mag_per_step_sq": [
+                m.experiment_a.get("server_mag_per_step_sq")
+                for m in self.measurements
+            ],
+            "experiment_a": [m.experiment_a for m in self.measurements],
             # Per-round details
             "per_round": [m.to_dict() for m in self.measurements],
         }
@@ -536,6 +691,13 @@ class MultiSFLDriftTracker:
         self._branch_server_states.clear()
         self._branch_deltas = []
         self._branch_server_deltas = []
+        self._probe_client_direction = None
+        self._probe_server_direction = None
+        self._probe_meta = {}
+        self._per_client_probe_directions = {}
+        self._branch_main_samples = {}
+        self._branch_replay_samples = {}
+        self._branch_start_client_params = {}
         self.measurements = []
         self._early_delta_norms = []
         self._adaptive_epsilon = None

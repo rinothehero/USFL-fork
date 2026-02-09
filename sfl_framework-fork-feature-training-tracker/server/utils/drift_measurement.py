@@ -28,6 +28,7 @@ import torch.nn as nn
 # shared/update_alignment.py lives at repo root: USFL-fork/shared
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 from shared.update_alignment import flatten_delta, compute_update_alignment
+from shared.experiment_a_metrics import compute_experiment_a_metrics
 from utils.log_utils import vprint
 
 
@@ -110,6 +111,7 @@ class RoundDriftMeasurement:
     metrics: DriftMetrics = field(default_factory=DriftMetrics)
     per_client: Dict[int, dict] = field(default_factory=dict)  # {client_id: {S, B, E}}
     server_drift: dict = field(default_factory=dict)  # {S, B, E} for server
+    experiment_a: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -117,6 +119,7 @@ class RoundDriftMeasurement:
             **self.metrics.to_dict(),
             "per_client": {str(k): v for k, v in self.per_client.items()},
             "server_drift": self.server_drift,
+            "experiment_a": self.experiment_a,
         }
 
 
@@ -151,6 +154,12 @@ class DriftMeasurementTracker:
         # Update alignment (A_cos) accumulators
         self._client_deltas: List[Tuple[int, torch.Tensor]] = []
         self._alignment_weights: Dict[int, float] = {}
+
+        # Experiment A probe directions
+        self._probe_client_direction: Optional[torch.Tensor] = None
+        self._probe_server_direction: Optional[torch.Tensor] = None
+        self._probe_meta: Dict[str, float] = {}
+        self._per_client_probe_directions: Dict[int, torch.Tensor] = {}
 
         # Server drift accumulation for current round
         self._server_trajectory_sum: float = 0.0
@@ -214,6 +223,10 @@ class DriftMeasurementTracker:
         self._server_trajectory_sum = 0.0
         self._server_batch_steps = 0
         self._server_endpoint_drift = 0.0
+        self._probe_client_direction = None
+        self._probe_server_direction = None
+        self._probe_meta = {}
+        self._per_client_probe_directions = {}
 
     def accumulate_server_drift(self, server_model: nn.Module):
         """
@@ -255,6 +268,7 @@ class DriftMeasurementTracker:
         if client_weight is not None:
             try:
                 self._client_weights[client_id] = float(client_weight)
+                self._client_drifts[client_id]["B_main"] = float(client_weight)
             except (TypeError, ValueError):
                 # Keep it absent if the value is not castable.
                 pass
@@ -276,6 +290,45 @@ class DriftMeasurementTracker:
             self._client_deltas.append((client_id, delta))
         if client_weight is not None:
             self._alignment_weights[client_id] = float(client_weight)
+
+    def set_probe_directions(
+        self,
+        client_direction: Optional[torch.Tensor],
+        server_direction: Optional[torch.Tensor],
+        meta: Optional[dict] = None,
+    ):
+        self._probe_client_direction = (
+            client_direction.detach().cpu().float()
+            if isinstance(client_direction, torch.Tensor)
+            else None
+        )
+        self._probe_server_direction = (
+            server_direction.detach().cpu().float()
+            if isinstance(server_direction, torch.Tensor)
+            else None
+        )
+        self._probe_meta = dict(meta or {})
+
+    def set_per_client_probe_directions(self, per_client: Dict[int, torch.Tensor]):
+        self._per_client_probe_directions = {}
+        for cid, direction in (per_client or {}).items():
+            if isinstance(direction, torch.Tensor):
+                self._per_client_probe_directions[int(cid)] = (
+                    direction.detach().cpu().float()
+                )
+
+    def _flatten_model_delta(
+        self, model: nn.Module, start_params: Dict[str, torch.Tensor]
+    ) -> Optional[torch.Tensor]:
+        vecs = []
+        for name, param in model.named_parameters():
+            if name not in start_params:
+                continue
+            diff = param.data.detach().cpu().float() - start_params[name].float()
+            vecs.append(diff.reshape(-1))
+        if not vecs:
+            return None
+        return torch.cat(vecs)
 
     def on_round_end(
         self,
@@ -455,6 +508,38 @@ class DriftMeasurementTracker:
             server_steps=self._server_batch_steps,
         )
 
+        client_delta_map: Dict[int, torch.Tensor] = {}
+        for cid, delta in self._client_deltas:
+            client_delta_map[int(cid)] = delta.float()
+
+        server_delta_vec = None
+        if new_server_model is not None and self._round_start_server_params:
+            server_delta_vec = self._flatten_model_delta(
+                new_server_model, self._round_start_server_params
+            )
+
+        experiment_a = compute_experiment_a_metrics(
+            client_deltas=client_delta_map,
+            client_weights=self._alignment_weights or self._client_weights,
+            client_probe_direction=self._probe_client_direction,
+            per_client_probe_directions=self._per_client_probe_directions
+            if self._per_client_probe_directions
+            else None,
+            server_delta=server_delta_vec,
+            server_probe_direction=self._probe_server_direction,
+            server_steps=self._server_batch_steps,
+            epsilon=epsilon,
+        )
+        experiment_a["probe"] = {
+            "used_batches": int(self._probe_meta.get("used_batches", 0)),
+            "used_samples": int(self._probe_meta.get("used_samples", 0)),
+        }
+        experiment_a["B_i"] = {
+            str(cid): float(w) for cid, w in self._client_weights.items()
+        }
+        experiment_a["R_i"] = {}
+        result.experiment_a = experiment_a
+
         self.measurements.append(result)
 
         # Log results
@@ -487,6 +572,10 @@ class DriftMeasurementTracker:
         self._server_trajectory_sum = 0.0
         self._server_batch_steps = 0
         self._server_endpoint_drift = 0.0
+        self._probe_client_direction = None
+        self._probe_server_direction = None
+        self._probe_meta = {}
+        self._per_client_probe_directions = {}
         self.measurements = []
         self._early_delta_norms = []
         self._adaptive_epsilon = None

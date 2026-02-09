@@ -27,6 +27,7 @@ from multisfl.servers import FedServer, MainServer, BranchClientState, BranchSer
 from multisfl.replay import ScoreVectorTracker, KnowledgeRequestPlanner
 from multisfl.scheduler import SamplingProportionScheduler
 from multisfl.trainer import MultiSFLTrainer
+from multisfl.experiment_a_probe import build_probe_loader
 from multisfl.utils import set_seed
 from multisfl.log_utils import vprint
 
@@ -119,6 +120,49 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--result_output_dir", type=str, default="results",
                         help="Directory for result JSON files")
+    parser.add_argument(
+        "--client_schedule_path",
+        type=str,
+        default="",
+        help="Optional JSON file with fixed per-round client IDs",
+    )
+    parser.add_argument(
+        "--probe_source",
+        type=str,
+        default="test",
+        choices=["test", "train"],
+        help="Probe data source for Experiment A central direction",
+    )
+    parser.add_argument(
+        "--probe_indices_path",
+        type=str,
+        default="",
+        help="Optional JSON/TXT file with fixed probe indices",
+    )
+    parser.add_argument(
+        "--probe_num_samples",
+        type=int,
+        default=0,
+        help="If >0 and no indices file, sample this many probe samples",
+    )
+    parser.add_argument(
+        "--probe_batch_size",
+        type=int,
+        default=0,
+        help="Probe loader batch size (0 = reuse test loader batch size)",
+    )
+    parser.add_argument(
+        "--probe_max_batches",
+        type=int,
+        default=1,
+        help="Number of probe batches used per round to estimate central direction",
+    )
+    parser.add_argument(
+        "--probe_seed",
+        type=int,
+        default=None,
+        help="Random seed for probe subset sampling (default: --seed)",
+    )
     parser.add_argument("--num_classes", type=int, default=10)
 
     parser.add_argument("--synthetic_train_size", type=int, default=5000)
@@ -281,6 +325,13 @@ def main():
         use_full_epochs=args.use_full_epochs,
         enable_drift_measurement=args.enable_drift_measurement,
         drift_sample_interval=args.drift_sample_interval,
+        client_schedule_path=args.client_schedule_path or None,
+        probe_source=args.probe_source,
+        probe_indices_path=args.probe_indices_path or None,
+        probe_num_samples=args.probe_num_samples,
+        probe_batch_size=args.probe_batch_size,
+        probe_max_batches=args.probe_max_batches,
+        probe_seed=args.probe_seed if args.probe_seed is not None else args.seed,
     )
 
     # Data Partitioning
@@ -311,6 +362,28 @@ def main():
         )
     else:
         raise ValueError(f"Unknown dataset: {args.dataset}")
+
+    try:
+        probe_loader, probe_meta = build_probe_loader(
+            default_loader=test_loader,
+            train_dataset=train_data,
+            test_dataset=getattr(test_loader, "dataset", None),
+            source=cfg.probe_source,
+            indices_path=cfg.probe_indices_path or "",
+            num_samples=cfg.probe_num_samples,
+            batch_size=cfg.probe_batch_size,
+            seed=cfg.probe_seed,
+        )
+        if probe_loader is None:
+            probe_loader = test_loader
+        vprint(
+            f"[Probe] source={probe_meta.get('source', 'test')} selected={probe_meta.get('selected_samples', 0)} "
+            f"batch={probe_meta.get('batch_size', args.batch_size)} max_batches={cfg.probe_max_batches}",
+            1,
+        )
+    except Exception as exc:
+        probe_loader = test_loader
+        vprint(f"[Probe] Failed to build dedicated probe loader: {exc}", 0)
 
     vprint(f"Partitioning data: {args.partition}", 1)
     if args.partition == "iid":
@@ -416,6 +489,7 @@ def main():
         planner=planner,
         scheduler=scheduler,
         test_loader=test_loader,
+        probe_loader=probe_loader,
     )
 
     vprint("\n" + "=" * 70, 1)
