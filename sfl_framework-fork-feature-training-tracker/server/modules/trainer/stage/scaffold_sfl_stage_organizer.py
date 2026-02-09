@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import json
 import pickle
 from collections import defaultdict
 from itertools import combinations
@@ -98,6 +99,9 @@ class ScaffoldSFLStageOrganizer(BaseStageOrganizer):
             self.drift_tracker = DriftMeasurementTracker()
             vprint("[Drift] DriftMeasurementTracker initialized (SCAFFOLD-SFL)", 2)
 
+        # Client schedule (fixed P_t for Experiment A)
+        self._client_schedule_cache = None
+
         # SCAFFOLD: Global control variate c (persistent)
         # Per-client control variates c_i are stored client-side
         self.c = {}  # Global control variate (same structure as client model params)
@@ -109,6 +113,49 @@ class ScaffoldSFLStageOrganizer(BaseStageOrganizer):
                 if param.requires_grad:
                     self.c[name] = torch.zeros_like(param.data).cpu()
             vprint(f"[SCAFFOLD Server] Initialized global control variate c with {len(self.c)} parameters", 2)
+
+    def _load_client_schedule(self):
+        if self._client_schedule_cache is not None:
+            return
+        path = getattr(self.config, "client_schedule_path", "") or ""
+        if not path:
+            self._client_schedule_cache = {}
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                self._client_schedule_cache = json.load(f)
+            vprint(f"[Schedule] Loaded fixed client schedule: {path}", 1)
+        except Exception as exc:
+            self._client_schedule_cache = {}
+            vprint(f"[Schedule] Failed to load {path}: {exc}", 1)
+
+    def _get_scheduled_clients(self, round_number: int):
+        self._load_client_schedule()
+        schedule = self._client_schedule_cache
+        if not schedule:
+            return None
+        selected = None
+        if isinstance(schedule, list):
+            idx = round_number - 1
+            if 0 <= idx < len(schedule):
+                selected = schedule[idx]
+        elif isinstance(schedule, dict):
+            rounds = schedule.get("rounds")
+            if isinstance(rounds, list):
+                idx = round_number - 1
+                if 0 <= idx < len(rounds):
+                    selected = rounds[idx]
+            if selected is None:
+                selected = schedule.get(str(round_number), schedule.get(round_number))
+        if not isinstance(selected, list):
+            return None
+        out = []
+        for cid in selected:
+            try:
+                out.append(int(cid))
+            except (TypeError, ValueError):
+                continue
+        return out if out else None
 
     async def _pre_round(self, round_number: int):
         await self.pre_round.wait_for_client_informations()
@@ -124,6 +171,13 @@ class ScaffoldSFLStageOrganizer(BaseStageOrganizer):
                 "batch_size": self.config.batch_size,
             },
         )
+        scheduled_clients = self._get_scheduled_clients(round_number)
+        if scheduled_clients is not None:
+            self.selected_clients = scheduled_clients[: self.config.num_clients_per_round]
+            vprint(
+                f"[Schedule] Round {round_number}: using fixed clients {self.selected_clients}",
+                1,
+            )
 
         self.global_dict.add_event(
             "CLIENTS_SELECTED", {"client_ids": self.selected_clients}

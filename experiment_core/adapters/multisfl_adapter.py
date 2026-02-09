@@ -108,7 +108,9 @@ class MultiSFLAdapter(FrameworkAdapter):
             if not p.is_absolute():
                 spec_path = execution.get("_spec_path")
                 if spec_path:
-                    p = (Path(spec_path).resolve().parent / p).resolve()
+                    from_spec = (Path(spec_path).resolve().parent / p).resolve()
+                    from_repo = (repo_root / p).resolve()
+                    p = from_spec if from_spec.exists() else from_repo
                 else:
                     p = (repo_root / p).resolve()
             cmd.extend(["--client_schedule_path", str(p)])
@@ -123,7 +125,9 @@ class MultiSFLAdapter(FrameworkAdapter):
             if not p.is_absolute():
                 spec_path = execution.get("_spec_path")
                 if spec_path:
-                    p = (Path(spec_path).resolve().parent / p).resolve()
+                    from_spec = (Path(spec_path).resolve().parent / p).resolve()
+                    from_repo = (repo_root / p).resolve()
+                    p = from_spec if from_spec.exists() else from_repo
                 else:
                     p = (repo_root / p).resolve()
             cmd.extend(["--probe_indices_path", str(p)])
