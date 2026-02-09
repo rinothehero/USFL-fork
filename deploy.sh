@@ -462,7 +462,7 @@ cmd_run() {
         local rest="${entry#*:}"
         local server="${rest%%:*}"
         local gpu="${rest#*:}"
-        echo "  $method → $server GPU $gpu  (tmux: ${tmux_session}-${method}-${_run_id})"
+        echo "  $method → $server GPU $gpu  (tmux: ${tmux_session}-${method}-g${gpu}-${_run_id})"
     done
     echo ""
 
@@ -474,7 +474,7 @@ cmd_run() {
         local server="${rest%%:*}"
         local ssh_host
         ssh_host=$(get_server_field "$server" "ssh_host")
-        local session_name="${tmux_session}-${method}-${_run_id}"
+        local session_name="${tmux_session}-${method}-g${gpu}-${_run_id}"
         # shellcheck disable=SC2029
         if ssh -o ConnectTimeout=5 "$ssh_host" "tmux has-session -t '$session_name' 2>/dev/null" 2>/dev/null; then
             echo "  WARNING: tmux '$session_name' already running on $server"
@@ -536,7 +536,7 @@ cmd_run() {
             conda_env=$(get_server_field "$server" "conda_env")
 
             # Generate single-experiment spec with shared output dir
-            local spec_file="/tmp/usfl_spec_${method}_$$.json"
+            local spec_file="/tmp/usfl_spec_${method}_g${gpu}_$$.json"
             python3 -m experiment_core.generate_spec \
                 --config-dir experiment_configs \
                 --methods "$method" \
@@ -544,13 +544,13 @@ cmd_run() {
                 --output-dir "results/$_run_name" \
                 --output "$spec_file"
 
-            # Transfer spec to server
-            local remote_spec="batch_spec_${method}.json"
+            # Transfer spec to server (include GPU to avoid overwrite when same method on multiple GPUs)
+            local remote_spec="batch_spec_${method}_g${gpu}.json"
             scp -q "$spec_file" "$ssh_host:$remote_repo/$remote_spec"
             rm -f "$spec_file"
 
             # Kill existing session if present (exact name match)
-            local session_name="${tmux_session}-${method}-${_run_id}"
+            local session_name="${tmux_session}-${method}-g${gpu}-${_run_id}"
             # shellcheck disable=SC2029
             ssh "$ssh_host" "tmux kill-session -t '$session_name' 2>/dev/null || true"
 
@@ -558,7 +558,7 @@ cmd_run() {
             # shellcheck disable=SC2029
             ssh "$ssh_host" "cd $remote_repo && \
                 tmux new-session -d -s '$session_name' \
-                'bash deploy/remote_run.sh $conda_env $remote_spec 2>&1 | tee experiment_${method}-${_run_id}.log'"
+                'bash deploy/remote_run.sh $conda_env $remote_spec 2>&1 | tee experiment_${method}-g${gpu}-${_run_id}.log'"
 
             echo "[$server] $method → GPU $gpu (tmux: $session_name)"
         ) &
@@ -1039,10 +1039,9 @@ cmd_kill() {
             local exp_name="${sess#${tmux_session}-}"
 
             if [[ "$mode" == "targeted" && -n "$target_method" ]]; then
-                # exp_name is "method-run_id" (e.g., "usfl-105954")
-                # Match on method part (before last hyphen) or exact match
-                local method_part="${exp_name%-*}"
-                if [[ "$exp_name" != "$target_method" && "$method_part" != "$target_method" ]]; then
+                # exp_name formats: "method-gN-runid" or legacy "method-runid"
+                # Match on exact name, or method prefix (e.g., "usfl" matches "usfl-g0-123349")
+                if [[ "$exp_name" != "$target_method" && "$exp_name" != "${target_method}-"* ]]; then
                     continue
                 fi
             fi
