@@ -379,6 +379,10 @@ def compute_split_probe_directions(
 
     max_batches = max(int(max_batches), 1)
 
+    # Ensure models are on the same device as probe data
+    client_model.to(device)
+    server_model.to(device)
+
     was_client_training = client_model.training
     was_server_training = server_model.training
     client_model.eval()
