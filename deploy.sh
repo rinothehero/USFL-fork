@@ -1038,8 +1038,13 @@ cmd_kill() {
         for sess in $sessions; do
             local exp_name="${sess#${tmux_session}-}"
 
-            if [[ "$mode" == "targeted" && -n "$target_method" && "$exp_name" != "$target_method" ]]; then
-                continue
+            if [[ "$mode" == "targeted" && -n "$target_method" ]]; then
+                # exp_name is "method-run_id" (e.g., "usfl-105954")
+                # Match on method part (before last hyphen) or exact match
+                local method_part="${exp_name%-*}"
+                if [[ "$exp_name" != "$target_method" && "$method_part" != "$target_method" ]]; then
+                    continue
+                fi
             fi
 
             local last_log=""

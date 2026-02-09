@@ -33,6 +33,16 @@ from typing import Any
 
 def detect_experiment_type(data: dict) -> str | None:
     """JSON 데이터에서 실험 유형을 자동 감지"""
+    # Normalized format (output of experiment_core/normalization.py)
+    if "schema_version" in data and "accuracy_by_round" in data:
+        rm = data.get("run_meta", {})
+        method = rm.get("method", "")
+        if method:
+            return method.lower()
+        fw = data.get("framework", "")
+        if fw:
+            return fw.lower()
+        return "sfl"
     # SFL/USFL: event-based metric system + drift_history
     if "metric" in data and "drift_history" in data:
         cfg = data.get("config", {})
@@ -56,7 +66,12 @@ def detect_experiment_type(data: dict) -> str | None:
 def make_label(data: dict, filename: str, exp_type: str = "") -> str:
     """실험 설정에서 사람이 읽기 좋은 라벨 자동 생성"""
     cfg = data.get("config", {})
-    method = cfg.get("method", "").upper()
+    rm = data.get("run_meta", {})
+    # Prefer run_meta.method (normalized format) — more reliable than config.method
+    if rm.get("method"):
+        method = rm["method"].upper()
+    else:
+        method = cfg.get("method", "").upper()
     if not method and exp_type:
         method = exp_type.upper()
     if not method:
@@ -111,9 +126,22 @@ def extract_experiment(filepath: str) -> dict | None:
 
     cfg = data.get("config", {})
     dh = data.get("drift_history", {})
+    is_normalized = "schema_version" in data and "accuracy_by_round" in data
 
     # --- Accuracy ---
-    if "metric" in data:
+    if is_normalized:
+        # Normalized format: accuracy_by_round is a list, index = round
+        abr = data["accuracy_by_round"]
+        acc_data = [(i, float(v)) for i, v in enumerate(abr) if v is not None]
+        acc_rounds = [d[0] for d in acc_data]
+        acc_values = [d[1] for d in acc_data]
+        # Merge alignment_history metrics not already in drift_history
+        ah = data.get("alignment_history", {})
+        for k, v in ah.items():
+            if isinstance(v, list) and len(v) > 0 and k not in dh:
+                if any(isinstance(x, (int, float)) for x in v):
+                    dh[k] = v
+    elif "metric" in data:
         # SFL/USFL: extract from event system
         acc_data = []
         for rnd_key in sorted(data["metric"].keys(), key=int):
@@ -143,8 +171,10 @@ def extract_experiment(filepath: str) -> dict | None:
     # --- All numeric metrics from drift_history ---
     metrics = {}
     for k, v in dh.items():
-        if isinstance(v, list) and len(v) > 0 and isinstance(v[0], (int, float)):
-            metrics[k] = v
+        if isinstance(v, list) and len(v) > 0:
+            # Check first non-None value is numeric
+            if any(isinstance(x, (int, float)) for x in v[:5]):
+                metrics[k] = v
 
     # --- MultiSFL per-round metrics (p_r, fgn_r, update norms, etc.) ---
     if "rounds" in data and isinstance(data["rounds"], list) and len(data["rounds"]) > 0:
@@ -226,9 +256,56 @@ def extract_experiment(filepath: str) -> dict | None:
     }
 
 
+def _disambiguate_labels(exp_list: list):
+    """동일 라벨의 실험들을 config 차이점으로 구분"""
+    # Config extractors: (short_name, extractor)
+    _DIFF_KEYS = [
+        ("lr", lambda c: c.get("learning_rate", c.get("lr"))),
+        ("bs", lambda c: c.get("batch_size")),
+        ("dist", lambda c: c.get("distributer", c.get("distribution", c.get("partition")))),
+        ("α", lambda c: c.get("dirichlet_alpha", c.get("alpha_dirichlet", c.get("alpha")))),
+        ("selector", lambda c: c.get("selector")),
+        ("aggr", lambda c: c.get("aggregator")),
+        ("rounds", lambda c: c.get("global_round", c.get("epochs", c.get("rounds")))),
+        ("clients", lambda c: c.get("num_clients", c.get("users"))),
+        ("split", lambda c: c.get("split_layer")),
+        ("grad_shuf", lambda c: c.get("gradient_shuffle_strategy", c.get("gradient_shuffle"))),
+        ("scale_srv_lr", lambda c: c.get("scale_server_lr", True) if c.get("method", "").lower() in ("usfl", "sfl-u") else None),
+        ("scale_cli_grad", lambda c: c.get("scale_client_grad", True) if c.get("method", "").lower() in ("usfl", "sfl-u") else None),
+        ("local_ep", lambda c: c.get("local_epochs")),
+        ("optimizer", lambda c: c.get("optimizer")),
+        ("momentum", lambda c: c.get("momentum")),
+    ]
+
+    # Group by label
+    groups: dict[str, list] = {}
+    for exp in exp_list:
+        groups.setdefault(exp["label"], []).append(exp)
+
+    for label, exps in groups.items():
+        if len(exps) <= 1:
+            continue
+        # Find config keys that differ across this group
+        diffs = []
+        for key_name, extractor in _DIFF_KEYS:
+            values = [extractor(e["config"]) for e in exps]
+            str_values = [str(v) if v is not None else "" for v in values]
+            if len(set(v for v in str_values if v)) > 1 or (any(str_values) and str_values.count(str_values[0]) != len(str_values)):
+                diffs.append((key_name, str_values))
+
+        if diffs:
+            for i, exp in enumerate(exps):
+                parts = [f"{k}={vals[i]}" if vals[i] else f"{k}=N/A" for k, vals in diffs]
+                exp["label"] = f"{label}, {', '.join(parts)}"
+        else:
+            # No config diff found — fall back to filename stem
+            for exp in exps:
+                stem = Path(exp["filename"]).stem[:25]
+                exp["label"] = f"{label} ({stem})"
+
+
 def load_all_experiments(directory: str) -> dict:
     """디렉토리 내 모든 JSON 파일을 로드"""
-    experiments = {}
     json_files = sorted(Path(directory).glob("*.json"))
 
     if not json_files:
@@ -237,19 +314,18 @@ def load_all_experiments(directory: str) -> dict:
 
     print(f"📂 Found {len(json_files)} JSON files in {directory}")
 
-    label_counts: dict[str, int] = {}
+    exp_list = []
     for fp in json_files:
         print(f"  → Loading {fp.name}...")
         exp = extract_experiment(str(fp))
         if exp:
-            # Handle duplicate labels
-            base_label = exp["label"]
-            if base_label in label_counts:
-                label_counts[base_label] += 1
-                exp["label"] = f"{base_label} #{label_counts[base_label]}"
-            else:
-                label_counts[base_label] = 1
-            experiments[exp["label"]] = exp
+            exp_list.append(exp)
+
+    _disambiguate_labels(exp_list)
+
+    experiments = {}
+    for exp in exp_list:
+        experiments[exp["label"]] = exp
 
     print(f"✅ Loaded {len(experiments)} experiments")
     return experiments
@@ -268,21 +344,16 @@ PALETTE = [
 
 
 def classify_metrics(experiments: dict) -> dict:
-    """메트릭을 공통/실험별로 분류"""
+    """모든 메트릭과 각 실험의 보유 여부를 수집"""
     metric_presence: dict[str, list[str]] = {}
     for label, exp in experiments.items():
         for m in exp["metrics"]:
             metric_presence.setdefault(m, []).append(label)
 
     all_labels = set(experiments.keys())
-    common = {m for m, labs in metric_presence.items() if set(labs) == all_labels}
-    per_exp: dict[str, set[str]] = {}
-    for m, labs in metric_presence.items():
-        if m not in common:
-            for lab in labs:
-                per_exp.setdefault(lab, set()).add(m)
+    all_metrics = sorted(metric_presence.keys())
 
-    return {"common": sorted(common), "per_experiment": per_exp, "all": metric_presence}
+    return {"all_metrics": all_metrics, "presence": metric_presence, "n_experiments": len(all_labels)}
 
 
 def build_chart_traces(experiments: dict) -> dict:
@@ -314,18 +385,55 @@ def build_chart_traces(experiments: dict) -> dict:
         if fc: t["fillcolor"] = fc
         return t
 
+    def bar_layout(ytitle, tickfmt=None):
+        return {
+            "paper_bgcolor": "transparent", "plot_bgcolor": "transparent",
+            "font": {"color": "#e4e6f0", "family": "Inter, -apple-system, sans-serif", "size": 12},
+            "margin": {"t": 10, "r": 20, "b": 120, "l": 65},
+            "xaxis": {"tickangle": -35, "gridcolor": "#2d3148", "tickfont": {"size": 9}},
+            "yaxis": {"title": {"text": ytitle, "standoff": 10}, "gridcolor": "#2d3148", "zerolinecolor": "#2d3148", "tickfont": {"size": 11},
+                      **({"tickformat": tickfmt} if tickfmt else {})},
+            "showlegend": False,
+            "hovermode": "closest",
+        }
+
+    def make_avg_bar(chart_key: str, values_per_exp: list, ytitle: str, tickfmt=None):
+        """Create a bar chart of average values. values_per_exp: list of (label, values_list, color_index)."""
+        bar_x, bar_y, bar_colors, bar_text = [], [], [], []
+        for lab, vals, idx in values_per_exp:
+            clean = [v for v in vals if v is not None and isinstance(v, (int, float))]
+            if clean:
+                avg = sum(clean) / len(clean)
+                bar_x.append(lab)
+                bar_y.append(avg)
+                bar_colors.append(PALETTE[idx % len(PALETTE)])
+                bar_text.append(f"{avg:.4f}")
+        if bar_x:
+            charts[chart_key] = {
+                "traces": [{
+                    "type": "bar", "x": bar_x, "y": bar_y,
+                    "marker": {"color": bar_colors, "line": {"color": "rgba(255,255,255,0.1)", "width": 1}},
+                    "text": bar_text, "textposition": "outside", "textfont": {"size": 10, "color": "#e4e6f0"},
+                    "hovertemplate": "%{x}<br>%{y:.4f}<extra></extra>",
+                }],
+                "layout": bar_layout(ytitle, tickfmt),
+            }
+
     # Accuracy
     max_acc = 0
     acc_traces = []
+    acc_avg_data = []
     for i, lab in enumerate(labels):
         d = experiments[lab]
         if d["acc_values"]:
             acc_traces.append(trace(lab, d["acc_rounds"], d["acc_values"], i, ms=5))
             max_acc = max(max_acc, max(d["acc_values"]))
+            acc_avg_data.append((lab, d["acc_values"], i))
     if acc_traces:
         charts["accuracy"] = {"traces": acc_traces, "layout": layout("Accuracy", ".0%", [0, max_acc * 1.08])}
+        make_avg_bar("accuracy_avg", acc_avg_data, "Avg Accuracy", ".1%")
 
-    # Common metrics
+    # All metrics (unified — each chart includes all experiments that have data)
     info = classify_metrics(experiments)
 
     def pick_x(exp, metric_name, vals):
@@ -333,55 +441,49 @@ def build_chart_traces(experiments: dict) -> dict:
         dr = exp["drift_rounds"]
         if len(dr) == len(vals):
             return dr
-        # For g_measurement metrics, use their actual round numbers
         gmr = exp.get("g_meas_rounds", [])
         if metric_name.startswith("g_") and len(gmr) == len(vals):
             return gmr
         return list(range(1, len(vals) + 1))
 
-    for m in info["common"]:
+    for m in info["all_metrics"]:
         traces_list = []
+        avg_data = []
         for i, lab in enumerate(labels):
             vals = experiments[lab]["metrics"].get(m)
             if vals:
                 x = pick_x(experiments[lab], m, vals)
                 traces_list.append(trace(lab, x, vals, i))
+                avg_data.append((lab, vals, i))
         if traces_list:
-            charts[f"common_{m}"] = {"traces": traces_list, "layout": layout(m)}
+            charts[f"metric_{m}"] = {"traces": traces_list, "layout": layout(m)}
+            make_avg_bar(f"metric_{m}_avg", avg_data, f"Avg {m}")
 
-    # Per-experiment unique metrics
-    for lab, unique_metrics in info["per_experiment"].items():
-        exp = experiments[lab]
-        idx = labels.index(lab)
-        for m in sorted(unique_metrics):
-            vals = exp["metrics"].get(m)
-            if vals:
-                x = pick_x(exp, m, vals)
-                charts[f"unique_{lab}_{m}"] = {
-                    "traces": [trace(m, x, vals, idx, ms=3)],
-                    "layout": layout(m)
-                }
-
-    # V-value charts
+    # V-value (overlay all experiments that have it)
+    vvalue_traces = []
+    vvalue_avg_data = []
     for i, lab in enumerate(labels):
         d = experiments[lab]
         if d["v_values"]:
             vr = list(range(1, len(d["v_values"]) + 1))
-            charts[f"vvalue_{lab}"] = {
-                "traces": [trace("V-Value", vr, d["v_values"], i, mode="lines", fill="tozeroy",
-                                 fc=f"rgba({','.join(str(int(PALETTE[i%len(PALETTE)][j:j+2],16)) for j in (1,3,5))},0.08)")],
-                "layout": layout("V-Value", xtitle="Epoch")
-            }
+            vvalue_traces.append(trace(lab, vr, d["v_values"], i, mode="lines"))
+            vvalue_avg_data.append((lab, d["v_values"], i))
+    if vvalue_traces:
+        charts["vvalue"] = {"traces": vvalue_traces, "layout": layout("V-Value", xtitle="Epoch")}
+        make_avg_bar("vvalue_avg", vvalue_avg_data, "Avg V-Value")
 
-    # Time record charts
+    # Time record (overlay all experiments that have it)
+    time_traces = []
+    time_avg_data = []
     for i, lab in enumerate(labels):
         d = experiments[lab]
         if d["time_record"]:
             tr = list(range(1, len(d["time_record"]) + 1))
-            charts[f"time_{lab}"] = {
-                "traces": [trace("Elapsed (sec)", tr, d["time_record"], i, mode="lines")],
-                "layout": layout("Elapsed Time (sec)", xtitle="Epoch")
-            }
+            time_traces.append(trace(lab, tr, d["time_record"], i, mode="lines"))
+            time_avg_data.append((lab, d["time_record"], i))
+    if time_traces:
+        charts["time"] = {"traces": time_traces, "layout": layout("Elapsed Time (sec)", xtitle="Epoch")}
+        make_avg_bar("time_avg", time_avg_data, "Avg Time (sec)")
 
     return charts
 
@@ -407,6 +509,8 @@ def build_config_table(experiments: dict) -> list:
         ("Clients/Round", lambda c: str(c.get("num_clients_per_round", c.get("participating", "N/A")))),
         ("Split Layer", lambda c: str(c.get("split_layer", "N/A"))),
         ("Grad Shuffle", lambda c: str(c.get("gradient_shuffle", c.get("generate", "N/A")))),
+        ("Scale Server LR", lambda c: str(c.get("scale_server_lr", True)) if c.get("method", "").lower() in ("usfl", "sfl-u") else "N/A"),
+        ("Scale Client Grad", lambda c: str(c.get("scale_client_grad", True)) if c.get("method", "").lower() in ("usfl", "sfl-u") else "N/A"),
         ("Aggregator", lambda c: str(c.get("aggregator", "N/A"))),
         ("Optimizer", lambda c: str(c.get("optimizer", "N/A"))),
         ("Local Epochs", lambda c: str(c.get("local_epochs", "N/A"))),
@@ -480,42 +584,54 @@ def generate_html(experiments: dict, output_path: str):
     # Overview
     overview_charts = []
     if "accuracy" in charts:
-        overview_charts.append(("accuracy", "Test Accuracy over Rounds", "Global model accuracy at each evaluation point", True))
-    top_common = [m for m in ["G_drift", "M_norm", "A_cos", "G_drift_norm"] if f"common_{m}" in charts][:2]
-    for m in top_common:
-        overview_charts.append((f"common_{m}", m, "All experiments compared", False))
+        overview_charts.append(("accuracy", "Test Accuracy over Rounds", "Global model accuracy at each evaluation point", False))
+    if "accuracy_avg" in charts:
+        overview_charts.append(("accuracy_avg", "Avg Accuracy", "Mean accuracy across all rounds", False))
+    top_overview = [m for m in ["G_drift", "M_norm", "A_cos", "G_drift_norm"] if f"metric_{m}" in charts][:2]
+    for m in top_overview:
+        n_present = len(charts[f"metric_{m}"]["traces"])
+        desc = f"{n_present}/{n_exp} experiments" if n_present < n_exp else f"All {n_exp} experiments"
+        overview_charts.append((f"metric_{m}", m, desc, False))
+        if f"metric_{m}_avg" in charts:
+            overview_charts.append((f"metric_{m}_avg", f"Avg {m}", "", False))
     tabs.append(("overview", "Overview", overview_charts))
 
-    # Common metrics tab
-    common_charts = []
-    for m in info["common"]:
-        key = f"common_{m}"
-        if key in charts:
-            common_charts.append((key, m, f"Shared across all {n_exp} experiments", False))
-    if common_charts:
-        tabs.append(("common", f"Common Metrics ({len(common_charts)})", common_charts))
+    # Unified metrics tab — line chart + bar chart paired side by side
+    def _metric_desc(chart_key: str) -> str:
+        if chart_key not in charts:
+            return ""
+        traces = charts[chart_key]["traces"]
+        # For bar charts, count bars via x array
+        if traces and traces[0].get("type") == "bar":
+            n_present = len(traces[0].get("x", []))
+        else:
+            n_present = len(traces)
+        if n_present == n_exp:
+            return f"All {n_exp} experiments"
+        if traces and traces[0].get("type") == "bar":
+            present_names = set(traces[0].get("x", []))
+        else:
+            present_names = {t["name"] for t in traces}
+        missing = [lab for lab in labels if lab not in present_names]
+        missing_short = [m[:20] for m in missing]
+        return f"{n_present}/{n_exp} — missing: {', '.join(missing_short)}"
 
-    # Per-experiment unique metrics
-    for lab in labels:
-        unique = info["per_experiment"].get(lab, set())
-        if not unique and not experiments[lab]["v_values"] and not experiments[lab]["time_record"]:
-            continue
-        exp_charts = []
-        for m in sorted(unique):
-            key = f"unique_{lab}_{m}"
-            if key in charts:
-                exp_charts.append((key, m, f"{lab} only", False))
-        if experiments[lab]["v_values"]:
-            key = f"vvalue_{lab}"
-            if key in charts:
-                exp_charts.append((key, "V-Value", "Generation quality indicator", False))
-        if experiments[lab]["time_record"]:
-            key = f"time_{lab}"
-            if key in charts:
-                exp_charts.append((key, "Training Time", "Cumulative elapsed time", False))
-        if exp_charts:
-            short_label = lab[:25] + ("…" if len(lab) > 25 else "")
-            tabs.append((f"exp_{labels.index(lab)}", f"{short_label} Only ({len(exp_charts)})", exp_charts))
+    metric_charts = []
+    for m in info["all_metrics"]:
+        key = f"metric_{m}"
+        key_avg = f"metric_{m}_avg"
+        if key in charts:
+            metric_charts.append((key, m, _metric_desc(key), False))
+            if key_avg in charts:
+                metric_charts.append((key_avg, f"Avg {m}", "", False))
+    for base_key, title in [("vvalue", "V-Value"), ("time", "Training Time")]:
+        if base_key in charts:
+            metric_charts.append((base_key, title, _metric_desc(base_key), False))
+            if f"{base_key}_avg" in charts:
+                metric_charts.append((f"{base_key}_avg", f"Avg {title}", "", False))
+    if metric_charts:
+        n_line_charts = sum(1 for k, _, _, _ in metric_charts if not k.endswith("_avg"))
+        tabs.append(("metrics", f"Metrics ({n_line_charts})", metric_charts))
 
     tabs.append(("config", "Config Table", []))
 
@@ -616,7 +732,13 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 .config-table th{{color:var(--text-dim);font-weight:600;text-transform:uppercase;font-size:.72rem;letter-spacing:.05em}}
 .config-table tr:hover td{{background:rgba(108,158,255,.04)}}
 .config-table td:first-child{{font-weight:600;color:var(--text);min-width:130px}}
-@media(max-width:900px){{.summary-grid{{grid-template-columns:1fr}}.chart-row{{grid-template-columns:1fr}}.container{{padding:12px 8px}}.header{{padding:18px 16px}}.chart-card{{padding:14px 10px}}.chart-card h3{{font-size:.95rem}}.chart-card .desc{{font-size:.72rem;margin-bottom:6px}}.tab-nav{{gap:2px;padding:3px}}.tab-btn{{padding:8px 12px;font-size:.78rem}}}}
+.filter-bar{{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:20px;align-items:center}}
+.filter-bar .filter-label{{font-size:.72rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-right:4px}}
+.filter-btn{{padding:5px 12px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:.75rem;font-weight:500;border-radius:20px;cursor:pointer;display:flex;align-items:center;gap:6px;transition:all .2s;white-space:nowrap;-webkit-tap-highlight-color:transparent}}
+.filter-btn:hover{{border-color:rgba(108,158,255,.4)}}
+.filter-btn .dot{{width:8px;height:8px;border-radius:50%;flex-shrink:0}}
+.filter-btn.off{{opacity:.3;text-decoration:line-through}}
+@media(max-width:900px){{.summary-grid{{grid-template-columns:1fr}}.chart-row{{grid-template-columns:1fr}}.container{{padding:12px 8px}}.header{{padding:18px 16px}}.chart-card{{padding:14px 10px}}.chart-card h3{{font-size:.95rem}}.chart-card .desc{{font-size:.72rem;margin-bottom:6px}}.tab-nav{{gap:2px;padding:3px}}.tab-btn{{padding:8px 12px;font-size:.78rem}}.filter-btn{{font-size:.7rem;padding:4px 10px}}}}
 /* Fullscreen modal for mobile chart zoom */
 .chart-modal-overlay{{display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,.92);z-index:9999;flex-direction:column;align-items:stretch;justify-content:center;padding:0}}
 .chart-modal-overlay.open{{display:flex}}
@@ -636,6 +758,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 </div>
 <div class="container">
   <div class="summary-grid" id="summaryGrid"></div>
+  <div class="filter-bar" id="filterBar"><span class="filter-label">Filter</span></div>
   <div class="tab-nav">{tab_buttons}</div>
   {sections_html}
 </div>
@@ -652,21 +775,89 @@ var CHARTS={json.dumps(charts)};
 var SUMMARY={json.dumps(summary)};
 var CONFIG_ROWS={json.dumps(config_rows)};
 var LABELS={json.dumps(labels)};
+var PALETTE={json.dumps(PALETTE[:n_exp])};
 var pcfg={{responsive:true,displayModeBar:true,modeBarButtonsToRemove:['lasso2d','select2d']}};
+
+// ─── Experiment filter state ───
+var enabledExps={{}};
+LABELS.forEach(function(l){{ enabledExps[l]=true; }});
+
+function filterTraces(ch){{
+  if(!ch||!ch.traces||!ch.traces.length)return ch.traces;
+  var t0=ch.traces[0];
+  if(t0.type==='bar'){{
+    // Bar chart: filter x/y/color/text arrays
+    var o=t0,nx=[],ny=[],nc=[],nt=[];
+    for(var j=0;j<o.x.length;j++){{
+      if(enabledExps[o.x[j]]){{
+        nx.push(o.x[j]);ny.push(o.y[j]);
+        if(o.marker&&o.marker.color)nc.push(o.marker.color[j]);
+        if(o.text)nt.push(o.text[j]);
+      }}
+    }}
+    var ft=JSON.parse(JSON.stringify(o));
+    ft.x=nx;ft.y=ny;
+    if(ft.marker)ft.marker.color=nc;
+    if(ft.text)ft.text=nt;
+    return [ft];
+  }}else{{
+    // Scatter: filter out disabled experiments
+    return ch.traces.filter(function(t){{ return enabledExps[t.name]; }});
+  }}
+}}
 
 // Summary cards
 var sg=document.getElementById('summaryGrid');
 SUMMARY.forEach(function(s,i){{
-  sg.innerHTML+='<div class="summary-card"><div class="lbl">Exp '+(i+1)+'</div><div class="method">'+s.label+'</div><div class="value">'+(s.max_acc*100).toFixed(1)+'%</div><div class="sub">Best @ Round '+s.max_round+' · Last: '+(s.last_acc*100).toFixed(1)+'% · '+s.n_evals+' evals</div></div>';
+  sg.innerHTML+='<div class="summary-card" data-label="'+s.label+'"><div class="lbl">Exp '+(i+1)+'</div><div class="method">'+s.label+'</div><div class="value">'+(s.max_acc*100).toFixed(1)+'%</div><div class="sub">Best @ Round '+s.max_round+' · Last: '+(s.last_acc*100).toFixed(1)+'% · '+s.n_evals+' evals</div></div>';
+}});
+
+// Filter bar
+var fb=document.getElementById('filterBar');
+LABELS.forEach(function(lab,i){{
+  var btn=document.createElement('button');
+  btn.className='filter-btn';btn.dataset.label=lab;
+  btn.innerHTML='<span class="dot" style="background:'+PALETTE[i]+'"></span>'+lab;
+  btn.addEventListener('click',function(){{
+    enabledExps[lab]=!enabledExps[lab];
+    btn.classList.toggle('off');
+    // Toggle summary card
+    var card=document.querySelector('.summary-card[data-label="'+lab+'"]');
+    if(card)card.style.display=enabledExps[lab]?'':'none';
+    // Re-render all visible charts
+    updateAllCharts();
+  }});
+  fb.appendChild(btn);
 }});
 
 // Chart map
 var chartMap={{{",".join(chart_map_entries)}}};
 var rendered={{}};
+
 function renderChart(id){{
-  if(rendered[id])return;
   var key=chartMap[id];
-  if(key&&CHARTS[key]){{Plotly.newPlot(id,CHARTS[key].traces,CHARTS[key].layout,pcfg);rendered[id]=true;}}
+  if(!key||!CHARTS[key])return;
+  var ft=filterTraces(CHARTS[key]);
+  Plotly.react(id,ft,CHARTS[key].layout,pcfg);
+  rendered[id]=true;
+}}
+
+function updateAllCharts(){{
+  for(var id in rendered){{
+    if(rendered[id])renderChart(id);
+  }}
+  // Update modal if open
+  if(currentModalKey){{
+    var ch=CHARTS[currentModalKey];
+    if(ch){{
+      var ft=filterTraces(ch);
+      var ml=JSON.parse(JSON.stringify(ch.layout));
+      ml.margin={{t:10,r:12,b:50,l:50}};
+      ml.legend={{orientation:'h',y:-0.12,x:0.5,xanchor:'center',font:{{size:12}},bgcolor:'transparent'}};
+      if(ml.font)ml.font.size=13;
+      Plotly.react(modalChart,ft,ml,pcfg);
+    }}
+  }}
 }}
 
 // Initial render
@@ -709,12 +900,12 @@ function openModal(divId){{
   modalTitle.textContent=ch.layout.yaxis&&ch.layout.yaxis.title?ch.layout.yaxis.title.text||ch.layout.yaxis.title:'';
   overlay.classList.add('open');
   document.body.style.overflow='hidden';
-  // Render with mobile-optimized layout
+  var ft=filterTraces(ch);
   var ml=JSON.parse(JSON.stringify(ch.layout));
   ml.margin={{t:10,r:12,b:50,l:50}};
   ml.legend={{orientation:'h',y:-0.12,x:0.5,xanchor:'center',font:{{size:12}},bgcolor:'transparent'}};
   if(ml.font)ml.font.size=13;
-  Plotly.newPlot(modalChart,ch.traces,ml,{{responsive:true,displayModeBar:true,displaylogo:false,modeBarButtonsToRemove:['lasso2d','select2d','toImage']}});
+  Plotly.newPlot(modalChart,ft,ml,{{responsive:true,displayModeBar:true,displaylogo:false,modeBarButtonsToRemove:['lasso2d','select2d','toImage']}});
 }}
 
 function closeModal(){{
@@ -733,7 +924,6 @@ document.querySelectorAll('.chart-card').forEach(function(card){{
   var chartDiv=card.querySelector('[id^="c"]');
   if(chartDiv&&chartMap[chartDiv.id]){{
     card.addEventListener('click',function(e){{
-      // Don't intercept Plotly toolbar clicks
       if(e.target.closest('.modebar'))return;
       openModal(chartDiv.id);
     }});

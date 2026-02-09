@@ -1,65 +1,43 @@
 {
   "_description": "USFL: SFL + data balancing + gradient shuffle + dynamic batch scheduler.",
-
   "selector": "usfl",
   "aggregator": "fedavg",
-
   "_server_learning_rate": "Server-side LR. null = auto based on scale_server_lr.",
   "server_learning_rate": null,
-
   "_scale_server_lr": "true: server LR = client_lr * clients_per_round | false: server LR = client_lr.",
-  "scale_server_lr": false,
-
+  "scale_server_lr": true,
   "_scale_client_grad": "true: multiply activation gradients by N (participating clients) to restore per-client scale | false: raw concatenated-batch gradient.",
-  "scale_client_grad": false,
-
+  "scale_client_grad": true,
   "_section_gs": "=== Gradient Shuffle: mix gradients across clients to reduce bias ===",
-
   "_gradient_shuffle": "Enable gradient shuffling.",
   "gradient_shuffle": true,
-
   "_gradient_shuffle_strategy": "random | inplace (class-balanced) | average (mix with global mean) | average_adaptive_alpha (cosine similarity-based).",
   "gradient_shuffle_strategy": "random",
-
   "_gradient_shuffle_target": "all: shuffle all gradients | activation_only: only activation gradients.",
   "gradient_shuffle_target": "all",
-
   "_gradient_average_weight": "Mixing weight for 'average' strategy (0-1). 0=client only, 1=global mean only.",
   "gradient_average_weight": 0.5,
-
   "_adaptive_alpha_beta": "Sensitivity coefficient (beta) for 'average_adaptive_alpha' strategy.",
   "adaptive_alpha_beta": 2.0,
-
   "_section_bal": "=== Data Balancing: address class imbalance in Non-IID ===",
-
   "_balancing_strategy": "trimming (min-based) | replication (max-based) | target (hybrid, recommended).",
   "balancing_strategy": "target",
-
   "_balancing_target": "For 'target' strategy: mean | median | fixed number (e.g. '100').",
   "balancing_target": "mean",
-
   "_use_data_replication": "Use max-based replication instead of min-based trimming.",
   "use_data_replication": false,
-
   "_section_dbs": "=== Dynamic Batch Scheduler: fully utilize all client data ===",
-
   "_use_dynamic_batch_scheduler": "Calculate optimal per-client batch sizes to exhaust data evenly.",
   "use_dynamic_batch_scheduler": true,
-
   "_use_additional_epoch": "Run extra epochs to compensate for trimmed data.",
   "use_additional_epoch": false,
-
   "_section_fresh": "=== Cumulative Usage & Freshness: prioritize underused data ===",
-
   "_use_cumulative_usage": "Track data freshness using exponential bins.",
   "use_cumulative_usage": false,
-
   "_usage_decay_factor": "Per-round decay for cumulative usage (0-1). Higher = slower decay.",
   "usage_decay_factor": 0.99,
-
   "_use_fresh_scoring": "Enable freshness-based scoring in client selection (Phase 3 of USFL selector).",
   "use_fresh_scoring": false,
-
   "_freshness_decay_rate": "Decay rate for freshness score calculation.",
   "freshness_decay_rate": 0.5
 }
