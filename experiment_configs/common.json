@@ -5,7 +5,7 @@
   "_model": "resnet18_flex | resnet18 | resnet18_image_style | alexnet | vgg11 | distilbert",
   "model": "resnet18_flex",
   "_rounds": "Total global communication rounds.",
-  "rounds": 100,
+  "rounds": 300,
   "_alpha": "Dirichlet concentration. Lower = more Non-IID. (0.1: extreme, 0.3: moderate, 10.0: near-IID)",
   "alpha": 0.3,
   "_labels_per_client": "Number of distinct classes each client holds (shard_dirichlet distributer).",
