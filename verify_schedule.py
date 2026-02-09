@@ -23,16 +23,22 @@ def main():
     batch_size = 50
     schedule_path = "experiment_configs/client_schedule.json"
 
+    # Read min_require_size from common.json (same as generate_spec.py default)
+    common_path = Path("experiment_configs/common.json")
+    if common_path.exists():
+        with open(common_path) as f:
+            common_cfg = json.load(f)
+        min_require_size = common_cfg.get("min_require_size", 10)
+    else:
+        min_require_size = 10
+    print(f"[0] min_require_size={min_require_size} (must match framework)")
+
     # ── 1. Load real CIFAR-10 targets ──
     from torchvision.datasets import CIFAR10
     ds = CIFAR10(root="./data", train=True, download=True)
     targets = np.array(ds.targets)
     num_classes = len(set(targets.tolist()))
     print(f"[1] CIFAR-10 loaded: {len(targets)} samples, {num_classes} classes")
-
-    # ── 2. Run generate_schedule.py's distribution ──
-    from generate_schedule import _distribute_once
-    min_require_size = max(10, batch_size // 4)
 
     for retry in range(10000):
         prng = np.random.default_rng(seed + retry)

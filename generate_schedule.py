@@ -287,6 +287,8 @@ def main():
     parser.add_argument("--labels-per-client", type=int, default=2)
     parser.add_argument("--alpha", type=float, default=0.3)
     parser.add_argument("--batch-size", type=int, default=50)
+    parser.add_argument("--min-require-size", type=int, default=None,
+                        help="Min samples per client (default: from common.json or 10)")
     parser.add_argument("--dataset", default="cifar10")
     args = parser.parse_args()
 
@@ -306,7 +308,21 @@ def main():
     print(f"  Samples: {len(targets)}, classes: {num_classes}")
 
     # 2. Distribute data (shard_dirichlet) — EXACT same as framework
-    min_req = max(10, args.batch_size // 4)
+    # min_require_size must match generate_spec.py default (10) and framework behavior.
+    # When config.min_require_size is set (not None), framework uses that value directly.
+    # generate_spec.py: cr.get("min_require_size", 10) → default 10.
+    if args.min_require_size is not None:
+        min_req = args.min_require_size
+    else:
+        # Read from common.json if available, else use generate_spec.py default (10)
+        common_path = Path("experiment_configs/common.json")
+        if common_path.exists():
+            with open(common_path) as f:
+                common_cfg = json.load(f)
+            min_req = common_cfg.get("min_require_size", 10)
+        else:
+            min_req = 10
+    print(f"  min_require_size: {min_req}")
     idx_clients, client2classes = shard_dirichlet_distribute(
         targets, args.total_clients, args.labels_per_client,
         args.alpha, args.seed, min_req,
