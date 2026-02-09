@@ -4,7 +4,7 @@ import torch.nn as nn
 import numpy as np
 from typing import Optional, TypedDict, Tuple
 import torchvision.models as tv_models
-from utils.log_utils import vprint
+from log_utils import vprint
 
 
 def disable_inplace(module: nn.Module) -> None:

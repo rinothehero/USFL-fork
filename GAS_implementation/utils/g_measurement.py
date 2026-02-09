@@ -19,7 +19,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import copy
-from utils.log_utils import vprint
+from log_utils import vprint
 
 
 class GradientCollector:

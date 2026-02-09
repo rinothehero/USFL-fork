@@ -27,7 +27,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 from shared.update_alignment import flatten_delta, compute_update_alignment
-from utils.log_utils import vprint
+from log_utils import vprint
 
 
 @dataclass

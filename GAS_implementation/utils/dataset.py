@@ -7,7 +7,7 @@ from PIL import Image
 import torch.utils.data.dataloader as dataloader
 import os
 import datetime
-from utils.log_utils import vprint
+from log_utils import vprint
 
 
 class TrainSet(Data.Dataset):

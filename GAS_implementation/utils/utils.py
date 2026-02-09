@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from utils.log_utils import vprint
+from log_utils import vprint
 
 
 def adjust_positive_definite(loc, matrix, device, max_attempts=100, epsilon_start=1e-6):
