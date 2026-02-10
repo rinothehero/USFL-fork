@@ -174,21 +174,22 @@ class SFLStageOrganizer(BaseStageOrganizer):
         await self.pre_round.wait_for_clients()
 
         client_informations = self.global_dict.get("client_informations")
-        self.selected_clients = self.pre_round.select_clients(
-            self.selector,
-            self.connection,
-            {
-                "client_informations": client_informations,
-                "num_classes": self.num_classes,
-                "batch_size": self.config.batch_size,
-            },
-        )
         scheduled_clients = self._get_scheduled_clients(round_number)
         if scheduled_clients is not None:
             self.selected_clients = scheduled_clients
             vprint(
                 f"[Schedule] Round {round_number}: using fixed clients {self.selected_clients}",
                 1,
+            )
+        else:
+            self.selected_clients = self.pre_round.select_clients(
+                self.selector,
+                self.connection,
+                {
+                    "client_informations": client_informations,
+                    "num_classes": self.num_classes,
+                    "batch_size": self.config.batch_size,
+                },
             )
 
         self.global_dict.add_event(

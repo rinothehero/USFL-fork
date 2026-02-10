@@ -559,21 +559,23 @@ class USFLStageOrganizer(BaseStageOrganizer):
                 "cumulative_usage"
             )
 
-        # Select clients (selector has internal retry logic with up to 1000 attempts)
-        vprint(
-            f"[Round {round_number}] Selecting clients...", 2
-        )  # Terminal progress update
-        self.selected_clients = self.pre_round.select_clients(
-            self.selector,
-            self.connection,
-            selection_data,
-        )
+        # Use fixed schedule if available, otherwise run selector
         scheduled_clients = self._get_scheduled_clients(round_number)
         if scheduled_clients is not None:
             self.selected_clients = scheduled_clients
             vprint(
                 f"[Schedule] Round {round_number}: using fixed clients {self.selected_clients}",
                 1,
+            )
+        else:
+            # Select clients (selector has internal retry logic with up to 1000 attempts)
+            vprint(
+                f"[Round {round_number}] Selecting clients...", 2
+            )  # Terminal progress update
+            self.selected_clients = self.pre_round.select_clients(
+                self.selector,
+                self.connection,
+                selection_data,
             )
 
         # Sanity check: Verify all class labels are covered by selected clients
