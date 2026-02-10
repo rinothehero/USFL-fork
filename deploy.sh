@@ -613,7 +613,7 @@ cmd_run() {
             local first=true
             for m in $methods_space; do
                 if [[ "$first" == true ]]; then first=false; else gpu_map+=","; fi
-                gpu_map+="\"$m\":$gpu"
+                gpu_map+="\"$m\":\"$gpu\""
             done
             gpu_map+="}"
 

@@ -155,7 +155,7 @@ def build_overrides(method: str, cfg: Dict[str, Any]) -> Dict[str, Any]:
 def generate_batch_spec(
     config_dir: Path,
     methods: List[str],
-    gpu_map: Dict[str, Optional[int]],
+    gpu_map: Dict[str, Optional[int | str]],
     output_dir: Optional[str] = None,
     method_configs_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
