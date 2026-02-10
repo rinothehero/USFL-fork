@@ -108,7 +108,7 @@ def _tee_output(proc: subprocess.Popen, name: str, log_path: Path) -> None:
 def _run_one(
     spec: Dict[str, Any],
     name: str,
-    gpu: Optional[int],
+    gpu: Optional[int | str],
     repo_root: Path,
     log_dir: Path,
 ) -> Dict[str, Any]:
@@ -171,7 +171,7 @@ def run_batch(batch_spec_path: str, repo_root: Path) -> None:
     # Group experiments by GPU: same GPU → sequential, different GPUs → parallel
     from collections import defaultdict
 
-    gpu_groups: Dict[Optional[int], List[Dict[str, Any]]] = defaultdict(list)
+    gpu_groups: Dict[Optional[int | str], List[Dict[str, Any]]] = defaultdict(list)
     for exp in experiments:
         gpu = exp.get("gpu")
         gpu_groups[gpu].append(exp)

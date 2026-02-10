@@ -527,7 +527,8 @@ cmd_run() {
         local server="${key%%:*}"
         local gpu="${key#*:}"
         local methods="${GROUP_METHODS[$i]}"
-        local session_name="${tmux_session}-${methods}-g${gpu}-${_run_id}"
+        local gpu_safe="${gpu//,/-}"
+        local session_name="${tmux_session}-${methods}-g${gpu_safe}-${_run_id}"
         local methods_display="${methods//+/, }"
         if [[ "$methods" == *"+"* ]]; then
             echo "  $methods_display → $server GPU $gpu  (tmux: $session_name) [sequential]"
@@ -546,7 +547,8 @@ cmd_run() {
         local methods="${GROUP_METHODS[$i]}"
         local ssh_host
         ssh_host=$(get_server_field "$server" "ssh_host")
-        local session_name="${tmux_session}-${methods}-g${gpu}-${_run_id}"
+        local gpu_safe="${gpu//,/-}"
+        local session_name="${tmux_session}-${methods}-g${gpu_safe}-${_run_id}"
         # shellcheck disable=SC2029
         if ssh -o ConnectTimeout=5 "$ssh_host" "tmux has-session -t '$session_name' 2>/dev/null" 2>/dev/null; then
             echo "  WARNING: tmux '$session_name' already running on $server"
@@ -617,7 +619,8 @@ cmd_run() {
             done
             gpu_map+="}"
 
-            local spec_file="/tmp/usfl_spec_${methods}_g${gpu}_$$.json"
+            local gpu_safe="${gpu//,/-}"
+            local spec_file="/tmp/usfl_spec_${methods}_g${gpu_safe}_$$.json"
             python3 -m experiment_core.generate_spec \
                 --config-dir experiment_configs \
                 --methods $methods_space \
@@ -626,12 +629,12 @@ cmd_run() {
                 --output "$spec_file"
 
             # Transfer spec to server
-            local remote_spec="batch_spec_${methods}_g${gpu}.json"
+            local remote_spec="batch_spec_${methods}_g${gpu_safe}.json"
             scp -q "$spec_file" "$ssh_host:$remote_repo/$remote_spec"
             rm -f "$spec_file"
 
             # Kill existing session if present
-            local session_name="${tmux_session}-${methods}-g${gpu}-${_run_id}"
+            local session_name="${tmux_session}-${methods}-g${gpu_safe}-${_run_id}"
             # shellcheck disable=SC2029
             ssh "$ssh_host" "tmux kill-session -t '$session_name' 2>/dev/null || true"
 
@@ -639,7 +642,7 @@ cmd_run() {
             # shellcheck disable=SC2029
             ssh "$ssh_host" "cd $remote_repo && \
                 tmux new-session -d -s '$session_name' \
-                'bash deploy/remote_run.sh $conda_env $remote_spec 2>&1 | tee experiment_${methods}-g${gpu}-${_run_id}.log'"
+                'bash deploy/remote_run.sh $conda_env $remote_spec 2>&1 | tee experiment_${methods}-g${gpu_safe}-${_run_id}.log'"
 
             local methods_display="${methods//+/, }"
             echo "[$server] $methods_display → GPU $gpu (tmux: $session_name)"
