@@ -303,7 +303,7 @@ ASSIGNMENTS=()
 parse_inline_assignments() {
     # Parse: usfl@server-a:0 gas@server-b:1
     for arg in "$@"; do
-        if [[ "$arg" =~ ^([a-z0-9_]+)@([a-z0-9_-]+):([0-9]+)$ ]]; then
+        if [[ "$arg" =~ ^([a-z0-9_]+)@([a-z0-9_-]+):([0-9]+(,[0-9]+)*)$ ]]; then
             ASSIGNMENTS+=("${BASH_REMATCH[1]}:${BASH_REMATCH[2]}:${BASH_REMATCH[3]}")
         else
             die "Invalid assignment format: '$arg'. Expected: method@server:gpu (e.g., usfl@server-a:0)"
