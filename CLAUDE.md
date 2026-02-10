@@ -391,7 +391,7 @@ Keys prefixed with `_` are comments (filtered by `build_overrides()` during spec
 ./deploy.sh collect --local  # rsync results to local ./results/
 
 # 5. Generate dashboard
-python sfl_dashboard.py results/<run_name>/ --open
+python tools/sfl_dashboard.py results/<run_name>/ --open
 ```
 
 #### Run Command Formats
@@ -504,10 +504,10 @@ Result files are merged from multiple servers into a single `results/<run_name>/
 
 ```bash
 # Generate interactive HTML dashboard with all experiments compared
-python sfl_dashboard.py results/<run_name>/ --open
+python tools/sfl_dashboard.py results/<run_name>/ --open
 
 # Custom output path
-python sfl_dashboard.py results/<run_name>/ --output my_report.html
+python tools/sfl_dashboard.py results/<run_name>/ --output my_report.html
 ```
 
 The dashboard auto-detects SFL, GAS, and MultiSFL result formats, extracts accuracy curves, drift metrics, G measurements, V-values, and per-round metrics, and generates an interactive Plotly dashboard.
@@ -518,7 +518,7 @@ This machine has Tailscale VPN configured. To view the dashboard on a phone or a
 
 ```bash
 # 1. Generate dashboard
-python sfl_dashboard.py results/<run_name>/
+python tools/sfl_dashboard.py results/<run_name>/
 
 # 2. Start HTTP server (bind to all interfaces so Tailscale can reach it)
 nohup python -m http.server 8765 --bind 0.0.0.0 \
@@ -588,7 +588,7 @@ python -m experiment_core.batch_runner --spec /tmp/local_spec.json --repo-root .
 | `experiment_core/batch_runner.py` | Runs multiple experiments from a spec file |
 | `experiment_core/runner.py` | Runs a single experiment via adapter |
 | `experiment_core/adapters/` | Translates unified config → framework-native format |
-| `sfl_dashboard.py` | Result visualization (HTML dashboard generator) |
+| `tools/sfl_dashboard.py` | Result visualization (HTML dashboard generator) |
 
 ## Running Experiments Locally
 
