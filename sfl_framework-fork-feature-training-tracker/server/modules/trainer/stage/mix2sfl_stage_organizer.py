@@ -281,7 +281,7 @@ class Mix2SFLStageOrganizer(BaseStageOrganizer):
         )
         scheduled_clients = self._get_scheduled_clients(round_number)
         if scheduled_clients is not None:
-            self.selected_clients = scheduled_clients[: self.config.num_clients_per_round]
+            self.selected_clients = scheduled_clients
             vprint(
                 f"[Schedule] Round {round_number}: using fixed clients {self.selected_clients}",
                 1,
