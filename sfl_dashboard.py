@@ -22,6 +22,7 @@ Dependencies:
 import json
 import os
 import sys
+import csv
 import argparse
 import webbrowser
 from pathlib import Path
@@ -544,6 +545,71 @@ def get_plotly_js() -> str:
     return None
 
 
+def save_metrics_summary(experiments: dict, output_path: str):
+    """메트릭별 기법별 평균값을 CSV 파일로 저장"""
+    # 모든 메트릭 수집
+    all_metrics = set()
+    all_metrics.add("accuracy")  # Accuracy는 특별 처리
+    
+    for exp in experiments.values():
+        all_metrics.update(exp["metrics"].keys())
+        if exp["v_values"]:
+            all_metrics.add("v_value")
+        if exp["time_record"]:
+            all_metrics.add("time_record")
+    
+    # 메트릭 정렬
+    sorted_metrics = sorted(all_metrics)
+    
+    # 각 실험(기법)별로 메트릭 평균 계산
+    summary_data = []
+    for label, exp in experiments.items():
+        row = {"Method": label}
+        
+        # Accuracy 평균
+        if exp["acc_values"]:
+            clean = [v for v in exp["acc_values"] if v is not None and isinstance(v, (int, float))]
+            if clean:
+                row["accuracy"] = sum(clean) / len(clean)
+        
+        # 다른 메트릭들 평균
+        for metric in exp["metrics"]:
+            vals = exp["metrics"][metric]
+            clean = [v for v in vals if v is not None and isinstance(v, (int, float))]
+            if clean:
+                row[metric] = sum(clean) / len(clean)
+        
+        # V-value 평균
+        if exp["v_values"]:
+            clean = [v for v in exp["v_values"] if v is not None and isinstance(v, (int, float))]
+            if clean:
+                row["v_value"] = sum(clean) / len(clean)
+        
+        # Time record 평균
+        if exp["time_record"]:
+            clean = [v for v in exp["time_record"] if v is not None and isinstance(v, (int, float))]
+            if clean:
+                row["time_record"] = sum(clean) / len(clean)
+        
+        summary_data.append(row)
+    
+    # CSV 파일로 저장
+    csv_path = output_path.replace(".html", "_metrics_summary.csv")
+    
+    with open(csv_path, 'w', newline='') as f:
+        # 헤더: Method + 모든 메트릭
+        fieldnames = ["Method"] + sorted_metrics
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        
+        writer.writeheader()
+        for row in summary_data:
+            writer.writerow(row)
+    
+    print(f"  💾 Saved metrics summary: {csv_path}")
+    return csv_path
+
+
+
 def generate_html(experiments: dict, output_path: str):
     """최종 HTML 대시보드 생성"""
     labels = list(experiments.keys())
@@ -978,7 +1044,11 @@ Examples:
         print("❌ No valid experiment files found")
         sys.exit(1)
 
+    # Generate HTML dashboard
     path = generate_html(experiments, output)
+    
+    # Save metrics summary CSV
+    save_metrics_summary(experiments, output)
 
     if args.open:
         webbrowser.open(f"file://{os.path.abspath(path)}")
