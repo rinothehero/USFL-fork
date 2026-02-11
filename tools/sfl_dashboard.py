@@ -398,17 +398,17 @@ def build_chart_traces(experiments: dict) -> dict:
             "hovermode": "closest",
         }
 
-    def make_avg_bar(chart_key: str, values_per_exp: list, ytitle: str, tickfmt=None):
-        """Create a bar chart of average values. values_per_exp: list of (label, values_list, color_index)."""
+    def _make_stat_bar(chart_key: str, values_per_exp: list, ytitle: str, stat_fn, tickfmt=None):
+        """Generic bar chart builder. stat_fn: function applied to clean values list."""
         bar_x, bar_y, bar_colors, bar_text = [], [], [], []
         for lab, vals, idx in values_per_exp:
             clean = [v for v in vals if v is not None and isinstance(v, (int, float))]
             if clean:
-                avg = sum(clean) / len(clean)
+                val = stat_fn(clean)
                 bar_x.append(lab)
-                bar_y.append(avg)
+                bar_y.append(val)
                 bar_colors.append(PALETTE[idx % len(PALETTE)])
-                bar_text.append(f"{avg:.4f}")
+                bar_text.append(f"{val:.4f}")
         if bar_x:
             charts[chart_key] = {
                 "traces": [{
@@ -419,6 +419,14 @@ def build_chart_traces(experiments: dict) -> dict:
                 }],
                 "layout": bar_layout(ytitle, tickfmt),
             }
+
+    def make_avg_bar(chart_key: str, values_per_exp: list, ytitle: str, tickfmt=None):
+        """Create a bar chart of average values."""
+        _make_stat_bar(chart_key, values_per_exp, ytitle, lambda v: sum(v) / len(v), tickfmt)
+
+    def make_max_bar(chart_key: str, values_per_exp: list, ytitle: str, tickfmt=None):
+        """Create a bar chart of max values."""
+        _make_stat_bar(chart_key, values_per_exp, ytitle, max, tickfmt)
 
     # Accuracy
     max_acc = 0
@@ -433,6 +441,7 @@ def build_chart_traces(experiments: dict) -> dict:
     if acc_traces:
         charts["accuracy"] = {"traces": acc_traces, "layout": layout("Accuracy", ".0%", [0, max_acc * 1.08])}
         make_avg_bar("accuracy_avg", acc_avg_data, "Avg Accuracy", ".1%")
+        make_max_bar("accuracy_max", acc_avg_data, "Max Accuracy", ".1%")
 
     # All metrics (unified — each chart includes all experiments that have data)
     info = classify_metrics(experiments)
@@ -459,6 +468,7 @@ def build_chart_traces(experiments: dict) -> dict:
         if traces_list:
             charts[f"metric_{m}"] = {"traces": traces_list, "layout": layout(m)}
             make_avg_bar(f"metric_{m}_avg", avg_data, f"Avg {m}")
+            make_max_bar(f"metric_{m}_max", avg_data, f"Max {m}")
 
     # V-value (overlay all experiments that have it)
     vvalue_traces = []
@@ -472,6 +482,7 @@ def build_chart_traces(experiments: dict) -> dict:
     if vvalue_traces:
         charts["vvalue"] = {"traces": vvalue_traces, "layout": layout("V-Value", xtitle="Epoch")}
         make_avg_bar("vvalue_avg", vvalue_avg_data, "Avg V-Value")
+        make_max_bar("vvalue_max", vvalue_avg_data, "Max V-Value")
 
     # Time record (overlay all experiments that have it)
     time_traces = []
@@ -485,6 +496,7 @@ def build_chart_traces(experiments: dict) -> dict:
     if time_traces:
         charts["time"] = {"traces": time_traces, "layout": layout("Elapsed Time (sec)", xtitle="Epoch")}
         make_avg_bar("time_avg", time_avg_data, "Avg Time (sec)")
+        make_max_bar("time_max", time_avg_data, "Max Time (sec)")
 
     return charts
 
@@ -566,11 +578,11 @@ def save_metrics_summary(experiments: dict, output_path: str):
     for label, exp in experiments.items():
         row = {"Method": label}
         
-        # Accuracy 평균
+        # Accuracy 최대값
         if exp["acc_values"]:
             clean = [v for v in exp["acc_values"] if v is not None and isinstance(v, (int, float))]
             if clean:
-                row["accuracy"] = sum(clean) / len(clean)
+                row["accuracy"] = max(clean)
         
         # 다른 메트릭들 평균
         for metric in exp["metrics"]:
@@ -653,6 +665,8 @@ def generate_html(experiments: dict, output_path: str):
         overview_charts.append(("accuracy", "Test Accuracy over Rounds", "Global model accuracy at each evaluation point", False))
     if "accuracy_avg" in charts:
         overview_charts.append(("accuracy_avg", "Avg Accuracy", "Mean accuracy across all rounds", False))
+    if "accuracy_max" in charts:
+        overview_charts.append(("accuracy_max", "Max Accuracy", "Best accuracy achieved", False))
     top_overview = [m for m in ["G_drift", "M_norm", "A_cos", "G_drift_norm"] if f"metric_{m}" in charts][:2]
     for m in top_overview:
         n_present = len(charts[f"metric_{m}"]["traces"])
@@ -686,17 +700,22 @@ def generate_html(experiments: dict, output_path: str):
     for m in info["all_metrics"]:
         key = f"metric_{m}"
         key_avg = f"metric_{m}_avg"
+        key_max = f"metric_{m}_max"
         if key in charts:
             metric_charts.append((key, m, _metric_desc(key), False))
             if key_avg in charts:
                 metric_charts.append((key_avg, f"Avg {m}", "", False))
+            if key_max in charts:
+                metric_charts.append((key_max, f"Max {m}", "", False))
     for base_key, title in [("vvalue", "V-Value"), ("time", "Training Time")]:
         if base_key in charts:
             metric_charts.append((base_key, title, _metric_desc(base_key), False))
             if f"{base_key}_avg" in charts:
                 metric_charts.append((f"{base_key}_avg", f"Avg {title}", "", False))
+            if f"{base_key}_max" in charts:
+                metric_charts.append((f"{base_key}_max", f"Max {title}", "", False))
     if metric_charts:
-        n_line_charts = sum(1 for k, _, _, _ in metric_charts if not k.endswith("_avg"))
+        n_line_charts = sum(1 for k, _, _, _ in metric_charts if not k.endswith("_avg") and not k.endswith("_max"))
         tabs.append(("metrics", f"Metrics ({n_line_charts})", metric_charts))
 
     tabs.append(("config", "Config Table", []))
