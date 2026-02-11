@@ -13,6 +13,7 @@ git-ai
 !experiment_configs/*.json
 !experiment_configs/**/*.json
 !deploy/deploy_servers.json
+!results/final_expA_compares/
 data/main.py
 main.py
 README.md
