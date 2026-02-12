@@ -659,21 +659,20 @@ def generate_html(experiments: dict, output_path: str):
     # Build tab structure dynamically
     tabs = []
 
-    # Overview
+    # Overview — accuracy + expA_A_c_ratio + expA_B_c + expA_B_s
     overview_charts = []
-    if "accuracy" in charts:
-        overview_charts.append(("accuracy", "Test Accuracy over Rounds", "Global model accuracy at each evaluation point", False))
-    if "accuracy_avg" in charts:
-        overview_charts.append(("accuracy_avg", "Avg Accuracy", "Mean accuracy across all rounds", False))
-    if "accuracy_max" in charts:
-        overview_charts.append(("accuracy_max", "Max Accuracy", "Best accuracy achieved", False))
-    top_overview = [m for m in ["G_drift", "M_norm", "A_cos", "G_drift_norm"] if f"metric_{m}" in charts][:2]
-    for m in top_overview:
-        n_present = len(charts[f"metric_{m}"]["traces"])
-        desc = f"{n_present}/{n_exp} experiments" if n_present < n_exp else f"All {n_exp} experiments"
-        overview_charts.append((f"metric_{m}", m, desc, False))
-        if f"metric_{m}_avg" in charts:
-            overview_charts.append((f"metric_{m}_avg", f"Avg {m}", "", False))
+    overview_metrics = [
+        ("accuracy", "accuracy_avg", "accuracy_max", "Test Accuracy over Rounds", "Global model accuracy at each evaluation point"),
+    ]
+    for m_name in ["expA_A_c_ratio", "expA_B_c", "expA_B_s"]:
+        overview_metrics.append((f"metric_{m_name}", f"metric_{m_name}_avg", f"metric_{m_name}_max", m_name, ""))
+    for line_key, avg_key, max_key, title, desc in overview_metrics:
+        if line_key in charts:
+            overview_charts.append((line_key, title, desc, False))
+            if avg_key in charts:
+                overview_charts.append((avg_key, f"Avg {title}", "", False))
+            if max_key in charts:
+                overview_charts.append((max_key, f"Max {title}", "", False))
     tabs.append(("overview", "Overview", overview_charts))
 
     # Unified metrics tab — line chart + bar chart paired side by side
@@ -766,7 +765,7 @@ def generate_html(experiments: dict, output_path: str):
                 inner += f'<div class="chart-row full">{card}</div>\n'
             else:
                 pair_buf.append(card)
-                if len(pair_buf) == 2:
+                if len(pair_buf) == 3:
                     inner += f'<div class="chart-row">{"".join(pair_buf)}</div>\n'
                     pair_buf = []
         if pair_buf:
@@ -807,7 +806,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif
 .tab-btn:hover{{background:rgba(108,158,255,.1);color:var(--text)}}
 .tab-btn.active{{background:rgba(108,158,255,.15);color:#6c9eff;font-weight:600}}
 .chart-section{{display:none}}.chart-section.active{{display:block}}
-.chart-row{{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px}}
+.chart-row{{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:20px}}
 .chart-row.full{{grid-template-columns:1fr}}
 .chart-card{{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px}}
 .chart-card h3{{font-size:.9rem;font-weight:600;margin-bottom:4px}}

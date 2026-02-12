@@ -28,7 +28,7 @@
   "_use_torchvision_init": "Load torchvision ResNet18 weights for split model init. Supported by GAS/MultiSFL.",
   "use_torchvision_init": false,
   "_use_full_epochs": "true: iterate entire dataset per round | false: fixed local_epochs steps. Supported by GAS/MultiSFL.",
-  "use_full_epochs": false,
+  "use_full_epochs": true,
   "_section_g": "=== G Measurement (gradient dissimilarity) ===",
   "_enable_g_measurement": "Enable 3-perspective G measurement (client/server/split).",
   "enable_g_measurement": false,
