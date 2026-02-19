@@ -191,6 +191,8 @@ class Config:
     # ==================
     enable_drift_measurement: bool  # Enable client drift measurement
     drift_sample_interval: int  # Measure drift every n steps (1 = every step, default: 1)
+    save_mu_c: bool  # Save μ_c vectors per round (for IID baseline generation)
+    reference_mu_c_path: str  # Path to SFL-IID μ_c .pt file for cos_vs_iid computation
     probe_source: str  # Probe dataset source: "test" | "train"
     probe_indices_path: str  # Optional JSON/TXT indices file for fixed probe set Q
     probe_num_samples: int  # If >0 and indices file empty, sample fixed-size probe subset
@@ -1143,6 +1145,20 @@ def parse_args(custom_args=None):
         type=int,
         dest="drift_sample_interval",
         default=1,
+    )
+    parser.add_argument(
+        "--save-mu-c",
+        help="Save μ_c vectors per round for IID baseline generation",
+        action="store_true",
+        dest="save_mu_c",
+    )
+    parser.add_argument(
+        "--reference-mu-c-path",
+        help="Path to SFL-IID μ_c .pt file for cos_vs_iid computation",
+        action="store",
+        type=str,
+        dest="reference_mu_c_path",
+        default="",
     )
     parser.add_argument(
         "--probe-source",

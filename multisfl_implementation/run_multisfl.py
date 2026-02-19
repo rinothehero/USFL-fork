@@ -278,6 +278,18 @@ def parse_args() -> argparse.Namespace:
         default=1,
         help="Sample drift every N steps (1 = every step)",
     )
+    parser.add_argument(
+        "--save_mu_c",
+        type=str_to_bool,
+        default=False,
+        help="Save μ_c vectors per round for IID baseline generation",
+    )
+    parser.add_argument(
+        "--reference_mu_c_path",
+        type=str,
+        default="",
+        help="Path to SFL-IID μ_c .pt file for cos_vs_iid computation",
+    )
 
     return parser.parse_args()
 
@@ -346,6 +358,8 @@ def main():
         probe_seed=args.probe_seed if args.probe_seed is not None else args.seed,
         probe_class_balanced=args.probe_class_balanced,
         probe_class_balanced_batches=args.probe_class_balanced_batches,
+        save_mu_c=args.save_mu_c,
+        reference_mu_c_path=args.reference_mu_c_path or "",
     )
 
     # Data Partitioning
@@ -602,6 +616,10 @@ def main():
     if trainer.drift_tracker is not None:
         results["drift_history"] = trainer.drift_tracker.get_history()
         vprint(f"\n[Drift Measurement] Final G_drift values: {results['drift_history']['G_drift'][-5:]}", 1)
+        # Save μ_c vectors if enabled (for IID baseline generation)
+        if trainer.drift_tracker._save_mu_c:
+            mu_c_path = os.path.join(args.result_output_dir, "sfl_iid_mu_c.pt")
+            trainer.drift_tracker.save_mu_c_vectors(mu_c_path)
 
     os.makedirs(args.result_output_dir, exist_ok=True)
     filename = os.path.join(args.result_output_dir, f"results_multisfl_{args.dataset}_{args.partition}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")

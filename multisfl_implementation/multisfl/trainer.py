@@ -97,6 +97,12 @@ class MultiSFLTrainer:
                 sample_interval=cfg.drift_sample_interval,
                 device=cfg.device,
             )
+            if getattr(cfg, "save_mu_c", False):
+                self.drift_tracker.enable_save_mu_c()
+                vprint("[Drift] μ_c saving enabled (IID baseline)", 1)
+            ref_path = getattr(cfg, "reference_mu_c_path", "") or ""
+            if ref_path:
+                self.drift_tracker.load_reference_mu_c(ref_path)
             vprint(f"[Drift Measurement] Initialized. Sample interval: {cfg.drift_sample_interval}", 2)
 
         self._client_schedule_cache: Optional[Any] = None

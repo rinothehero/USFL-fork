@@ -24,6 +24,7 @@ import os
 import sys
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 from shared.update_alignment import flatten_delta, compute_update_alignment
@@ -194,6 +195,11 @@ class MultiSFLDriftTracker:
         self._branch_main_samples: Dict[int, int] = {}
         self._branch_replay_samples: Dict[int, int] = {}
         self._branch_start_client_params: Dict[int, Dict[str, torch.Tensor]] = {}
+
+        # IID baseline μ_c comparison
+        self._mu_c_history: Dict[int, torch.Tensor] = {}
+        self._save_mu_c: bool = False
+        self._ref_mu_c: Optional[Dict[int, torch.Tensor]] = None
 
     def _is_trainable_param(self, name: str) -> bool:
         """Check if parameter name corresponds to trainable weights (not buffers)"""
@@ -608,7 +614,25 @@ class MultiSFLDriftTracker:
             server_probe_direction=self._probe_server_direction,
             server_steps=total_server_steps,
             epsilon=epsilon,
+            return_mu_c=True,
         )
+
+        # Extract μ_c vector before it gets serialized to JSON
+        mu_c_vector = experiment_a.pop("_mu_c_vector", None)
+
+        # Save μ_c for IID baseline (when save_mu_c is enabled)
+        if self._save_mu_c and mu_c_vector is not None:
+            self._mu_c_history[round_number] = mu_c_vector.detach().cpu()
+
+        # Compute cosine similarity vs IID reference μ_c
+        if self._ref_mu_c is not None and mu_c_vector is not None:
+            ref = self._ref_mu_c.get(round_number)
+            if ref is not None:
+                cos_vs_iid = F.cosine_similarity(
+                    mu_c_vector.unsqueeze(0), ref.unsqueeze(0)
+                ).item()
+                experiment_a["cos_vs_iid"] = float(cos_vs_iid)
+
         experiment_a["probe"] = {
             "used_batches": int(self._probe_meta.get("used_batches", 0)),
             "used_samples": int(self._probe_meta.get("used_samples", 0)),
@@ -678,10 +702,39 @@ class MultiSFLDriftTracker:
                 m.experiment_a.get("server_mag_per_step_sq")
                 for m in self.measurements
             ],
+            "expA_cos_vs_iid": [
+                m.experiment_a.get("cos_vs_iid") for m in self.measurements
+            ],
             "experiment_a": [m.experiment_a for m in self.measurements],
             # Per-round details
             "per_round": [m.to_dict() for m in self.measurements],
         }
+
+    def enable_save_mu_c(self):
+        """Enable saving μ_c vectors each round (for IID baseline generation)."""
+        self._save_mu_c = True
+
+    def save_mu_c_vectors(self, path: str):
+        """Save collected μ_c history to a .pt file."""
+        if not self._mu_c_history:
+            vprint("[Drift] No μ_c vectors to save.", 1)
+            return
+        torch.save(self._mu_c_history, path)
+        vprint(
+            f"[Drift] Saved μ_c vectors for {len(self._mu_c_history)} rounds "
+            f"to {path}", 1
+        )
+
+    def load_reference_mu_c(self, path: str):
+        """Load IID reference μ_c vectors from a .pt file."""
+        if not path or not os.path.exists(path):
+            vprint(f"[Drift] Reference μ_c file not found: {path}", 1)
+            return
+        self._ref_mu_c = torch.load(path, map_location="cpu", weights_only=True)
+        vprint(
+            f"[Drift] Loaded reference μ_c vectors for "
+            f"{len(self._ref_mu_c)} rounds from {path}", 1
+        )
 
     def clear(self):
         """Clear all state"""
@@ -701,3 +754,6 @@ class MultiSFLDriftTracker:
         self.measurements = []
         self._early_delta_norms = []
         self._adaptive_epsilon = None
+        self._mu_c_history = {}
+        self._save_mu_c = False
+        self._ref_mu_c = None

@@ -4,5 +4,6 @@
   "selector": "uniform",
   "aggregator": "fedavg",
   "server_model_aggregation": false,
-  "distributer": "uniform"
+  "distributer": "uniform",
+  "save-mu-c": true
 }

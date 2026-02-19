@@ -96,6 +96,8 @@ class MultiSFLAdapter(FrameworkAdapter):
             "--probe_class_balanced_batches", _str_bool(
                 bool(common.get("probe_class_balanced_batches", False))
             ),
+            "--save_mu_c", _str_bool(bool(common.get("save_mu_c", False))),
+            "--reference_mu_c_path", str(common.get("reference_mu_c_path", "")),
         ]
 
         client_schedule_path = (
@@ -131,6 +133,19 @@ class MultiSFLAdapter(FrameworkAdapter):
                 else:
                     p = (repo_root / p).resolve()
             cmd.extend(["--probe_indices_path", str(p)])
+
+        reference_mu_c_path = str(common.get("reference_mu_c_path", ""))
+        if reference_mu_c_path:
+            p = Path(reference_mu_c_path)
+            if not p.is_absolute():
+                spec_path = execution.get("_spec_path")
+                if spec_path:
+                    from_spec = (Path(spec_path).resolve().parent / p).resolve()
+                    from_repo = (repo_root / p).resolve()
+                    p = from_spec if from_spec.exists() else from_repo
+                else:
+                    p = (repo_root / p).resolve()
+            cmd.extend(["--reference_mu_c_path", str(p)])
 
         # Result output directory (from batch_runner)
         result_output_dir = execution.get("result_output_dir", "")

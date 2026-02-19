@@ -70,6 +70,7 @@ def compute_experiment_a_metrics(
     server_probe_direction: Optional[torch.Tensor] = None,
     server_steps: int = 0,
     epsilon: float = 1e-8,
+    return_mu_c: bool = False,
 ) -> dict:
     """
     Compute Experiment A metrics from already-captured update vectors.
@@ -158,7 +159,7 @@ def compute_experiment_a_metrics(
         server_mag_per_step_sq = delta_server_norm_sq / denom_steps
         server_mag_per_step = float(torch.norm(server_delta).item()) / denom_steps
 
-    return {
+    result = {
         "num_clients": int(len(client_deltas)),
         "weight_sum": float(weight_sum),
         "m2_c": _safe_float(m2),
@@ -175,3 +176,6 @@ def compute_experiment_a_metrics(
         "server_mag_per_step_sq": _safe_float(server_mag_per_step_sq),
         "server_mag_per_step": _safe_float(server_mag_per_step),
     }
+    if return_mu_c:
+        result["_mu_c_vector"] = mu
+    return result

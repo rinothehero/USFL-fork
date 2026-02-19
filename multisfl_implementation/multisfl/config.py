@@ -75,6 +75,10 @@ class MultiSFLConfig:
     probe_class_balanced: bool = False
     probe_class_balanced_batches: bool = False
 
+    # IID baseline μ_c comparison
+    save_mu_c: bool = False
+    reference_mu_c_path: str = ""
+
     def __post_init__(self):
         if self.p_min <= 0:
             raise ValueError(

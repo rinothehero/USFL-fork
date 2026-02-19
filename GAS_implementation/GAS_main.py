@@ -202,6 +202,10 @@ PROBE_CLASS_BALANCED_BATCHES = _env_bool(
     "GAS_PROBE_CLASS_BALANCED_BATCHES", False
 )
 
+# IID baseline μ_c comparison
+SAVE_MU_C = _env_bool("GAS_SAVE_MU_C", False)
+REFERENCE_MU_C_PATH = _env_str("GAS_REFERENCE_MU_C_PATH", "")
+
 # Optional fixed client schedule (Experiment A condition: same P_t across methods)
 CLIENT_SCHEDULE_PATH = _env_str("GAS_CLIENT_SCHEDULE_PATH", "")
 _client_schedule = None
@@ -657,6 +661,11 @@ if DRIFT_MEASUREMENT:
         sample_interval=DRIFT_SAMPLE_INTERVAL,
         device=str(device),
     )
+    if SAVE_MU_C:
+        drift_tracker.enable_save_mu_c()
+        vprint("[Drift] μ_c saving enabled (IID baseline)", 1)
+    if REFERENCE_MU_C_PATH:
+        drift_tracker.load_reference_mu_c(REFERENCE_MU_C_PATH)
     vprint(f"[Drift Measurement] Initialized. Sample interval: {DRIFT_SAMPLE_INTERVAL}", 1)
 
 
@@ -1690,6 +1699,10 @@ if G_Measurement and g_manager is not None:
 if DRIFT_MEASUREMENT and drift_tracker is not None:
     results["drift_history"] = drift_tracker.get_history()
     vprint(f"\n[Drift Measurement] Final G_drift values: {results['drift_history']['G_drift'][-5:]}", 0)
+    # Save μ_c vectors if enabled (for IID baseline generation)
+    if drift_tracker._save_mu_c:
+        mu_c_path = os.path.join(_result_output_dir, "sfl_iid_mu_c.pt")
+        drift_tracker.save_mu_c_vectors(mu_c_path)
 
 with open(_intermediate_json_filename, "w") as f_json:
     json.dump(results, f_json, indent=4)

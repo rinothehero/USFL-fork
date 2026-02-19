@@ -64,5 +64,7 @@
   "_probe_class_balanced": "When true, sample probe subset class-balanced when labels are available.",
   "probe_class_balanced": true,
   "_probe_class_balanced_batches": "When true, reorder probe subset so each probe batch is class-balanced when possible.",
-  "probe_class_balanced_batches": true
+  "probe_class_balanced_batches": true,
+  "_reference_mu_c_path": "Path to SFL-IID μ_c .pt file. Non-IID methods load this to compute cos_vs_iid metric.",
+  "reference_mu_c_path": ""
 }

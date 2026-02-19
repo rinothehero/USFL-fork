@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import json
+import os
 import pickle
 from collections import defaultdict
 from itertools import combinations
@@ -97,6 +98,12 @@ class ScaffoldSFLStageOrganizer(BaseStageOrganizer):
         self.drift_tracker = None
         if getattr(config, "enable_drift_measurement", False):
             self.drift_tracker = DriftMeasurementTracker()
+            if getattr(config, "save_mu_c", False):
+                self.drift_tracker.enable_save_mu_c()
+                vprint("[Drift] μ_c saving enabled (IID baseline)", 1)
+            ref_path = getattr(config, "reference_mu_c_path", "") or ""
+            if ref_path:
+                self.drift_tracker.load_reference_mu_c(ref_path)
             vprint("[Drift] DriftMeasurementTracker initialized (SCAFFOLD-SFL)", 2)
 
         # Client schedule (fixed P_t for Experiment A)
@@ -674,6 +681,15 @@ class ScaffoldSFLStageOrganizer(BaseStageOrganizer):
             drift_result = self.drift_tracker.on_round_end(round_number, new_client_model)
             if drift_result:
                 self.global_dict.add_event("DRIFT_MEASUREMENT", drift_result.to_dict())
+
+            # Save μ_c vectors on last round (for IID baseline generation)
+            if (
+                self.drift_tracker._save_mu_c
+                and round_number == self.config.global_round
+            ):
+                result_dir = getattr(self.config, "result_output_dir", "") or "."
+                mu_c_path = os.path.join(result_dir, "sfl_iid_mu_c.pt")
+                self.drift_tracker.save_mu_c_vectors(mu_c_path)
 
         model_queue.clear()
         accuracy = self.post_round.evaluate_global_model(self.model, self.testloader)

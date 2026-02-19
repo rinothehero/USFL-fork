@@ -61,6 +61,7 @@ _VALUE_FLAGS = {
     "g_measurement_mode": "--g-measurement-mode",
     "g_measurement_k": "--g-measurement-k",
     "drift_sample_interval": "--drift-sample-interval",
+    "reference_mu_c_path": "--reference-mu-c-path",
     "result_output_dir": "--result-output-dir",
     "client_schedule_path": "--client-schedule-path",
     "probe_source": "--probe-source",
@@ -94,6 +95,7 @@ _STORE_TRUE_FLAGS = {
     "use_variance_g": "--use-variance-g",
     "enable_g_measurement": "--enable-g-measurement",
     "enable_drift_measurement": "--enable-drift-measurement",
+    "save_mu_c": "--save-mu-c",
     "enable_inround_evaluation": "--enable-inround-evaluation",
     "networking_fairness": "-nf",
     "enable_concatenation": "-ec",
@@ -176,6 +178,12 @@ def spec_to_workload(spec: Dict[str, Any]) -> Dict[str, str]:
         workload["drift_sample_interval"] = str(
             common.get("drift", {}).get("sample_interval", 1)
         )
+
+    # IID baseline μ_c comparison
+    if common.get("save_mu_c"):
+        workload["save_mu_c"] = "true"
+    if common.get("reference_mu_c_path"):
+        workload["reference_mu_c_path"] = str(common["reference_mu_c_path"])
 
     # Result output directory (from batch_runner)
     result_output_dir = spec.get("execution", {}).get("result_output_dir", "")
@@ -308,6 +316,15 @@ def main() -> None:
                 from_spec
                 if from_spec.exists()
                 else (repo_root / probe_indices_path).resolve()
+            )
+    if workload.get("reference_mu_c_path"):
+        ref_path = Path(str(workload["reference_mu_c_path"]))
+        if not ref_path.is_absolute():
+            from_spec = (spec_dir / ref_path).resolve()
+            workload["reference_mu_c_path"] = str(
+                from_spec
+                if from_spec.exists()
+                else (repo_root / ref_path).resolve()
             )
     server_args = workload_to_server_args(workload)
     client_args = workload_to_client_args(workload)

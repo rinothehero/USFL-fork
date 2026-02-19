@@ -99,6 +99,8 @@ class GASAdapter(FrameworkAdapter):
             "GAS_PROBE_CLASS_BALANCED_BATCHES": _b(
                 bool(common.get("probe_class_balanced_batches", False))
             ),
+            "GAS_SAVE_MU_C": _b(bool(common.get("save_mu_c", False))),
+            "GAS_REFERENCE_MU_C_PATH": str(common.get("reference_mu_c_path", "")),
         }
 
         client_schedule_path = (
@@ -144,6 +146,24 @@ class GASAdapter(FrameworkAdapter):
                 elif repo_root:
                     p = (Path(repo_root) / p).resolve()
             env["GAS_PROBE_INDICES_PATH"] = str(p)
+
+        reference_mu_c_path = str(common.get("reference_mu_c_path", ""))
+        if reference_mu_c_path:
+            p = Path(reference_mu_c_path)
+            if not p.is_absolute():
+                execution = spec.get("execution", {})
+                spec_path = execution.get("_spec_path")
+                repo_root = execution.get("_repo_root")
+                if spec_path:
+                    from_spec = (Path(spec_path).resolve().parent / p).resolve()
+                    if repo_root:
+                        from_repo = (Path(repo_root) / p).resolve()
+                        p = from_spec if from_spec.exists() else from_repo
+                    else:
+                        p = from_spec
+                elif repo_root:
+                    p = (Path(repo_root) / p).resolve()
+            env["GAS_REFERENCE_MU_C_PATH"] = str(p)
 
         # Apply distribution mode flags
         env.update(dist_flags)
