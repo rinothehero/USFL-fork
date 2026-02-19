@@ -370,12 +370,26 @@ def _resolve_alexnet_split_index(
         return _resolve_alexnet_conv_end_index(conv_layers, default_conv_layer)
     if normalized in {"light", "conv1"}:
         return _resolve_alexnet_conv_end_index(conv_layers, 1)
+    # "conv.N" — treat N as direct Sequential index (consistent with SFL/GAS)
+    total_layers = len(conv_layers)
     if normalized.startswith("conv."):
         idx_str = normalized.split(".", 1)[1]
         if idx_str.isdigit():
-            return _resolve_alexnet_conv_end_index(conv_layers, int(idx_str))
+            idx = int(idx_str)
+            if 0 <= idx < total_layers:
+                return idx
+            raise ValueError(
+                f"AlexNet split_layer index out of range: {split_layer} "
+                f"(must be 0..{total_layers - 1})"
+            )
     if normalized.startswith("conv") and normalized[4:].isdigit():
-        return _resolve_alexnet_conv_end_index(conv_layers, int(normalized[4:]))
+        idx = int(normalized[4:])
+        if 0 <= idx < total_layers:
+            return idx
+        raise ValueError(
+            f"AlexNet split_layer index out of range: {split_layer} "
+            f"(must be 0..{total_layers - 1})"
+        )
     if normalized.startswith("layer"):
         return _resolve_alexnet_conv_end_index(conv_layers, default_conv_layer)
 
