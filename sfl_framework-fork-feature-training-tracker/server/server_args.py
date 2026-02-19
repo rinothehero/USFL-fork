@@ -199,6 +199,8 @@ class Config:
     probe_seed: int  # Seed for random probe subset sampling
     probe_class_balanced: bool  # Sample probe subset with class-balanced policy when possible
     probe_class_balanced_batches: bool  # Reorder probe indices to make each batch class-balanced when possible
+    expa_iid_mu_load_path: str  # Optional path to precomputed SFL-IID mu_c^t references (dir/file)
+    expa_iid_mu_save_dir: str  # Optional directory to export per-round mu_c^t references
 
     # ==================
     #  IN-ROUND EVALUATION OPTIONS
@@ -1204,6 +1206,22 @@ def parse_args(custom_args=None):
         help="Reorder probe subset so each probe batch is class-balanced when possible",
         action="store_true",
         dest="probe_class_balanced_batches",
+    )
+    parser.add_argument(
+        "--expa-iid-mu-load-path",
+        help="Optional path to SFL-IID consensus update references (dir or torch file)",
+        action="store",
+        type=str,
+        dest="expa_iid_mu_load_path",
+        default="",
+    )
+    parser.add_argument(
+        "--expa-iid-mu-save-dir",
+        help="Optional directory to export per-round consensus updates mu_c^t",
+        action="store",
+        type=str,
+        dest="expa_iid_mu_save_dir",
+        default="",
     )
     parser.add_argument(
         "--enable-inround-evaluation",

@@ -175,6 +175,18 @@ def parse_args() -> argparse.Namespace:
         default=False,
         help="Reorder probe subset so each probe batch is class-balanced when possible",
     )
+    parser.add_argument(
+        "--expa_iid_mu_load_path",
+        type=str,
+        default="",
+        help="Optional path to SFL-IID consensus update references (dir or torch file)",
+    )
+    parser.add_argument(
+        "--expa_iid_mu_save_dir",
+        type=str,
+        default="",
+        help="Optional directory to export per-round consensus updates mu_c^t",
+    )
     parser.add_argument("--num_classes", type=int, default=10)
 
     parser.add_argument("--synthetic_train_size", type=int, default=5000)
@@ -346,6 +358,8 @@ def main():
         probe_seed=args.probe_seed if args.probe_seed is not None else args.seed,
         probe_class_balanced=args.probe_class_balanced,
         probe_class_balanced_batches=args.probe_class_balanced_batches,
+        expa_iid_mu_load_path=args.expa_iid_mu_load_path or None,
+        expa_iid_mu_save_dir=args.expa_iid_mu_save_dir or None,
     )
 
     # Data Partitioning

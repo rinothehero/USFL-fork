@@ -50,6 +50,15 @@ def _extract_experiment_a_history(drift_history: Dict[str, Any]) -> Dict[str, Li
         "A_c_ratio": _safe_list(drift_history.get("expA_A_c_ratio")),
         "A_c_rel": _safe_list(drift_history.get("expA_A_c_rel")),
         "B_c": _safe_list(drift_history.get("expA_B_c")),
+        "B_c_vs_sfl_iid_mu": _safe_list(
+            drift_history.get("expA_B_c_vs_sfl_iid_mu")
+        ),
+        "cos_c_vs_sfl_iid_mu": _safe_list(
+            drift_history.get("expA_cos_c_vs_sfl_iid_mu")
+        ),
+        "sfl_iid_mu_round_available": _safe_list(
+            drift_history.get("expA_sfl_iid_mu_round_available")
+        ),
         "C_c": _safe_list(drift_history.get("expA_C_c")),
         "C_c_per_client_probe": _safe_list(
             drift_history.get("expA_C_c_per_client_probe")

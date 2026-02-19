@@ -1,0 +1,7 @@
+Method,Accuracy_best,Accuracy_last50,p90_B_c,p95_B_c,max_B_c,freq_B_c_gt_1_1,Source_JSON
+SFL IID,0.599,0.594862,1.014585984666348,1.022537971851754,1.04698449130086,0.0,final_expA_compares/result-sfl-resnet18_flex-cifar10-dist-uniform-sel-uniform-agg-fedavg-split--bs-50-20260210-190559.json
+USFL non-IID,0.5335,0.512988,1.0426164315514428,1.052094182133511,1.119181222613746,0.0033333333333333335,final_expA_compares/result-usfl-resnet18_flex-cifar10-dist-shard_dirichlet-alpha-0.3-sel-usfl-agg-fedavg-split--bs-500-gradshuf-gradshuf-random-dbs-20260210-181701.json
+GAS non-IID,0.3757,0.333562,1.0396407758660153,1.0751544516528393,1.1865016098626844,0.04,final_expA_compares/results_gas_cifar10_20260212_184417.json
+MultiSFL non-IID,0.3665,0.270736,1.0775293931576735,1.1003796513728277,1.2528218864797576,0.05333333333333334,final_expA_compares/results_multisfl_cifar10_shard_dirichlet_20260212_222525.json
+MIX2SFL non-IID,0.3617,0.24932,1.204801546301144,1.2949208490256534,1.5500392943614962,0.1917808219178082,final_expA_compares/result-mix2sfl-resnet18_flex-cifar10-dist-shard_dirichlet-alpha-0.3-sel-uniform-agg-fedavg-split--bs-50-20260210-010449.json
+SFL non-IID,0.3239,0.16848400000000002,1.222110629941445,1.2755506660606541,1.4833000526869713,0.2733333333333333,final_expA_compares/result-sfl-resnet18_flex-cifar10-dist-shard_dirichlet-alpha-0.3-sel-uniform-agg-fedavg-split--bs-50-20260210-181700.json

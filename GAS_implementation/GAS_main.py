@@ -201,6 +201,8 @@ PROBE_CLASS_BALANCED = _env_bool("GAS_PROBE_CLASS_BALANCED", False)
 PROBE_CLASS_BALANCED_BATCHES = _env_bool(
     "GAS_PROBE_CLASS_BALANCED_BATCHES", False
 )
+EXPA_IID_MU_LOAD_PATH = _env_str("GAS_EXPA_IID_MU_LOAD_PATH", "")
+EXPA_IID_MU_SAVE_DIR = _env_str("GAS_EXPA_IID_MU_SAVE_DIR", "")
 
 # Optional fixed client schedule (Experiment A condition: same P_t across methods)
 CLIENT_SCHEDULE_PATH = _env_str("GAS_CLIENT_SCHEDULE_PATH", "")
@@ -656,6 +658,8 @@ if DRIFT_MEASUREMENT:
     drift_tracker = DriftMeasurementTracker(
         sample_interval=DRIFT_SAMPLE_INTERVAL,
         device=str(device),
+        iid_mu_reference_load_path=EXPA_IID_MU_LOAD_PATH,
+        iid_mu_reference_save_dir=EXPA_IID_MU_SAVE_DIR,
     )
     vprint(f"[Drift Measurement] Initialized. Sample interval: {DRIFT_SAMPLE_INTERVAL}", 1)
 
@@ -1022,6 +1026,8 @@ _intermediate_config = {
     "probe_seed": PROBE_SEED,
     "probe_class_balanced": PROBE_CLASS_BALANCED,
     "probe_class_balanced_batches": PROBE_CLASS_BALANCED_BATCHES,
+    "expa_iid_mu_load_path": EXPA_IID_MU_LOAD_PATH or None,
+    "expa_iid_mu_save_dir": EXPA_IID_MU_SAVE_DIR or None,
 }
 
 

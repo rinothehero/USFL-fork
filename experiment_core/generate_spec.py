@@ -114,6 +114,8 @@ def build_common_spec(common_path: Path) -> Dict[str, Any]:
         "probe_class_balanced_batches": cr.get(
             "probe_class_balanced_batches", False
         ),
+        "expa_iid_mu_load_path": cr.get("expa_iid_mu_load_path", ""),
+        "expa_iid_mu_save_dir": cr.get("expa_iid_mu_save_dir", ""),
     }
 
 

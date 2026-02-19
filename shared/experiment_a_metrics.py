@@ -31,6 +31,13 @@ def _safe_cosine_distance(
     return float(1.0 - cos)
 
 
+def safe_cosine_distance(
+    a: Optional[torch.Tensor], b: Optional[torch.Tensor], epsilon: float
+) -> Optional[float]:
+    """Public wrapper for cosine distance used by downstream analyses."""
+    return _safe_cosine_distance(a, b, epsilon)
+
+
 def _normalize_weights(
     deltas: Dict[int, torch.Tensor], weights: Optional[Dict[int, float]]
 ) -> Dict[int, float]:
@@ -59,6 +66,27 @@ def _normalize_weights(
         return {cid: uniform for cid in deltas.keys()}
 
     return {cid: (w / total) for cid, w in out.items()}
+
+
+def compute_weighted_client_consensus_update(
+    client_deltas: Dict[int, torch.Tensor],
+    client_weights: Optional[Dict[int, float]] = None,
+) -> Optional[torch.Tensor]:
+    """
+    Compute weighted consensus update mu_c = Σ w_i Δ_i in float32.
+
+    Returns None when no client deltas are provided.
+    """
+    if not client_deltas:
+        return None
+
+    normalized_weights = _normalize_weights(client_deltas, client_weights)
+    first_delta = next(iter(client_deltas.values()))
+    mu = torch.zeros_like(first_delta, dtype=torch.float32)
+    for cid, delta in client_deltas.items():
+        w = float(normalized_weights.get(cid, 0.0))
+        mu += w * delta.float()
+    return mu
 
 
 def compute_experiment_a_metrics(

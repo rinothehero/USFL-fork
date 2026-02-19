@@ -103,6 +103,8 @@ def _defaults() -> Dict[str, Any]:
             "probe_seed": 42,
             "probe_class_balanced": False,
             "probe_class_balanced_batches": False,
+            "expa_iid_mu_load_path": "",
+            "expa_iid_mu_save_dir": "",
         },
         "execution": {
             "mode": "run",

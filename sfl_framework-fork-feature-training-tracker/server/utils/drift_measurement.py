@@ -28,7 +28,12 @@ import torch.nn as nn
 # shared/update_alignment.py lives at repo root: USFL-fork/shared
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 from shared.update_alignment import flatten_delta, compute_update_alignment
-from shared.experiment_a_metrics import compute_experiment_a_metrics
+from shared.experiment_a_metrics import (
+    compute_experiment_a_metrics,
+    compute_weighted_client_consensus_update,
+    safe_cosine_distance,
+)
+from shared.expa_iid_mu_reference import load_iid_mu_reference, save_iid_mu_round
 from utils.log_utils import vprint
 
 
@@ -134,7 +139,12 @@ class DriftMeasurementTracker:
     4. on_round_end(): Compute G_drift, G_end, G_drift_norm for both
     """
 
-    def __init__(self, epsilon: float = 1e-8):
+    def __init__(
+        self,
+        epsilon: float = 1e-8,
+        iid_mu_reference_load_path: str = "",
+        iid_mu_reference_save_dir: str = "",
+    ):
         """
         Args:
             epsilon: Small constant to prevent division by zero in G_drift_norm
@@ -160,6 +170,25 @@ class DriftMeasurementTracker:
         self._probe_server_direction: Optional[torch.Tensor] = None
         self._probe_meta: Dict[str, float] = {}
         self._per_client_probe_directions: Dict[int, torch.Tensor] = {}
+
+        # Optional IID reference for consensus update direction:
+        # B_c_vs_sfl_iid_mu^t = 1 - cos(mu_c^t, mu_c_iid^t)
+        self._iid_mu_reference_load_path = iid_mu_reference_load_path or ""
+        self._iid_mu_reference_save_dir = iid_mu_reference_save_dir or ""
+        self._iid_mu_reference: Dict[int, torch.Tensor] = load_iid_mu_reference(
+            self._iid_mu_reference_load_path
+        )
+        if self._iid_mu_reference_load_path:
+            vprint(
+                f"[Drift][ExpA-IID] Loaded IID mu refs: {len(self._iid_mu_reference)} rounds "
+                f"from {self._iid_mu_reference_load_path}",
+                1,
+            )
+        if self._iid_mu_reference_save_dir:
+            vprint(
+                f"[Drift][ExpA-IID] Will save IID mu refs per round to {self._iid_mu_reference_save_dir}",
+                1,
+            )
 
         # Server drift accumulation for current round
         self._server_trajectory_sum: float = 0.0
@@ -530,6 +559,30 @@ class DriftMeasurementTracker:
             server_steps=self._server_batch_steps,
             epsilon=epsilon,
         )
+        mu_c = compute_weighted_client_consensus_update(
+            client_delta_map,
+            self._alignment_weights or self._client_weights,
+        )
+        iid_mu_ref = self._iid_mu_reference.get(int(round_number))
+        b_c_vs_sfl_iid_mu = safe_cosine_distance(mu_c, iid_mu_ref, float(epsilon))
+        cos_c_vs_sfl_iid_mu = (
+            float(1.0 - b_c_vs_sfl_iid_mu)
+            if b_c_vs_sfl_iid_mu is not None
+            else None
+        )
+        experiment_a["B_c_vs_sfl_iid_mu"] = (
+            float(b_c_vs_sfl_iid_mu) if b_c_vs_sfl_iid_mu is not None else None
+        )
+        experiment_a["cos_c_vs_sfl_iid_mu"] = cos_c_vs_sfl_iid_mu
+        experiment_a["sfl_iid_mu_round_available"] = iid_mu_ref is not None
+
+        if mu_c is not None and self._iid_mu_reference_save_dir:
+            saved_path = save_iid_mu_round(
+                self._iid_mu_reference_save_dir, int(round_number), mu_c
+            )
+            if saved_path is not None:
+                experiment_a["sfl_iid_mu_saved_path"] = saved_path
+
         experiment_a["probe"] = {
             "used_batches": int(self._probe_meta.get("used_batches", 0)),
             "used_samples": int(self._probe_meta.get("used_samples", 0)),

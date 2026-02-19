@@ -74,6 +74,8 @@ class MultiSFLConfig:
     probe_seed: int = 42
     probe_class_balanced: bool = False
     probe_class_balanced_batches: bool = False
+    expa_iid_mu_load_path: Optional[str] = None
+    expa_iid_mu_save_dir: Optional[str] = None
 
     def __post_init__(self):
         if self.p_min <= 0:

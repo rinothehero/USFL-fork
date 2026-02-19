@@ -198,6 +198,24 @@ class GlobalDict:
                         (m["params"].get("experiment_a") or {}).get("B_c")
                         for m in drift_measurements
                     ],
+                    "expA_B_c_vs_sfl_iid_mu": [
+                        (m["params"].get("experiment_a") or {}).get(
+                            "B_c_vs_sfl_iid_mu"
+                        )
+                        for m in drift_measurements
+                    ],
+                    "expA_cos_c_vs_sfl_iid_mu": [
+                        (m["params"].get("experiment_a") or {}).get(
+                            "cos_c_vs_sfl_iid_mu"
+                        )
+                        for m in drift_measurements
+                    ],
+                    "expA_sfl_iid_mu_round_available": [
+                        (m["params"].get("experiment_a") or {}).get(
+                            "sfl_iid_mu_round_available"
+                        )
+                        for m in drift_measurements
+                    ],
                     "expA_C_c": [
                         (m["params"].get("experiment_a") or {}).get("C_c")
                         for m in drift_measurements

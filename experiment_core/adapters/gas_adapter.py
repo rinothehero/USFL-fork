@@ -99,6 +99,8 @@ class GASAdapter(FrameworkAdapter):
             "GAS_PROBE_CLASS_BALANCED_BATCHES": _b(
                 bool(common.get("probe_class_balanced_batches", False))
             ),
+            "GAS_EXPA_IID_MU_LOAD_PATH": str(common.get("expa_iid_mu_load_path", "")),
+            "GAS_EXPA_IID_MU_SAVE_DIR": str(common.get("expa_iid_mu_save_dir", "")),
         }
 
         client_schedule_path = (
@@ -144,6 +146,50 @@ class GASAdapter(FrameworkAdapter):
                 elif repo_root:
                     p = (Path(repo_root) / p).resolve()
             env["GAS_PROBE_INDICES_PATH"] = str(p)
+
+        expa_iid_mu_load_path = (
+            common.get("expa_iid_mu_load_path")
+            or spec.get("framework_overrides", {}).get("expa_iid_mu_load_path")
+            or ""
+        )
+        if expa_iid_mu_load_path:
+            p = Path(str(expa_iid_mu_load_path))
+            if not p.is_absolute():
+                execution = spec.get("execution", {})
+                spec_path = execution.get("_spec_path")
+                repo_root = execution.get("_repo_root")
+                if spec_path:
+                    from_spec = (Path(spec_path).resolve().parent / p).resolve()
+                    if repo_root:
+                        from_repo = (Path(repo_root) / p).resolve()
+                        p = from_spec if from_spec.exists() else from_repo
+                    else:
+                        p = from_spec
+                elif repo_root:
+                    p = (Path(repo_root) / p).resolve()
+            env["GAS_EXPA_IID_MU_LOAD_PATH"] = str(p)
+
+        expa_iid_mu_save_dir = (
+            common.get("expa_iid_mu_save_dir")
+            or spec.get("framework_overrides", {}).get("expa_iid_mu_save_dir")
+            or ""
+        )
+        if expa_iid_mu_save_dir:
+            p = Path(str(expa_iid_mu_save_dir))
+            if not p.is_absolute():
+                execution = spec.get("execution", {})
+                spec_path = execution.get("_spec_path")
+                repo_root = execution.get("_repo_root")
+                if spec_path:
+                    from_spec = (Path(spec_path).resolve().parent / p).resolve()
+                    if repo_root:
+                        from_repo = (Path(repo_root) / p).resolve()
+                        p = from_spec if from_spec.exists() else from_repo
+                    else:
+                        p = from_spec
+                elif repo_root:
+                    p = (Path(repo_root) / p).resolve()
+            env["GAS_EXPA_IID_MU_SAVE_DIR"] = str(p)
 
         # Apply distribution mode flags
         env.update(dist_flags)

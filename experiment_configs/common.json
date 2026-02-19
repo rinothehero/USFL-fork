@@ -64,5 +64,9 @@
   "_probe_class_balanced": "When true, sample probe subset class-balanced when labels are available.",
   "probe_class_balanced": true,
   "_probe_class_balanced_batches": "When true, reorder probe subset so each probe batch is class-balanced when possible.",
-  "probe_class_balanced_batches": true
+  "probe_class_balanced_batches": true,
+  "_expa_iid_mu_save_dir": "Optional directory to export per-round IID-reference mu_c^t (for SFL-IID reference run).",
+  "expa_iid_mu_save_dir": "",
+  "_expa_iid_mu_load_path": "Optional path (dir or torch file) to load SFL-IID mu_c^t reference for B_c_vs_sfl_iid_mu.",
+  "expa_iid_mu_load_path": ""
 }

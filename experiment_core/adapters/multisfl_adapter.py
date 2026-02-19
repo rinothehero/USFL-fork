@@ -132,6 +132,40 @@ class MultiSFLAdapter(FrameworkAdapter):
                     p = (repo_root / p).resolve()
             cmd.extend(["--probe_indices_path", str(p)])
 
+        expa_iid_mu_load_path = (
+            common.get("expa_iid_mu_load_path")
+            or overrides.get("expa_iid_mu_load_path")
+            or ""
+        )
+        if expa_iid_mu_load_path:
+            p = Path(str(expa_iid_mu_load_path))
+            if not p.is_absolute():
+                spec_path = execution.get("_spec_path")
+                if spec_path:
+                    from_spec = (Path(spec_path).resolve().parent / p).resolve()
+                    from_repo = (repo_root / p).resolve()
+                    p = from_spec if from_spec.exists() else from_repo
+                else:
+                    p = (repo_root / p).resolve()
+            cmd.extend(["--expa_iid_mu_load_path", str(p)])
+
+        expa_iid_mu_save_dir = (
+            common.get("expa_iid_mu_save_dir")
+            or overrides.get("expa_iid_mu_save_dir")
+            or ""
+        )
+        if expa_iid_mu_save_dir:
+            p = Path(str(expa_iid_mu_save_dir))
+            if not p.is_absolute():
+                spec_path = execution.get("_spec_path")
+                if spec_path:
+                    from_spec = (Path(spec_path).resolve().parent / p).resolve()
+                    from_repo = (repo_root / p).resolve()
+                    p = from_spec if from_spec.exists() else from_repo
+                else:
+                    p = (repo_root / p).resolve()
+            cmd.extend(["--expa_iid_mu_save_dir", str(p)])
+
         # Result output directory (from batch_runner)
         result_output_dir = execution.get("result_output_dir", "")
         if result_output_dir:

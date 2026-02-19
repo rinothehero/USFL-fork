@@ -96,6 +96,8 @@ class MultiSFLTrainer:
             self.drift_tracker = MultiSFLDriftTracker(
                 sample_interval=cfg.drift_sample_interval,
                 device=cfg.device,
+                iid_mu_reference_load_path=cfg.expa_iid_mu_load_path or "",
+                iid_mu_reference_save_dir=cfg.expa_iid_mu_save_dir or "",
             )
             vprint(f"[Drift Measurement] Initialized. Sample interval: {cfg.drift_sample_interval}", 2)
 

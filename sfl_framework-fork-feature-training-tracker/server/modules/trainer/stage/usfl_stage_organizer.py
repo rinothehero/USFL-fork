@@ -144,7 +144,14 @@ class USFLStageOrganizer(BaseStageOrganizer):
         # Drift Measurement (SCAFFOLD-style)
         self.drift_tracker = None
         if getattr(config, "enable_drift_measurement", False):
-            self.drift_tracker = DriftMeasurementTracker()
+            self.drift_tracker = DriftMeasurementTracker(
+                iid_mu_reference_load_path=getattr(
+                    config, "expa_iid_mu_load_path", ""
+                ),
+                iid_mu_reference_save_dir=getattr(
+                    config, "expa_iid_mu_save_dir", ""
+                ),
+            )
             vprint("[Drift] DriftMeasurementTracker initialized (USFL)", 2)
 
     def _load_client_schedule(self):

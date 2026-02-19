@@ -69,6 +69,8 @@ _VALUE_FLAGS = {
     "probe_batch_size": "--probe-batch-size",
     "probe_max_batches": "--probe-max-batches",
     "probe_seed": "--probe-seed",
+    "expa_iid_mu_load_path": "--expa-iid-mu-load-path",
+    "expa_iid_mu_save_dir": "--expa-iid-mu-save-dir",
     "delete_fraction_of_data": "-df",
     # Mix2SFL
     "mix2sfl_smashmix_enabled": "--mix2sfl-smashmix-enabled",
@@ -199,6 +201,10 @@ def spec_to_workload(spec: Dict[str, Any]) -> Dict[str, str]:
         workload["probe_class_balanced"] = "true"
     if common.get("probe_class_balanced_batches", False):
         workload["probe_class_balanced_batches"] = "true"
+    if common.get("expa_iid_mu_load_path"):
+        workload["expa_iid_mu_load_path"] = str(common.get("expa_iid_mu_load_path"))
+    if common.get("expa_iid_mu_save_dir"):
+        workload["expa_iid_mu_save_dir"] = str(common.get("expa_iid_mu_save_dir"))
 
     # Per-method sfl_args overrides
     sfl_args = overrides.get("sfl_args", {})
@@ -309,6 +315,17 @@ def main() -> None:
                 if from_spec.exists()
                 else (repo_root / probe_indices_path).resolve()
             )
+    if workload.get("expa_iid_mu_load_path"):
+        load_path = Path(str(workload["expa_iid_mu_load_path"]))
+        if not load_path.is_absolute():
+            from_spec = (spec_dir / load_path).resolve()
+            workload["expa_iid_mu_load_path"] = str(
+                from_spec if from_spec.exists() else (repo_root / load_path).resolve()
+            )
+    if workload.get("expa_iid_mu_save_dir"):
+        save_dir = Path(str(workload["expa_iid_mu_save_dir"]))
+        if not save_dir.is_absolute():
+            workload["expa_iid_mu_save_dir"] = str((repo_root / save_dir).resolve())
     server_args = workload_to_server_args(workload)
     client_args = workload_to_client_args(workload)
 

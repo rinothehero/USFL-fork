@@ -1,0 +1,19 @@
+Method,Segment,Frequency_B_c_gt_1_05,Frequency_B_c_gt_1_1
+SFL IID,early,0.0,0.0
+SFL IID,mid,0.0,0.0
+SFL IID,late,0.0,0.0
+USFL non-IID,early,0.06,0.0
+USFL non-IID,mid,0.07,0.01
+USFL non-IID,late,0.04,0.0
+GAS non-IID,early,0.06,0.03
+GAS non-IID,mid,0.1,0.05
+GAS non-IID,late,0.1,0.04
+MultiSFL non-IID,early,0.21,0.09
+MultiSFL non-IID,mid,0.16,0.06
+MultiSFL non-IID,late,0.13,0.01
+MIX2SFL non-IID,early,0.28,0.23
+MIX2SFL non-IID,mid,0.21,0.17
+MIX2SFL non-IID,late,0.1956521739130435,0.17391304347826086
+SFL non-IID,early,0.35,0.24
+SFL non-IID,mid,0.36,0.24
+SFL non-IID,late,0.46,0.34

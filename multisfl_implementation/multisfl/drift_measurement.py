@@ -27,7 +27,12 @@ import torch.nn as nn
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 from shared.update_alignment import flatten_delta, compute_update_alignment
-from shared.experiment_a_metrics import compute_experiment_a_metrics
+from shared.experiment_a_metrics import (
+    compute_experiment_a_metrics,
+    compute_weighted_client_consensus_update,
+    safe_cosine_distance,
+)
+from shared.expa_iid_mu_reference import load_iid_mu_reference, save_iid_mu_round
 from .log_utils import vprint
 
 
@@ -156,6 +161,8 @@ class MultiSFLDriftTracker:
         epsilon: float = 1e-8,
         sample_interval: int = 1,
         device: str = "cpu",
+        iid_mu_reference_load_path: str = "",
+        iid_mu_reference_save_dir: str = "",
     ):
         """
         Args:
@@ -194,6 +201,25 @@ class MultiSFLDriftTracker:
         self._branch_main_samples: Dict[int, int] = {}
         self._branch_replay_samples: Dict[int, int] = {}
         self._branch_start_client_params: Dict[int, Dict[str, torch.Tensor]] = {}
+
+        # Optional IID reference for consensus update direction:
+        # B_c_vs_sfl_iid_mu^t = 1 - cos(mu_c^t, mu_c_iid^t)
+        self._iid_mu_reference_load_path = iid_mu_reference_load_path or ""
+        self._iid_mu_reference_save_dir = iid_mu_reference_save_dir or ""
+        self._iid_mu_reference: Dict[int, torch.Tensor] = load_iid_mu_reference(
+            self._iid_mu_reference_load_path
+        )
+        if self._iid_mu_reference_load_path:
+            vprint(
+                f"[Drift][ExpA-IID] Loaded IID mu refs: {len(self._iid_mu_reference)} rounds "
+                f"from {self._iid_mu_reference_load_path}",
+                1,
+            )
+        if self._iid_mu_reference_save_dir:
+            vprint(
+                f"[Drift][ExpA-IID] Will save IID mu refs per round to {self._iid_mu_reference_save_dir}",
+                1,
+            )
 
     def _is_trainable_param(self, name: str) -> bool:
         """Check if parameter name corresponds to trainable weights (not buffers)"""
@@ -609,6 +635,30 @@ class MultiSFLDriftTracker:
             server_steps=total_server_steps,
             epsilon=epsilon,
         )
+        mu_c = compute_weighted_client_consensus_update(
+            client_delta_map,
+            client_weights,
+        )
+        iid_mu_ref = self._iid_mu_reference.get(int(round_number))
+        b_c_vs_sfl_iid_mu = safe_cosine_distance(mu_c, iid_mu_ref, float(epsilon))
+        cos_c_vs_sfl_iid_mu = (
+            float(1.0 - b_c_vs_sfl_iid_mu)
+            if b_c_vs_sfl_iid_mu is not None
+            else None
+        )
+        experiment_a["B_c_vs_sfl_iid_mu"] = (
+            float(b_c_vs_sfl_iid_mu) if b_c_vs_sfl_iid_mu is not None else None
+        )
+        experiment_a["cos_c_vs_sfl_iid_mu"] = cos_c_vs_sfl_iid_mu
+        experiment_a["sfl_iid_mu_round_available"] = iid_mu_ref is not None
+
+        if mu_c is not None and self._iid_mu_reference_save_dir:
+            saved_path = save_iid_mu_round(
+                self._iid_mu_reference_save_dir, int(round_number), mu_c
+            )
+            if saved_path is not None:
+                experiment_a["sfl_iid_mu_saved_path"] = saved_path
+
         experiment_a["probe"] = {
             "used_batches": int(self._probe_meta.get("used_batches", 0)),
             "used_samples": int(self._probe_meta.get("used_samples", 0)),
@@ -663,6 +713,16 @@ class MultiSFLDriftTracker:
             "expA_A_c_ratio": [m.experiment_a.get("A_c_ratio") for m in self.measurements],
             "expA_A_c_rel": [m.experiment_a.get("A_c_rel") for m in self.measurements],
             "expA_B_c": [m.experiment_a.get("B_c") for m in self.measurements],
+            "expA_B_c_vs_sfl_iid_mu": [
+                m.experiment_a.get("B_c_vs_sfl_iid_mu") for m in self.measurements
+            ],
+            "expA_cos_c_vs_sfl_iid_mu": [
+                m.experiment_a.get("cos_c_vs_sfl_iid_mu") for m in self.measurements
+            ],
+            "expA_sfl_iid_mu_round_available": [
+                m.experiment_a.get("sfl_iid_mu_round_available")
+                for m in self.measurements
+            ],
             "expA_C_c": [m.experiment_a.get("C_c") for m in self.measurements],
             "expA_C_c_per_client_probe": [
                 m.experiment_a.get("C_c_per_client_probe") for m in self.measurements
