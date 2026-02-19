@@ -1,6 +1,7 @@
 from collections import deque
 from typing import TYPE_CHECKING
 
+import torch
 from torch import nn
 
 from .base_splitter import BaseSplitter
@@ -12,6 +13,22 @@ if TYPE_CHECKING:
     from .strategy.base_strategy import BaseStrategy
 
 
+class SequentialModuleDict(nn.ModuleDict):
+    """ModuleDict with a forward() that iterates layers sequentially.
+
+    This preserves .items() access for VGGPropagator while allowing
+    the module to be called directly (e.g. for probe direction computation).
+    """
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        for name, layer in self.items():
+            x = layer(x)
+            # Flatten after AdaptiveAvgPool (matches VGGPropagator behavior)
+            if isinstance(layer, nn.AdaptiveAvgPool2d):
+                x = torch.flatten(x, 1)
+        return x
+
+
 class VGGSplitter(BaseSplitter):
     def __init__(self, config: "Config", strategy: "BaseStrategy"):
         self.config = config
@@ -20,7 +37,7 @@ class VGGSplitter(BaseSplitter):
     def split(self, model: "Module", params: dict):
         split_points = deque(self.strategy.find_split_points(model, params))
         submodels = []
-        current_model = nn.ModuleDict()
+        current_model = SequentialModuleDict()
 
         def recurse_split(parent, prefix=""):
             nonlocal current_model
@@ -36,7 +53,7 @@ class VGGSplitter(BaseSplitter):
                     if len(split_points) > 0 and full_name == split_points[0]:
                         submodels.append(current_model)
                         split_points.popleft()
-                        current_model = nn.ModuleDict()
+                        current_model = SequentialModuleDict()
 
         recurse_split(model)
 
