@@ -50,7 +50,7 @@
   "_probe_source": "Probe source split: test | train",
   "probe_source": "test",
   "_client_schedule_path": "Fixed client schedule JSON for Experiment A (P_t fixed across methods).",
-  "client_schedule_path": "experiment_configs/client_schedule.json",
+  "client_schedule_path": "experiment_configs/client_schedule_fmnist.json",
   "_probe_indices_path": "Optional JSON/TXT indices file for fixed probe set. Empty = no file.",
   "probe_indices_path": "",
   "_probe_num_samples": "If >0 and no indices file, sample fixed probe subset of this size with probe_seed. (CIFAR-10 recommendation: 5000)",
