@@ -1,7 +1,11 @@
 import asyncio
+import random
 import time
 from dataclasses import fields
 from typing import TYPE_CHECKING
+
+import numpy as np
+import torch
 
 from client_args import ServerConfig
 
@@ -30,6 +34,19 @@ class Trainer:
         self.dataset = None
         self.stage_organizer = None
 
+    def _set_client_seed(self, seed: int) -> None:
+        seed = int(seed)
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(seed)
+            torch.cuda.manual_seed_all(seed)
+        if hasattr(torch.backends, "cudnn"):
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
+        vprint(f"[Client] Deterministic seed set: {seed}", 2)
+
     async def initialize(self):
         server_config = await self.api.request_server_config()
         # Server config may include server-only extension keys that clients do
@@ -47,6 +64,7 @@ class Trainer:
                 2,
             )
         self.server_config = ServerConfig(**filtered_server_config)
+        self._set_client_seed(getattr(self.server_config, "seed", 42))
 
         vprint("Initialized server config", 2)
 
