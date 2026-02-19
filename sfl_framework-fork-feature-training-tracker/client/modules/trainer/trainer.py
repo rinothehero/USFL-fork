@@ -1,5 +1,6 @@
 import asyncio
 import time
+from dataclasses import fields
 from typing import TYPE_CHECKING
 
 from client_args import ServerConfig
@@ -31,7 +32,21 @@ class Trainer:
 
     async def initialize(self):
         server_config = await self.api.request_server_config()
-        self.server_config = ServerConfig(**server_config)
+        # Server config may include server-only extension keys that clients do
+        # not consume. Filter unknown keys to keep client bootstrapping robust.
+        allowed_keys = {f.name for f in fields(ServerConfig)}
+        filtered_server_config = {
+            k: v for k, v in server_config.items() if k in allowed_keys
+        }
+        dropped_keys = sorted(
+            [k for k in server_config.keys() if k not in allowed_keys]
+        )
+        if dropped_keys:
+            vprint(
+                f"[Client] Ignoring unknown server config keys: {', '.join(dropped_keys)}",
+                2,
+            )
+        self.server_config = ServerConfig(**filtered_server_config)
 
         vprint("Initialized server config", 2)
 
