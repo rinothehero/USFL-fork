@@ -432,10 +432,12 @@ cmd_run() {
         if [[ -z "$server_flag" ]]; then
             die "--server is required for interactive mode"
         fi
-        local ssh_host remote_repo conda_env
+        local ssh_host remote_repo conda_env env_type
         ssh_host=$(get_server_field "$server_flag" "ssh_host")
         remote_repo=$(get_server_field "$server_flag" "remote_repo")
         conda_env=$(get_server_field "$server_flag" "conda_env")
+        env_type=$(get_server_field "$server_flag" "env_type")
+        env_type="${env_type:-conda}"
 
         local branch
         branch=$(get_deploy_branch)
@@ -467,7 +469,7 @@ cmd_run() {
             git checkout $branch -q && \
             git reset --hard origin/$branch && \
             tmux new-session -s '$session_name' \
-            'bash deploy/remote_run.sh $conda_env --interactive 2>&1 | tee experiment.log'"
+            'bash deploy/remote_run.sh $env_type $conda_env --interactive 2>&1 | tee experiment.log'"
         return
     fi
 
@@ -604,10 +606,12 @@ cmd_run() {
         local gpu="${key#*:}"
         local methods="${GROUP_METHODS[$i]}"
         (
-            local ssh_host remote_repo conda_env
+            local ssh_host remote_repo conda_env env_type
             ssh_host=$(get_server_field "$server" "ssh_host")
             remote_repo=$(get_server_field "$server" "remote_repo")
             conda_env=$(get_server_field "$server" "conda_env")
+            env_type=$(get_server_field "$server" "env_type")
+            env_type="${env_type:-conda}"
 
             # Generate spec (supports multiple methods → sequential execution)
             local methods_space="${methods//+/ }"
@@ -642,7 +646,7 @@ cmd_run() {
             # shellcheck disable=SC2029
             ssh "$ssh_host" "cd $remote_repo && \
                 tmux new-session -d -s '$session_name' \
-                'bash deploy/remote_run.sh $conda_env $remote_spec 2>&1 | tee experiment_${methods}-g${gpu_safe}-${_run_id}.log'"
+                'bash deploy/remote_run.sh $env_type $conda_env $remote_spec 2>&1 | tee experiment_${methods}-g${gpu_safe}-${_run_id}.log'"
 
             local methods_display="${methods//+/, }"
             echo "[$server] $methods_display → GPU $gpu (tmux: $session_name)"
@@ -1049,16 +1053,22 @@ cmd_servers() {
     echo ""
 
     for server in $(list_servers); do
-        local ssh_host gpus conda_env remote_repo
+        local ssh_host gpus conda_env remote_repo env_type
         ssh_host=$(get_server_field "$server" "ssh_host")
         gpus=$(jq -r ".servers.\"$server\".gpus | join(\", \")" "$CONFIG_FILE")
         conda_env=$(get_server_field "$server" "conda_env")
         remote_repo=$(get_server_field "$server" "remote_repo")
+        env_type=$(get_server_field "$server" "env_type")
+        env_type="${env_type:-conda}"
 
         echo "  $server"
         echo "    SSH:    $ssh_host"
         echo "    Repo:   $remote_repo"
-        echo "    Conda:  $conda_env"
+        if [[ "$env_type" == "conda" ]]; then
+            echo "    Env:    conda ($conda_env)"
+        else
+            echo "    Env:    $env_type"
+        fi
         echo "    GPUs:   [$gpus]"
 
         # Try to get live GPU info

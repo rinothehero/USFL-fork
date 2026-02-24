@@ -44,6 +44,16 @@
         2,
         3
       ]
+    },
+    "b200": {
+      "ssh_host": "b200",
+      "remote_repo": "/data/rntierdata/repo/e8abad4f-009c-5abd-beb3-6832cfa1e0d6/default/home/g_yang/project/USFL-fork",
+      "env_type": "uv",
+      "conda_env": "",
+      "gpus": [
+        0,
+        1
+      ]
     }
   },
   "gdrive_rclone_remote": "",
