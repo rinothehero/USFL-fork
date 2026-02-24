@@ -19,6 +19,17 @@ class MNIST(BaseDataset):
         self.mask_ids = config.mask_ids
         self.trainset: MaskableDataset | None = None
         self.trainloader: DataLoader | None = None
+        self._loader_seed = self._build_loader_seed()
+        self._loader_generator = torch.Generator()
+        self._loader_generator.manual_seed(self._loader_seed)
+
+    def _build_loader_seed(self) -> int:
+        base_seed = int(getattr(self.config, "seed", 0))
+        mask_ids = list(getattr(self.config, "mask_ids", []) or [])
+        checksum = 0
+        for idx, value in enumerate(mask_ids[:2048]):
+            checksum = (checksum + (idx + 1) * int(value)) % 2147483647
+        return (base_seed + checksum) % 2147483647
 
     def _download_dataset(self) -> MaskableDataset:
         if self.config.dataset == "mnist":
@@ -64,6 +75,7 @@ class MNIST(BaseDataset):
                 dataset=self.trainset,
                 batch_size=self.config.batch_size,
                 shuffle=True,
+                generator=self._loader_generator,
                 drop_last=False,  # Server handles batch_size=1 with eval mode
                 pin_memory=False,
             )

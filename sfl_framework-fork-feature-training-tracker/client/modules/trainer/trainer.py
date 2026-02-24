@@ -1,4 +1,5 @@
 import asyncio
+import os
 import random
 import time
 from dataclasses import fields
@@ -35,16 +36,23 @@ class Trainer:
         self.stage_organizer = None
 
     def _set_client_seed(self, seed: int) -> None:
-        seed = int(seed)
+        # Make per-client RNG stream deterministic and independent.
+        seed = int(seed) + int(getattr(self.config, "client_id", 0))
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
         if torch.cuda.is_available():
+            os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
             torch.cuda.manual_seed(seed)
             torch.cuda.manual_seed_all(seed)
+            if hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "matmul"):
+                torch.backends.cuda.matmul.allow_tf32 = False
         if hasattr(torch.backends, "cudnn"):
             torch.backends.cudnn.deterministic = True
             torch.backends.cudnn.benchmark = False
+            torch.backends.cudnn.allow_tf32 = False
+        if hasattr(torch, "use_deterministic_algorithms"):
+            torch.use_deterministic_algorithms(True, warn_only=True)
         vprint(f"[Client] Deterministic seed set: {seed}", 2)
 
     async def initialize(self):

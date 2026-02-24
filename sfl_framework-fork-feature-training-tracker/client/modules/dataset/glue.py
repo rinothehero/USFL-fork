@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING, Tuple
 
 from datasets import load_dataset
+import torch
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoTokenizer
 
@@ -20,6 +21,9 @@ class GLUEDataset(BaseDataset):
         self.config = config
         self.trainset: MaskableDataset | None = None
         self.trainloader: DataLoader | None = None
+        self._loader_seed = self._build_loader_seed()
+        self._loader_generator = torch.Generator()
+        self._loader_generator.manual_seed(self._loader_seed)
         self.tokenizer = AutoTokenizer.from_pretrained(self.config.glue_tokenizer)
         self.sentence_keys: dict[str, tuple[str, str | None]] = {
             "cola": ("sentence", None),
@@ -39,6 +43,14 @@ class GLUEDataset(BaseDataset):
             raise ValueError(f"Unknown dataset_name {self.config.dataset}")
 
         self.sentence1_key, self.sentence2_key = self.sentence_keys[self.config.dataset]
+
+    def _build_loader_seed(self) -> int:
+        base_seed = int(getattr(self.config, "seed", 0))
+        mask_ids = list(getattr(self.config, "mask_ids", []) or [])
+        checksum = 0
+        for idx, value in enumerate(mask_ids[:2048]):
+            checksum = (checksum + (idx + 1) * int(value)) % 2147483647
+        return (base_seed + checksum) % 2147483647
 
     def _download_dataset(self) -> Dataset:
         dataset = load_dataset(
@@ -88,6 +100,7 @@ class GLUEDataset(BaseDataset):
             train_dataset,
             batch_size=self.config.batch_size,
             shuffle=True,
+            generator=self._loader_generator,
             drop_last=True,  # For BatchNorm
         )
 
