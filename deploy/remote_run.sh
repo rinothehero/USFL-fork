@@ -15,7 +15,7 @@ set -euo pipefail
 ###############################################################################
 
 ENV_TYPE="${1:?Usage: remote_run.sh <env_type> <env_name> <spec_path|--interactive>}"
-ENV_NAME="${2:?Usage: remote_run.sh <env_type> <env_name> <spec_path|--interactive>}"
+ENV_NAME="${2?Usage: remote_run.sh <env_type> <env_name> <spec_path|--interactive>}"
 MODE="${3:---interactive}"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
