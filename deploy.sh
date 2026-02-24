@@ -469,7 +469,7 @@ cmd_run() {
             git checkout $branch -q && \
             git reset --hard origin/$branch && \
             tmux new-session -s '$session_name' \
-            'bash deploy/remote_run.sh $env_type $conda_env --interactive 2>&1 | tee experiment.log'"
+            'bash deploy/remote_run.sh $env_type \"$conda_env\" --interactive 2>&1 | tee experiment.log'"
         return
     fi
 
@@ -646,7 +646,7 @@ cmd_run() {
             # shellcheck disable=SC2029
             ssh "$ssh_host" "cd $remote_repo && \
                 tmux new-session -d -s '$session_name' \
-                'bash deploy/remote_run.sh $env_type $conda_env $remote_spec 2>&1 | tee experiment_${methods}-g${gpu_safe}-${_run_id}.log'"
+                'bash deploy/remote_run.sh $env_type \"$conda_env\" $remote_spec 2>&1 | tee experiment_${methods}-g${gpu_safe}-${_run_id}.log'"
 
             local methods_display="${methods//+/, }"
             echo "[$server] $methods_display → GPU $gpu (tmux: $session_name)"
