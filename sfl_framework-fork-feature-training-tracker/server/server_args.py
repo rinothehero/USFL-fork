@@ -302,6 +302,7 @@ def parse_args(custom_args=None):
             "alexnet",
             "alexnet_scala",
             "mobilenet",
+            "deit_s",
         ],
         required=True,
     )

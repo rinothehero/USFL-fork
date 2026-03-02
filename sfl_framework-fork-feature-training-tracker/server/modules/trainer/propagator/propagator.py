@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING
 
+from .deit_propagator import DeiTPropagator
 from .distilbert_propagator import DistilbertPropagator
 from .flexible_resnet_propagator import FlexibleResnetPropagator
 from .mobilenet_propagator import MobileNetPropagator
@@ -18,6 +19,8 @@ def get_propagator(config: "Config", model: "Module"):
         # FlexibleResnetPropagator: handles both Tensor and Tuple inputs
         # Supports layer boundary splits (layer2, layer3, layer4)
         return FlexibleResnetPropagator(model, config)
+    elif config.model == "deit_s":
+        return DeiTPropagator(model, config)
     elif config.model in ["vgg11", "tiny_vgg11", "lenet", "alexnet"]:
         return VGGPropagator(model, config)
     elif config.model == "mobilenet":

@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING
 
+from .deit_splitter import DeiTSplitter
 from .distilbert_splitter import DistilBertSplitter
 from .flexible_resnet_splitter import FlexibleResnetSplitter
 from .mobilenet_splitter import MobileNetSplitter
@@ -24,6 +25,8 @@ def get_splitter(config: "Config"):
         # FlexibleResnetSplitter: returns pre-built client/server models
         # Supports layer boundary splits (layer2, layer3, layer4)
         return FlexibleResnetSplitter(config)
+    elif config.model == "deit_s":
+        return DeiTSplitter(config)
     elif config.model == "mobilenet":
         return MobileNetSplitter(config, strategy)
     else:

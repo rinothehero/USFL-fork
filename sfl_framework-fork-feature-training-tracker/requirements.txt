@@ -10,6 +10,9 @@ torchvision==0.19.1
 # Note: Install with CUDA support using:
 # pip install torch==2.4.1 torchvision==0.19.1 --index-url https://download.pytorch.org/whl/cu121
 
+# --- Vision Transformers ---
+timm>=0.9.0
+
 # --- NLP / Transformers ---
 transformers==4.45.1
 tokenizers==0.20.0

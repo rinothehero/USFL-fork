@@ -1,0 +1,12 @@
+{
+  "_description": "SFL + DeiT-S baseline: CIFAR-10 Non-IID (shard_dirichlet, alpha=0.3).",
+  "_goal": "Measure ViT+SFL Non-IID performance degradation vs IID.",
+
+  "dataset": "cifar10",
+  "model": "deit_s",
+  "split_layer": "blocks.3",
+
+  "selector": "uniform",
+  "aggregator": "fedavg",
+  "server_model_aggregation": false
+}

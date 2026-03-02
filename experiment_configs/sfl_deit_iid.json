@@ -1,0 +1,13 @@
+{
+  "_description": "SFL + DeiT-S baseline: CIFAR-10 IID (uniform distribution).",
+  "_goal": "IID reference for ViT+SFL Non-IID comparison.",
+
+  "dataset": "cifar10",
+  "model": "deit_s",
+  "split_layer": "blocks.3",
+
+  "selector": "uniform",
+  "aggregator": "fedavg",
+  "server_model_aggregation": false,
+  "distributer": "uniform"
+}

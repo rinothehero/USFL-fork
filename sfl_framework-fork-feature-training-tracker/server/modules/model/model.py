@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING
 
 from .alexnet import AlexNet
+from .deit import DeiT
 from .distilbert import DistilBert
 from .lenet import LeNet
 from .mobilenet import MobileNet
@@ -27,6 +28,8 @@ def get_model(config: "Config", num_classes: int):
         return FlexibleResNet(config, num_classes)
     elif config.model == "alexnet" or config.model == "alexnet_scala":
         return AlexNet(config, num_classes)
+    elif config.model == "deit_s":
+        return DeiT(config, num_classes)
     elif config.model == "mobilenet":
         return MobileNet(config, num_classes)
     elif config.model == "lenet":
