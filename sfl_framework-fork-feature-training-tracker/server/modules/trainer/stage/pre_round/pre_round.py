@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import copy
 import pickle
 import time
 from typing import TYPE_CHECKING
@@ -102,7 +103,7 @@ class PreRound:
             {
                 "event": "start_round",
                 "params": {
-                    "model": torch_model.to("cpu"),  # Direct object (no pickle+hex)
+                    "model": copy.deepcopy(torch_model.to("cpu")),
                     "training_params": training_params,
                 },
             }
@@ -137,7 +138,7 @@ class PreRound:
             {
                 "event": "start_round",
                 "params": {
-                    "model": torch_model,  # Direct object (no pickle+hex)
+                    "model": copy.deepcopy(torch_model),
                     "training_params": training_params,
                 },
             }
