@@ -98,21 +98,19 @@ class PreRound:
         connection: "Connection",
         training_params: dict,
     ):
-        serialized_models = [
-            orjson.dumps(
-                {
-                    "event": "start_round",
-                    "params": {
-                        "model": pickle.dumps(torch_model.to("cpu")).hex(),
-                        "training_params": training_params,
-                    },
-                }
-            )
+        messages = [
+            {
+                "event": "start_round",
+                "params": {
+                    "model": torch_model.to("cpu"),  # Direct object (no pickle+hex)
+                    "training_params": training_params,
+                },
+            }
             for torch_model in torch_models
         ]
 
         await connection.send_bytes_batch(
-            data=serialized_models,
+            data=messages,
             client_ids=selected_clients,
             logging=True,
             on_start=lambda size, client_id: self.global_dict.add_event(
@@ -134,18 +132,15 @@ class PreRound:
         training_params: dict,
     ):
         torch_model = model.get_torch_model().to("cpu")
-        serialized_model = pickle.dumps(torch_model).hex()
 
         data_to_send = [
-            orjson.dumps(
-                {
-                    "event": "start_round",
-                    "params": {
-                        "model": serialized_model,
-                        "training_params": training_params,
-                    },
-                }
-            )
+            {
+                "event": "start_round",
+                "params": {
+                    "model": torch_model,  # Direct object (no pickle+hex)
+                    "training_params": training_params,
+                },
+            }
             for _ in selected_clients
         ]
 

@@ -98,7 +98,7 @@ class ScalaStageOrganizer(BaseStageOrganizer):
                 task.cancel()
                 return
 
-            await asyncio.sleep(0.0001)
+            await asyncio.sleep(0)
 
     async def run_post_round(self):
         task = asyncio.create_task(self._post_round())
@@ -109,4 +109,4 @@ class ScalaStageOrganizer(BaseStageOrganizer):
                 task.cancel()
                 return
 
-            await asyncio.sleep(0.0001)
+            await asyncio.sleep(0)

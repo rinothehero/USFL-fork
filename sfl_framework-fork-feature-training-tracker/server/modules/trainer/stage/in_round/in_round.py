@@ -64,7 +64,7 @@ class InRound:
             if time.time() > round_end_time:
                 break
 
-            await asyncio.sleep(0.0001)
+            await asyncio.sleep(0)
 
     async def wait_for_concatenated_activations(self, selected_clients: list[int]):
         activation_queue = self.global_dict.get("activation_queue")
@@ -83,7 +83,7 @@ class InRound:
             if current_length != previous_length:
                 previous_length = current_length
 
-            await asyncio.sleep(0.0001)
+            await asyncio.sleep(0)
 
     async def wait_for_activations(self):
         activation_queue = self.global_dict.get("activation_queue")
@@ -93,7 +93,7 @@ class InRound:
                 activation = activation_queue.popleft()
                 return activation
 
-            await asyncio.sleep(0.0001)
+            await asyncio.sleep(0)
 
     async def forward(self, torch_model: "ModuleDict", activation: dict):
         torch_model = torch_model.to(self.config.device)
@@ -320,17 +320,13 @@ class InRound:
     async def send_gradients(
         self, connection: "Connection", grads, client_id: int, model_index: int
     ):
-        grads = pickle.dumps(grads).hex()
-        await connection.send_bytes(
-            orjson.dumps(
-                {
-                    "event": "gradients",
-                    "params": {
-                        "gradients": grads,
-                        "model_index": model_index,
-                    },
-                }
-            ),
+        await connection.send_json(
+            {
+                "event": "gradients",
+                "params": {
+                    "gradients": grads,  # Direct object (no pickle+hex)
+                    "model_index": model_index,
+                },
+            },
             client_id,
-            logging=False,
         )

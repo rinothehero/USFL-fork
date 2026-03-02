@@ -7,6 +7,13 @@ if TYPE_CHECKING:
     from modules.ws.connection import Connection
 
 
+def _parse_message(message):
+    """Parse message from connection: dict (InMemory) or string (WebSocket)."""
+    if isinstance(message, dict):
+        return message
+    return orjson.loads(message)
+
+
 class CommonAPI:
     def __init__(self, connection: "Connection"):
         self.connection = connection
@@ -19,9 +26,8 @@ class CommonAPI:
             }
         )
 
-        config = await self.connection.receive_message()
-
-        return orjson.loads(config)["data"]
+        message = await self.connection.receive_message()
+        return _parse_message(message)["data"]
 
     async def notify_wait_for_training(self):
         await self.connection.send_json(
@@ -42,29 +48,41 @@ class CommonAPI:
     async def wait_for_start_round(self):
         while True:
             message = await self.connection.receive_message()
-            message = orjson.loads(message)
+            parsed = _parse_message(message)
 
-            if message["event"] == "start_round":
-                global_model = bytes.fromhex(message["params"]["model"])
+            if parsed["event"] == "start_round":
+                model_raw = parsed["params"]["model"]
+                if isinstance(model_raw, str):
+                    # WebSocket path: hex-encoded pickle
+                    global_model = pickle.loads(bytes.fromhex(model_raw))
+                else:
+                    # InMemory direct path: already a Python object
+                    global_model = model_raw
 
                 return (
-                    pickle.loads(global_model),
-                    message["params"]["training_params"],
+                    global_model,
+                    parsed["params"]["training_params"],
                 )
-            elif message["event"] == "kill_round":
+            elif parsed["event"] == "kill_round":
                 return (None, None)
 
     async def wait_for_gradients(self):
         while True:
             message = await self.connection.receive_message()
-            message = orjson.loads(message)
+            parsed = _parse_message(message)
 
-            if message["event"] == "gradients":
-                gradients = bytes.fromhex(message["params"]["gradients"])
+            if parsed["event"] == "gradients":
+                grads_raw = parsed["params"]["gradients"]
+                if isinstance(grads_raw, str):
+                    # WebSocket path: hex-encoded pickle
+                    gradients = pickle.loads(bytes.fromhex(grads_raw))
+                else:
+                    # InMemory direct path: already a tensor/tuple
+                    gradients = grads_raw
 
                 return (
-                    pickle.loads(gradients),
-                    message["params"]["model_index"],
+                    gradients,
+                    parsed["params"]["model_index"],
                 )
 
     async def submit_activations(self, activations: dict, signiture: str):
@@ -72,7 +90,7 @@ class CommonAPI:
             {
                 "event": "submit_activations",
                 "params": {
-                    "activations": pickle.dumps(activations).hex(),
+                    "activations": activations,  # Direct dict (no pickle+hex)
                     "signiture": signiture,
                 },
             },
@@ -85,7 +103,7 @@ class CommonAPI:
             {
                 "event": "submit_model",
                 "params": {
-                    "model": pickle.dumps(model).hex(),
+                    "model": model,  # Direct object (no pickle+hex)
                     "signiture": signiture,
                     **params,
                 },

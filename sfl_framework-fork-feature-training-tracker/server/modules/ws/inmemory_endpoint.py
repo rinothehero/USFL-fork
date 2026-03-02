@@ -29,10 +29,17 @@ class InMemoryEndpoint:
                 if message is None:
                     break
 
-                try:
-                    message_data = orjson.loads(message)
-                except orjson.JSONDecodeError:
-                    vprint(f"Invalid JSON from client {client_id}", 0)
+                # Handle both direct dicts (InMemory) and serialized strings
+                if isinstance(message, dict):
+                    message_data = message
+                elif isinstance(message, (bytes, str)):
+                    try:
+                        message_data = orjson.loads(message)
+                    except (orjson.JSONDecodeError, TypeError):
+                        vprint(f"Invalid message from client {client_id}", 0)
+                        continue
+                else:
+                    vprint(f"Unknown message type from client {client_id}: {type(message)}", 0)
                     continue
 
                 event = message_data.get("event")
@@ -46,9 +53,7 @@ class InMemoryEndpoint:
                 response: dict = await handler({"client_id": client_id, **params})
 
                 if response is not None:
-                    await self.connection.send_bytes(
-                        orjson.dumps(response), client_id, logging=False
-                    )
+                    await self.connection.send_json(response, client_id)
 
         except DisconnectedError:
             pass

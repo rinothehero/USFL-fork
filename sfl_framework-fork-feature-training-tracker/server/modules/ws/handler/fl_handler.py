@@ -30,8 +30,15 @@ class FLHandler(BaseHandler):
         return None
 
     async def _submit_model(self, params: dict):
-        model = pickle.loads(bytes.fromhex(params["model"]))
-        model_size = len(params["model"])
+        model_raw = params["model"]
+        if isinstance(model_raw, str):
+            # WebSocket path: hex-encoded pickle
+            model = pickle.loads(bytes.fromhex(model_raw))
+            model_size = len(model_raw)
+        else:
+            # InMemory direct path: already a Python object
+            model = model_raw
+            model_size = 0
         signiture = params["signiture"]
 
         for key in ["model", "signiture"]:

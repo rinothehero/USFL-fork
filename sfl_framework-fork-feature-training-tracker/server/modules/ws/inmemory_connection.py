@@ -1,8 +1,5 @@
 import asyncio
-from typing import TYPE_CHECKING, Callable, Dict
-
-import orjson
-from tqdm import tqdm
+from typing import TYPE_CHECKING, Dict
 
 from utils.log_utils import vprint
 
@@ -18,6 +15,12 @@ class DisconnectedError(Exception):
 
 
 class InMemoryConnection:
+    """Zero-serialization in-memory connection for simulation mode.
+
+    All data is passed as Python objects directly through asyncio.Queue.
+    No pickle, no hex encoding, no START/END markers.
+    """
+
     def __init__(self, config: "Config", global_dict: "GlobalDict"):
         self.config = config
         self.global_dict = global_dict
@@ -47,18 +50,23 @@ class InMemoryConnection:
         return list(self.active_connections.keys())
 
     async def send_json(self, data: dict, client_id: int):
-        await self.send_bytes(orjson.dumps(data), client_id)
+        """Send dict directly (no serialization in simulation mode)."""
+        conn = self.active_connections.get(client_id)
+        if not conn or not conn["connected"]:
+            raise DisconnectedError(f"Client {client_id} is not connected")
+        await conn["to_client_queue"].put(data)
 
-    async def broadcast(self, data: bytes):
+    async def broadcast(self, data, **kwargs):
         for client_id in self.active_connections.keys():
-            await self.send_bytes(data, client_id)
+            await self.send_json(data, client_id) if isinstance(data, dict) else await self.send_bytes(data, client_id)
 
     async def broadcast_json(self, data: dict):
-        await self.broadcast(orjson.dumps(data))
+        for client_id in self.active_connections.keys():
+            await self.send_json(data, client_id)
 
     async def send_bytes_batch(
         self,
-        data: list[bytes],
+        data: list,
         client_ids: list[int],
         logging=True,
         on_start=None,
@@ -75,7 +83,7 @@ class InMemoryConnection:
 
     async def send_bytes_concurrently(
         self,
-        data: list[bytes],
+        data: list,
         client_ids: list[int],
         logging=True,
         on_start=None,
@@ -103,64 +111,30 @@ class InMemoryConnection:
         return True
 
     async def send_bytes(
-        self, data: bytes, client_id: int, logging=True, on_start=None, on_end=None
+        self, data, client_id: int, logging=True, on_start=None, on_end=None
     ):
-
+        """Send data directly through queue (no START/END markers)."""
         conn = self.active_connections.get(client_id)
         if not conn or not conn["connected"]:
             raise DisconnectedError(f"Client {client_id} is not connected")
 
-        start_marker = b"<START>"
-        end_marker = b"<END>"
-        chunk_size = 5 * 1024 * 1024
-
-        await conn["to_client_queue"].put(start_marker)
-
         if on_start:
-            on_start(len(data), client_id)
+            on_start(len(data) if isinstance(data, (bytes, str)) else 0, client_id)
 
         await conn["to_client_queue"].put(data)
-        await conn["to_client_queue"].put(end_marker)
 
         if on_end:
-            on_end(len(data), client_id)
-
-        # self.global_dict.add_event(
-        #     "SEND_BYTES", {"client_id": client_id, "data_size": len(data)}
-        # )
+            on_end(len(data) if isinstance(data, (bytes, str)) else 0, client_id)
 
         return True
 
     async def receive_message(self, client_id: int):
+        """Receive message directly from queue.
+
+        Returns whatever the client put: dict, bytes, or string.
+        """
         conn = self.active_connections.get(client_id)
         if not conn or not conn["connected"]:
             raise DisconnectedError(f"Client {client_id} is not connected")
 
-        data = b""
-        start_marker = b"<START>"
-        end_marker = b"<END>"
-        receiving = False
-
-        try:
-            while True:
-                chunk = await conn["from_client_queue"].get()
-                if start_marker in chunk:
-                    receiving = True
-                    data = b""
-                    chunk = chunk.replace(start_marker, b"")
-                if end_marker in chunk:
-                    chunk = chunk.replace(end_marker, b"")
-                    data += chunk
-                    break
-                if receiving:
-                    data += chunk
-        except Exception as e:
-            vprint(f"Server: Error receiving data from client {client_id}: {e}", 0)
-            return None
-
-        # self.global_dict.add_event(
-        #     "RECEIVE_MESSAGE",
-        #     {"client_id": client_id, "data_size": len(data)},
-        # )
-
-        return data.decode("utf-8")
+        return await conn["from_client_queue"].get()

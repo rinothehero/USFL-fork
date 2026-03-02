@@ -27,7 +27,13 @@ class SFLHandler(FLHandler):
             vprint(f"Signiture mismatch: {signiture} != {model_queue.signiture}", 0)
             return {"event": "submit_activations", "data": {}}
 
-        activations = pickle.loads(bytes.fromhex(params["activations"]))
+        activations_raw = params["activations"]
+        if isinstance(activations_raw, str):
+            # WebSocket path: hex-encoded pickle
+            activations = pickle.loads(bytes.fromhex(activations_raw))
+        else:
+            # InMemory direct path: already a Python dict
+            activations = activations_raw
         self.global_dict.get("activation_queue").append(activations)
 
         return None
