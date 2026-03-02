@@ -29,13 +29,13 @@ from typing import Any, Dict, List, Optional
 
 FRAMEWORK_MAP = {
     "sfl": "sfl", "sfl_iid": "sfl", "usfl": "sfl", "scaffold": "sfl", "mix2sfl": "sfl",
-    "sfl_deit_iid": "sfl", "sfl_deit_noniid": "sfl",
+    "sfl_deit_iid": "sfl", "sfl_deit_noniid": "sfl", "usfl_deit_noniid": "sfl",
     "gas": "gas", "multisfl": "multisfl",
 }
 
 METHOD_NAME_MAP = {
     "sfl": "sfl", "sfl_iid": "sfl", "usfl": "usfl", "scaffold": "scaffold_sfl", "mix2sfl": "mix2sfl",
-    "sfl_deit_iid": "sfl", "sfl_deit_noniid": "sfl",
+    "sfl_deit_iid": "sfl", "sfl_deit_noniid": "sfl", "usfl_deit_noniid": "usfl",
     "gas": "gas", "multisfl": "multisfl",
 }
 

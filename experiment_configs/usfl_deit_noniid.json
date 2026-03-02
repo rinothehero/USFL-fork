@@ -1,0 +1,29 @@
+{
+  "_description": "USFL + DeiT-S: CIFAR-10 Non-IID (shard_dirichlet, alpha=0.3) with USFL optimizations.",
+
+  "dataset": "cifar10",
+  "model": "deit_s",
+  "split_layer": "blocks.3",
+
+  "selector": "usfl",
+  "aggregator": "fedavg",
+
+  "scale_server_lr": true,
+  "scale_client_grad": true,
+
+  "gradient_shuffle": true,
+  "gradient_shuffle_strategy": "random",
+  "gradient_shuffle_target": "all",
+  "gradient_average_weight": 0.5,
+  "adaptive_alpha_beta": 2.0,
+
+  "balancing_strategy": "target",
+  "balancing_target": "mean",
+  "use_data_replication": false,
+
+  "use_dynamic_batch_scheduler": true,
+  "use_additional_epoch": false,
+
+  "use_cumulative_usage": false,
+  "use_fresh_scoring": false
+}
