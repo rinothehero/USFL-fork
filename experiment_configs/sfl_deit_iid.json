@@ -5,6 +5,7 @@
   "dataset": "cifar10",
   "model": "deit_s",
   "split_layer": "blocks.3",
+  "client_schedule_path": "experiment_configs/client_schedule.json",
 
   "selector": "uniform",
   "aggregator": "fedavg",
