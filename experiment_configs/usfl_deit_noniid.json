@@ -6,8 +6,7 @@
   "split_layer": "blocks.3",
   "client_schedule_path": "",
 
-  "_selector_note": "usfl selector fails with extreme Non-IID on b200 (distribution mismatch). Using uniform + USFL optimizations.",
-  "selector": "uniform",
+  "selector": "usfl",
   "aggregator": "fedavg",
 
   "scale_server_lr": true,
