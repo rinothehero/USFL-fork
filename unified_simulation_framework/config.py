@@ -17,8 +17,12 @@ def _setup_sfl_path() -> Path:
     """Add SFL framework directories to sys.path (idempotent)."""
     repo_root = Path(__file__).resolve().parent.parent
     sfl_dir = repo_root / "sfl_framework-fork-feature-training-tracker"
-    paths_to_add = [str(sfl_dir), str(sfl_dir / "server"), str(sfl_dir / "client")]
-    for p in paths_to_add:
+    # Order matters! Insert client first, then server, then sfl_dir.
+    # sys.path.insert(0, ...) pushes previous entries back, so final order is:
+    #   sfl_dir → server → client → ...
+    # This matches sfl_runner.py and ensures server's modules/ takes priority
+    # over client's modules/ (client has a different get_dataset that expects mask_ids).
+    for p in [str(sfl_dir / "client"), str(sfl_dir / "server"), str(sfl_dir)]:
         if p not in sys.path:
             sys.path.insert(0, p)
     return sfl_dir
