@@ -109,10 +109,11 @@ def create_optimizer(model: nn.Module, config) -> torch.optim.Optimizer:
 
 def create_server_optimizer(model: nn.Module, config) -> torch.optim.Optimizer:
     """Create server-side optimizer (may use scaled LR)."""
-    lr = config.server_learning_rate
     if config.scale_server_lr:
         lr = config.learning_rate * config.num_clients_per_round
-    elif not lr or lr == config.learning_rate:
+    elif config.server_learning_rate is not None and config.server_learning_rate != config.learning_rate:
+        lr = config.server_learning_rate
+    else:
         lr = config.learning_rate
 
     if config.optimizer_name == "sgd":
