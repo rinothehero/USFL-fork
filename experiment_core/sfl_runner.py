@@ -131,7 +131,7 @@ def spec_to_workload(spec: Dict[str, Any]) -> Dict[str, str]:
         "model": str(common["model"]),
         "method": method,
         "criterion": "ce",
-        "optimizer": "sgd",
+        "optimizer": "adamw",
         "learning_rate": str(common["learning_rate"]),
         "momentum": str(common["momentum"]),
         "local_epochs": str(common["local_epochs"]),
