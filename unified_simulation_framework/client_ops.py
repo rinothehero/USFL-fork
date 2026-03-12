@@ -112,7 +112,7 @@ def create_server_optimizer(model: nn.Module, config) -> torch.optim.Optimizer:
     lr = config.server_learning_rate
     if config.scale_server_lr:
         lr = config.learning_rate * config.num_clients_per_round
-    elif lr == 0.0 or lr == config.learning_rate:
+    elif not lr or lr == config.learning_rate:
         lr = config.learning_rate
 
     if config.optimizer_name == "sgd":
