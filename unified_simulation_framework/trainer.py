@@ -76,7 +76,7 @@ class SimTrainer:
         self.dataset_obj = get_dataset(cfg)
         self.dataset_obj.initialize()
         self.trainset = self.dataset_obj.get_trainset()
-        self.testloader = self.dataset_obj.get_testloader(cfg.batch_size)
+        self.testloader = self.dataset_obj.get_testloader()
         self.num_classes = self.dataset_obj.get_num_classes()
 
         # Model
