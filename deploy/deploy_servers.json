@@ -45,14 +45,15 @@
         3
       ]
     },
-    "b200": {
-      "ssh_host": "b200",
-      "remote_repo": "/data/rntierdata/repo/e8abad4f-009c-5abd-beb3-6832cfa1e0d6/default/home/g_yang/project/USFL-fork",
-      "env_type": "uv",
-      "conda_env": "",
+    "xsailor7": {
+      "ssh_host": "xsailor7-pj",
+      "remote_repo": "/home/xsailor7/jhkang/USFL-fork",
+      "conda_env": "usfl_env",
       "gpus": [
         0,
-        1
+        1,
+        2,
+        3
       ]
     }
   },
