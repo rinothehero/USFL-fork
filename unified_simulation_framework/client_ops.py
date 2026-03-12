@@ -1,0 +1,237 @@
+"""
+Stateless client-side SFL operations.
+
+Pure functions — no async, no queues, no communication protocol.
+Each function takes explicit inputs and returns explicit outputs.
+"""
+from __future__ import annotations
+
+from collections import Counter
+from dataclasses import dataclass, field
+from typing import Any, Dict, Iterator, List, Optional, Tuple
+
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader, Subset
+
+
+@dataclass
+class ClientState:
+    """Per-client training state for one round."""
+    client_id: int
+    client_model: nn.Module
+    optimizer: torch.optim.Optimizer
+    dataloader: DataLoader
+    data_iter: Iterator
+    label_distribution: Dict[int, int]
+    dataset_size: int
+    extra: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ClientResult:
+    """Result of one client's training in a round."""
+    client_id: int
+    model_state_dict: dict
+    dataset_size: int
+    label_distribution: Dict[int, int]
+    extra: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class RoundContext:
+    """Everything needed to execute one SFL round."""
+    round_number: int
+    selected_client_ids: List[int]
+    client_states: Dict[int, ClientState]
+    server_model: nn.Module
+    server_optimizer: torch.optim.Optimizer
+    criterion: nn.Module
+    iterations: int
+    device: torch.device
+    batch_schedule: Optional[dict] = None
+    extra: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class RoundResult:
+    """Final result of a training round."""
+    round_number: int
+    accuracy: float
+    loss: float
+    metrics: Dict[str, Any] = field(default_factory=dict)
+
+
+def snapshot_model(model: nn.Module) -> dict:
+    """Create a detached copy of model's state_dict. 10x cheaper than deepcopy."""
+    return {k: v.clone().detach() for k, v in model.state_dict().items()}
+
+
+def restore_model(model: nn.Module, state_dict: dict):
+    """Restore model parameters from snapshot."""
+    model.load_state_dict(state_dict)
+
+
+def get_label_distribution(dataset, indices: List[int]) -> Dict[int, int]:
+    """Compute label distribution for a subset of a dataset."""
+    if hasattr(dataset, "targets"):
+        targets = dataset.targets
+    elif hasattr(dataset, "labels"):
+        targets = dataset.labels
+    elif hasattr(dataset, "column_names") and "label" in dataset.column_names:
+        targets = dataset["label"]
+    else:
+        raise ValueError("Dataset does not have targets or labels attribute")
+
+    labels = [int(targets[i]) for i in indices]
+    return dict(Counter(labels))
+
+
+def create_optimizer(model: nn.Module, config) -> torch.optim.Optimizer:
+    """Create optimizer from config."""
+    lr = config.learning_rate
+    if config.optimizer_name == "sgd":
+        return torch.optim.SGD(
+            model.parameters(),
+            lr=lr,
+            momentum=config.momentum,
+            weight_decay=config.weight_decay,
+        )
+    elif config.optimizer_name in ("adam", "adamw"):
+        return torch.optim.AdamW(
+            model.parameters(),
+            lr=lr,
+            weight_decay=config.weight_decay,
+        )
+    else:
+        raise ValueError(f"Unknown optimizer: {config.optimizer_name}")
+
+
+def create_server_optimizer(model: nn.Module, config) -> torch.optim.Optimizer:
+    """Create server-side optimizer (may use scaled LR)."""
+    lr = config.server_learning_rate
+    if config.scale_server_lr:
+        lr = config.learning_rate * config.num_clients_per_round
+    elif lr == 0.0 or lr == config.learning_rate:
+        lr = config.learning_rate
+
+    if config.optimizer_name == "sgd":
+        return torch.optim.SGD(
+            model.parameters(),
+            lr=lr,
+            momentum=config.momentum,
+            weight_decay=config.weight_decay,
+        )
+    elif config.optimizer_name in ("adam", "adamw"):
+        return torch.optim.AdamW(
+            model.parameters(),
+            lr=lr,
+            weight_decay=config.weight_decay,
+        )
+    else:
+        raise ValueError(f"Unknown optimizer: {config.optimizer_name}")
+
+
+def create_criterion(config) -> nn.Module:
+    """Create loss function from config."""
+    if config.criterion_name == "ce":
+        return nn.CrossEntropyLoss()
+    elif config.criterion_name == "mse":
+        return nn.MSELoss()
+    else:
+        raise ValueError(f"Unknown criterion: {config.criterion_name}")
+
+
+def create_client_state(
+    client_id: int,
+    client_model: nn.Module,
+    trainset,
+    data_indices: List[int],
+    config,
+    batch_size: Optional[int] = None,
+    augmented_sizes: Optional[Dict[int, int]] = None,
+) -> ClientState:
+    """Create a ClientState for one client in one round."""
+    if augmented_sizes is not None:
+        # USFL: use MaskableDataset for data balancing
+        from client.modules.dataset.maskable_dataset import MaskableDataset
+        dataset = MaskableDataset(trainset, data_indices)
+        dataset.update_amount_per_label(augmented_sizes)
+    else:
+        dataset = Subset(trainset, data_indices)
+
+    bs = batch_size or config.batch_size
+    dataloader = DataLoader(dataset, batch_size=bs, shuffle=True, drop_last=False)
+    optimizer = create_optimizer(client_model, config)
+    label_dist = get_label_distribution(trainset, data_indices)
+
+    return ClientState(
+        client_id=client_id,
+        client_model=client_model,
+        optimizer=optimizer,
+        dataloader=dataloader,
+        data_iter=iter(dataloader),
+        label_distribution=label_dist,
+        dataset_size=len(dataset),
+    )
+
+
+def client_forward(
+    state: ClientState,
+    batch: Tuple[torch.Tensor, torch.Tensor],
+    device: torch.device,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Client-side forward pass.
+    Returns (activation, labels) where activation has grad enabled.
+    """
+    images, labels = batch
+    images = images.to(device)
+    labels = labels.to(device)
+
+    state.client_model.train()
+    activation = state.client_model(images)
+
+    # Detach from client graph, enable grad for server backward
+    activation = activation.detach().requires_grad_(True)
+    activation.retain_grad()
+
+    return activation, labels
+
+
+def client_backward(
+    state: ClientState,
+    images: torch.Tensor,
+    activation_grad: torch.Tensor,
+    config,
+):
+    """
+    Client-side backward pass: re-forward through client model and backprop
+    using the activation gradient received from server.
+    """
+    state.optimizer.zero_grad()
+
+    # Re-forward to build computation graph
+    state.client_model.train()
+    act = state.client_model(images)
+    act.backward(activation_grad)
+
+    if config.clip_grad:
+        nn.utils.clip_grad_norm_(
+            state.client_model.parameters(), config.clip_grad_max_norm
+        )
+
+    state.optimizer.step()
+
+
+def get_next_batch(
+    state: ClientState, device: torch.device
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Get next batch from client's dataloader, cycling if exhausted."""
+    try:
+        batch = next(state.data_iter)
+    except StopIteration:
+        state.data_iter = iter(state.dataloader)
+        batch = next(state.data_iter)
+    images, labels = batch
+    return images.to(device), labels.to(device)
