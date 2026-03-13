@@ -179,7 +179,8 @@ class SFLHook(BaseMethodHook):
 
         avg_loss = round_ctx.extra.get("avg_loss", 0.0)
         print(
-            f"[Round {round_number}] Accuracy: {accuracy:.4f}, Loss: {avg_loss:.4f}"
+            f"[Round {round_number}] Accuracy: {accuracy:.4f}, Loss: {avg_loss:.4f}",
+            flush=True,
         )
 
         return RoundResult(
