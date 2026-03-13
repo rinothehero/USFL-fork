@@ -147,21 +147,26 @@ class SimTrainer:
             return self._run_sfl_round_per_client(ctx)
 
     # =========================================================================
-    # Pattern A: Per-client sequential (SFL, SCAFFOLD, GAS, MultiSFL)
+    # Pattern A: Per-client interleaved (SFL, SCAFFOLD, GAS, MultiSFL)
     # =========================================================================
 
     def _run_sfl_round_per_client(self, ctx: RoundContext) -> List[ClientResult]:
         """
-        Per-client server training (ERRATA 1, Pattern A).
+        Interleaved per-client server training (ERRATA 1, Pattern A).
 
-        For each client:
-          1. Client forward → activation
-          2. Server forward on THIS client's activation → logits
-          3. Server backward + optimizer.step()
-          4. Client backward with activation grad
+        Matches the original SFL async behavior: process ONE batch from
+        each client per iteration, cycling through all clients. This prevents
+        catastrophic forgetting where one client monopolizes the server.
 
-        Server model is updated K times per iteration (once per client).
-        All clients start from the same global client model state.
+        Per iteration:
+          For each client:
+            1. Restore client state (shared nn.Module)
+            2. Client forward → activation
+            3. Server forward → logits → loss → backward → step
+            4. Client backward with activation grad
+            5. Save client state
+
+        Server model is updated N times per iteration (once per client).
         """
         client_states = ctx.client_states
         server_model = ctx.server_model
@@ -173,40 +178,38 @@ class SimTrainer:
         # Snapshot base client state (ERRATA 3: reference semantics)
         client_base_state = ctx.extra.get("client_base_state")
 
-        # Per-client iteration tracking
-        # Each client iterates through its full dataset for local_epochs
-        client_iters = {}
+        # Per-client state tracking via snapshots (all share one nn.Module)
+        client_snapshots = {}
         for cid in client_order:
-            state = client_states[cid]
-            n_batches = len(state.dataloader)
-            client_iters[cid] = self.config.local_epochs * n_batches
+            client_snapshots[cid] = {k: v.clone() for k, v in client_base_state.items()}
 
-        # Process each client sequentially.
-        # All clients share the same nn.Module reference, so we must
-        # restore base state before each client and snapshot after.
-        completed_snapshots = {}
-
+        # Total iterations = local_epochs × batches_per_epoch (per client)
+        # Clients with fewer batches cycle via get_next_batch's StopIteration handler
+        max_iters = 0
         for cid in client_order:
-            state = client_states[cid]
+            n_batches = len(client_states[cid].dataloader)
+            total = self.config.local_epochs * n_batches
+            max_iters = max(max_iters, total)
 
-            # Restore client model to base state (all start from same global model)
-            if client_base_state is not None:
-                restore_model(state.client_model, client_base_state)
+        client_model = next(iter(client_states.values())).client_model
 
-            total_iters = client_iters[cid]
+        total_loss = 0.0
+        loss_count = 0
 
-            for it in range(total_iters):
-                # Reset data iterator at epoch boundaries
-                if it > 0 and it % len(state.dataloader) == 0:
-                    state.data_iter = iter(state.dataloader)
+        for it in range(max_iters):
+            for cid in client_order:
+                state = client_states[cid]
 
-                # 1. Get batch
+                # 1. Restore this client's state
+                restore_model(client_model, client_snapshots[cid])
+
+                # 2. Get batch
                 images, labels = get_next_batch(state, device)
 
-                # 2. Client forward
+                # 3. Client forward
                 activation, labels = client_forward(state, (images, labels), device)
 
-                # 3. Server forward
+                # 4. Server forward
                 if activation.size(0) == 1:
                     server_model.eval()
                 else:
@@ -215,33 +218,36 @@ class SimTrainer:
                 server_optimizer.zero_grad()
                 logits = server_model(activation)
 
-                # 4. Compute loss (hookable for GAS logit adjustment)
+                # 5. Compute loss (hookable for GAS logit adjustment)
                 loss = self.hook.compute_loss(
                     logits, labels, criterion, ctx, client_id=cid
                 )
 
-                # 5. Server backward + step
+                # 6. Server backward + step
                 loss.backward()
                 server_optimizer.step()
+                total_loss += loss.item()
+                loss_count += 1
 
-                # 6. Get activation gradient
+                # 7. Get activation gradient
                 activation_grad = activation.grad.clone().detach()
 
-                # 7. Client backward
+                # 8. Client backward
                 client_backward(state, images, activation_grad, self.config)
 
-            # Snapshot IMMEDIATELY after this client finishes training.
-            # If we wait until after all clients, the shared model has only
-            # the last client's state.
-            completed_snapshots[cid] = snapshot_model(state.client_model)
+                # 9. Save this client's updated state
+                client_snapshots[cid] = snapshot_model(client_model)
 
-        # Collect results from snapshots
+        # Store avg loss for diagnostics
+        ctx.extra["avg_loss"] = total_loss / max(loss_count, 1)
+
+        # Collect results from per-client snapshots
         client_results = []
         for cid in client_order:
             state = client_states[cid]
             result = ClientResult(
                 client_id=cid,
-                model_state_dict=completed_snapshots[cid],
+                model_state_dict=client_snapshots[cid],
                 dataset_size=state.dataset_size,
                 label_distribution=state.label_distribution,
             )

@@ -174,14 +174,15 @@ class SFLHook(BaseMethodHook):
         # 4. Evaluate
         accuracy = model.evaluate(self.resources["testloader"])
 
+        avg_loss = round_ctx.extra.get("avg_loss", 0.0)
         print(
-            f"[Round {round_number}] Accuracy: {accuracy:.4f}"
+            f"[Round {round_number}] Accuracy: {accuracy:.4f}, Loss: {avg_loss:.4f}"
         )
 
         return RoundResult(
             round_number=round_number,
             accuracy=accuracy,
-            loss=0.0,
+            loss=avg_loss,
             metrics={
                 "selected_clients": round_ctx.selected_client_ids,
             },
