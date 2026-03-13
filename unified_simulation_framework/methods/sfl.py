@@ -83,22 +83,23 @@ class SFLHook(BaseMethodHook):
         server_optimizer = create_server_optimizer(server_module, config)
         criterion = create_criterion(config)
 
-        # 6. Create ClientState for each selected client
+        # 6. Create ClientState for each selected client.
+        #    Each client gets its own deep-copied model so they can train
+        #    independently without snapshot/restore overhead per iteration.
         client_states = {}
         for cid in sorted(selected):
-            # Restore client model to base state before creating state
-            restore_model(client_module, client_base_state)
+            client_copy = copy.deepcopy(client_module)
+            client_copy.load_state_dict(client_base_state)
+            client_copy.to(device)
             indices = client_data_masks[cid]
 
             state = create_client_state(
                 client_id=cid,
-                client_model=client_module,
+                client_model=client_copy,
                 trainset=trainset,
                 data_indices=indices,
                 config=config,
             )
-            # Snapshot this client's starting state
-            state.extra["initial_state"] = client_base_state
             client_states[cid] = state
 
         # 7. Calculate iterations
@@ -118,7 +119,6 @@ class SFLHook(BaseMethodHook):
             device=device,
             extra={
                 "client_base_state": client_base_state,
-                "client_module_ref": client_module,
             },
         )
 
@@ -135,13 +135,16 @@ class SFLHook(BaseMethodHook):
 
         # 1. Build models and params for aggregator
         #    aggregator.aggregate expects: (models: List[Module], params: List[dict])
-        client_module_ref = round_ctx.extra["client_module_ref"]
+        #    Each client already has its own model copy — just load final state
+        client_models_map = {
+            cid: state.client_model
+            for cid, state in round_ctx.client_states.items()
+        }
         models = []
         params = []
 
         for result in client_results:
-            # Create a temporary model with this client's state
-            m = copy.deepcopy(client_module_ref)
+            m = client_models_map[result.client_id]
             m.load_state_dict(result.model_state_dict)
             models.append(m)
 

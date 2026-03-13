@@ -158,13 +158,14 @@ class SimTrainer:
         each client per iteration, cycling through all clients. This prevents
         catastrophic forgetting where one client monopolizes the server.
 
+        Each client has its own independent nn.Module copy (created in
+        pre_round), so no snapshot/restore overhead per iteration.
+
         Per iteration:
           For each client:
-            1. Restore client state (shared nn.Module)
-            2. Client forward → activation
-            3. Server forward → logits → loss → backward → step
-            4. Client backward with activation grad
-            5. Save client state
+            1. Client forward (own model) → activation
+            2. Server forward → logits → loss → backward → step
+            3. Client backward with activation grad (own model)
 
         Server model is updated N times per iteration (once per client).
         """
@@ -175,14 +176,6 @@ class SimTrainer:
         device = ctx.device
         client_order = sorted(client_states.keys())
 
-        # Snapshot base client state (ERRATA 3: reference semantics)
-        client_base_state = ctx.extra.get("client_base_state")
-
-        # Per-client state tracking via snapshots (all share one nn.Module)
-        client_snapshots = {}
-        for cid in client_order:
-            client_snapshots[cid] = {k: v.clone() for k, v in client_base_state.items()}
-
         # Total iterations = local_epochs × batches_per_epoch (per client)
         # Clients with fewer batches cycle via get_next_batch's StopIteration handler
         max_iters = 0
@@ -191,8 +184,6 @@ class SimTrainer:
             total = self.config.local_epochs * n_batches
             max_iters = max(max_iters, total)
 
-        client_model = next(iter(client_states.values())).client_model
-
         total_loss = 0.0
         loss_count = 0
 
@@ -200,16 +191,13 @@ class SimTrainer:
             for cid in client_order:
                 state = client_states[cid]
 
-                # 1. Restore this client's state
-                restore_model(client_model, client_snapshots[cid])
-
-                # 2. Get batch
+                # 1. Get batch
                 images, labels = get_next_batch(state, device)
 
-                # 3. Client forward
+                # 2. Client forward (each client has its own model copy)
                 activation, labels = client_forward(state, (images, labels), device)
 
-                # 4. Server forward
+                # 3. Server forward
                 if activation.size(0) == 1:
                     server_model.eval()
                 else:
@@ -218,36 +206,33 @@ class SimTrainer:
                 server_optimizer.zero_grad()
                 logits = server_model(activation)
 
-                # 5. Compute loss (hookable for GAS logit adjustment)
+                # 4. Compute loss (hookable for GAS logit adjustment)
                 loss = self.hook.compute_loss(
                     logits, labels, criterion, ctx, client_id=cid
                 )
 
-                # 6. Server backward + step
+                # 5. Server backward + step
                 loss.backward()
                 server_optimizer.step()
                 total_loss += loss.item()
                 loss_count += 1
 
-                # 7. Get activation gradient
+                # 6. Get activation gradient
                 activation_grad = activation.grad.clone().detach()
 
-                # 8. Client backward
+                # 7. Client backward (updates client's own model)
                 client_backward(state, images, activation_grad, self.config)
-
-                # 9. Save this client's updated state
-                client_snapshots[cid] = snapshot_model(client_model)
 
         # Store avg loss for diagnostics
         ctx.extra["avg_loss"] = total_loss / max(loss_count, 1)
 
-        # Collect results from per-client snapshots
+        # Collect results — snapshot each client's final model state
         client_results = []
         for cid in client_order:
             state = client_states[cid]
             result = ClientResult(
                 client_id=cid,
-                model_state_dict=client_snapshots[cid],
+                model_state_dict=snapshot_model(state.client_model),
                 dataset_size=state.dataset_size,
                 label_distribution=state.label_distribution,
             )
