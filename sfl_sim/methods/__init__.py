@@ -12,5 +12,8 @@ def get_method_hook(method: str, config, trainer) -> "BaseMethodHook":
     if method == "sfl":
         from .sfl import SFLHook
         return SFLHook(config, trainer)
-    # Phase 2+: usfl, scaffold, mix2sfl, gas, multisfl
+    if method == "usfl":
+        from .usfl import USFLHook
+        return USFLHook(config, trainer)
+    # Phase 3+: scaffold, mix2sfl, gas, multisfl
     raise ValueError(f"Unknown method: {method}")

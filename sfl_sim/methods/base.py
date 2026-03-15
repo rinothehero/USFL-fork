@@ -32,6 +32,11 @@ class BaseMethodHook(ABC):
         self.config = config
         self.trainer = trainer
 
+    @property
+    def server_training_mode(self) -> str:
+        """'per_client' or 'concatenated'. Default: per_client."""
+        return "per_client"
+
     @abstractmethod
     def pre_round(self, trainer: "SimTrainer", round_number: int) -> "RoundContext":
         """

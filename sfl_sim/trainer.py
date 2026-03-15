@@ -3,6 +3,10 @@ SimTrainer: Lightweight synchronous SFL trainer.
 
 No async, no queues, no communication protocol.
 Method-specific behavior injected via Hook pattern.
+
+Two server training modes:
+- per_client: server forward/backward per client (SFL, SCAFFOLD, GAS)
+- concatenated: all activations concatenated, single server step (USFL, Mix2SFL)
 """
 from __future__ import annotations
 
@@ -84,11 +88,19 @@ class SimTrainer:
         return results
 
     def run_sfl_round(self, ctx: RoundContext) -> List[ClientResult]:
-        """
-        Execute one SFL round with interleaved client processing.
+        """Dispatch to per-client or concatenated mode based on hook."""
+        if self.hook.server_training_mode == "concatenated":
+            return self._run_concatenated(ctx)
+        return self._run_per_client(ctx)
 
-        Per-client pattern: one batch per client per iteration,
-        cycling through all clients in sorted order.
+    # ------------------------------------------------------------------
+    # Pattern A: Per-client (SFL, SCAFFOLD, GAS, MultiSFL)
+    # ------------------------------------------------------------------
+
+    def _run_per_client(self, ctx: RoundContext) -> List[ClientResult]:
+        """
+        Interleaved per-client processing.
+        One batch per client per iteration, server step per client.
         """
         client_states = ctx.client_states
         server_model = ctx.server_model
@@ -97,7 +109,7 @@ class SimTrainer:
         device = ctx.device
         client_order = sorted(client_states.keys())
 
-        # Compute max iterations across all clients
+        # Compute max iterations
         max_iters = 0
         for cid in client_order:
             n_batches = len(client_states[cid].dataloader)
@@ -110,20 +122,14 @@ class SimTrainer:
         for it in range(max_iters):
             for cid in client_order:
                 state = client_states[cid]
-
-                # Get batch
                 images, labels = get_next_batch(state, device)
-
-                # Client forward
                 activation, labels = client_forward(state, (images, labels), device)
 
-                # Handle BatchNorm edge case (single sample)
                 if activation.size(0) == 1:
                     server_model.eval()
                 else:
                     server_model.train()
 
-                # Server forward + backward
                 server_optimizer.zero_grad()
                 logits = server_model(activation)
                 loss = self.hook.compute_loss(logits, labels, criterion, ctx, client_id=cid)
@@ -133,22 +139,108 @@ class SimTrainer:
                 total_loss += loss.item()
                 loss_count += 1
 
-                # Client backward
                 activation_grad = activation.grad.clone().detach()
                 client_backward(state, images, activation_grad, self.config)
 
         ctx.extra["avg_loss"] = total_loss / max(loss_count, 1)
+        return self._collect_results(ctx)
 
-        # Collect results
-        client_results = []
+    # ------------------------------------------------------------------
+    # Pattern B: Concatenated (USFL, Mix2SFL)
+    # ------------------------------------------------------------------
+
+    def _run_concatenated(self, ctx: RoundContext) -> List[ClientResult]:
+        """
+        Concatenated mode: all clients forward → concat → single server step →
+        gradient processing (shuffle) → split back → all clients backward.
+        """
+        client_states = ctx.client_states
+        server_model = ctx.server_model
+        server_optimizer = ctx.server_optimizer
+        criterion = ctx.criterion
+        device = ctx.device
+        client_order = sorted(client_states.keys())
+
+        iterations = ctx.iterations
+        total_loss = 0.0
+        loss_count = 0
+
+        for it in range(iterations):
+            # Phase 1: All clients forward
+            activations = []
+            labels_list = []
+            images_list = []
+
+            for cid in client_order:
+                state = client_states[cid]
+                images, labels = get_next_batch(state, device)
+                activation, labels = client_forward(state, (images, labels), device)
+                activations.append(activation)
+                labels_list.append(labels)
+                images_list.append(images)
+
+            # Concatenate
+            concat_act = torch.cat(activations, dim=0)
+            concat_labels = torch.cat(labels_list, dim=0)
+
+            # Process activations (hook — for Mix2SFL SmashMix, GAS feature gen)
+            concat_act, concat_labels = self.hook.process_activations(
+                concat_act, concat_labels, ctx
+            )
+
+            concat_act = concat_act.detach().requires_grad_(True)
+            concat_act.retain_grad()
+
+            # Phase 2: Server forward + backward (single step for all clients)
+            if concat_act.size(0) == 1:
+                server_model.eval()
+            else:
+                server_model.train()
+
+            server_optimizer.zero_grad()
+            logits = server_model(concat_act)
+            loss = criterion(logits, concat_labels)
+            loss.backward()
+            server_optimizer.step()
+
+            total_loss += loss.item()
+            loss_count += 1
+
+            # Phase 3: Gradient processing (USFL gradient shuffle)
+            activation_grads = concat_act.grad.clone().detach()
+
+            # Store context for gradient processing hook
+            ctx.extra["client_batch_sizes"] = [a.size(0) for a in activations]
+            ctx.extra["client_order"] = client_order
+            ctx.extra["concat_labels"] = concat_labels
+
+            activation_grads = self.hook.process_gradients(activation_grads, ctx)
+
+            # Phase 4: Split grads back, client backward
+            offset = 0
+            for i, cid in enumerate(client_order):
+                batch_size = activations[i].size(0)
+                grad_slice = activation_grads[offset:offset + batch_size]
+                offset += batch_size
+                client_backward(client_states[cid], images_list[i], grad_slice, self.config)
+
+        ctx.extra["avg_loss"] = total_loss / max(loss_count, 1)
+        return self._collect_results(ctx)
+
+    # ------------------------------------------------------------------
+    # Common
+    # ------------------------------------------------------------------
+
+    def _collect_results(self, ctx: RoundContext) -> List[ClientResult]:
+        """Collect client model snapshots after training."""
+        client_order = sorted(ctx.client_states.keys())
+        results = []
         for cid in client_order:
-            state = client_states[cid]
-            result = ClientResult(
+            state = ctx.client_states[cid]
+            results.append(ClientResult(
                 client_id=cid,
                 model_state_dict=snapshot_model(state.client_model),
                 dataset_size=state.dataset_size,
                 label_distribution=state.label_distribution,
-            )
-            client_results.append(result)
-
-        return client_results
+            ))
+        return results
