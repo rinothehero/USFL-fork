@@ -1,12 +1,15 @@
 """
 Self-contained configuration. No external framework dependencies.
 
-Parses the same CLI flags as the original SFL framework for compatibility:
-    python -m sfl_sim -d cifar10 -m resnet18 -M sfl -le 5 -gr 100 ...
+Two input modes:
+    python -m sfl_sim --config experiment.json          # JSON config
+    python -m sfl_sim --config experiment.json -gr 10   # JSON + CLI overrides
+    python -m sfl_sim -d cifar10 -m resnet18 -M sfl ... # CLI flags only
 """
 from __future__ import annotations
 
 import argparse
+import json
 from dataclasses import dataclass, fields
 from typing import Optional
 
@@ -74,6 +77,14 @@ class Config:
     result_dir: str = "results"
 
 
+# JSON key → Config field name (only for keys that differ)
+_JSON_TO_CONFIG = {
+    "rounds": "global_round",
+    "alpha": "dirichlet_alpha",
+    "clients_per_round": "num_clients_per_round",
+}
+
+
 def _str_to_bool(v: str) -> bool:
     if v.lower() in ("true", "1", "yes"):
         return True
@@ -82,13 +93,41 @@ def _str_to_bool(v: str) -> bool:
     raise argparse.ArgumentTypeError(f"Boolean value expected, got '{v}'")
 
 
+def _load_json_config(path: str) -> dict:
+    """Load JSON config, map keys to Config field names, skip comments."""
+    with open(path) as f:
+        raw = json.load(f)
+
+    config_field_names = {f.name for f in fields(Config)}
+    mapped = {}
+    for k, v in raw.items():
+        if k.startswith("_"):
+            continue
+        field_name = _JSON_TO_CONFIG.get(k, k)
+        if field_name in config_field_names:
+            mapped[field_name] = v
+    return mapped
+
+
 def parse_args(argv: list[str] | None = None) -> Config:
     """
-    Parse CLI args compatible with the original SFL framework short flags.
+    Parse config from JSON file and/or CLI flags.
 
-    Can be called with explicit argv list or None (reads sys.argv).
+    Priority: CLI flags > JSON config > defaults
     """
+    # Pre-parse: extract --config before main parsing
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--config", dest="config_file", default=None)
+    pre_ns, remaining = pre.parse_known_args(argv)
+
+    # Load JSON defaults if provided
+    json_defaults = {}
+    if pre_ns.config_file:
+        json_defaults = _load_json_config(pre_ns.config_file)
+
+    # Main parser
     p = argparse.ArgumentParser(description="SFL Simulation Framework")
+    p.add_argument("--config", dest="_config_file", default=None)
 
     # Core
     p.add_argument("-d", dest="dataset", default="cifar10")
@@ -154,6 +193,10 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("-sma", dest="_server_model_aggregation",
                     type=_str_to_bool, default=False)
     p.add_argument("-nnf", dest="_no_negative_filter", action="store_true")
+
+    # Apply JSON config as defaults (CLI flags will override)
+    if json_defaults:
+        p.set_defaults(**json_defaults)
 
     ns = p.parse_args(argv)
 
