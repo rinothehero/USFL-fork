@@ -587,16 +587,14 @@ class USFLStageOrganizer(BaseStageOrganizer):
             for label, count in label_distribution.items():
                 global_dataset_sizes[label] += count
 
-        # If any label is missing, the selector failed (should not happen with proper retry logic)
+        # If any label is missing, warn but continue (common with uniform selector + low lpc)
         if any(size == 0 for size in global_dataset_sizes.values()):
             missing_labels = [
                 label for label, size in global_dataset_sizes.items() if size == 0
             ]
-            raise RuntimeError(
-                f"[Round {round_number}] CRITICAL ERROR: Selector returned invalid client group. "
-                f"Selected clients {self.selected_clients} are missing labels: {missing_labels}. "
-                "This indicates a bug in the selector's retry logic or insufficient data distribution. "
-                "Consider increasing dirichlet_alpha or num_clients_per_round."
+            vprint(
+                f"[Round {round_number}] WARNING: Selected clients {self.selected_clients} "
+                f"missing labels: {missing_labels}. Continuing with available labels.", 1
             )
 
         # Terminal: Show selected clients summary
