@@ -124,10 +124,12 @@ def run(config: Config) -> List[RoundResult]:
     print(flush=True)
 
     # Build trainer first, then hook (hook needs trainer reference)
+    from collections import defaultdict
     trainer = SimTrainer.__new__(SimTrainer)
     trainer.config = config
     trainer.device = torch.device(config.device)
     trainer.rng = np.random.RandomState(config.seed)
+    trainer._callbacks = defaultdict(list)
 
     # Load data
     from .data import load_dataset, distribute, get_testloader
