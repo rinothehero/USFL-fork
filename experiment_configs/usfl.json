@@ -1,6 +1,6 @@
 {
   "_description": "USFL: SFL + data balancing + gradient shuffle + dynamic batch scheduler.",
-  "selector": "uniform",
+  "selector": "usfl",
   "aggregator": "usfl",
   "_server_learning_rate": "Server-side LR. null = auto based on scale_server_lr.",
   "server_learning_rate": null,
