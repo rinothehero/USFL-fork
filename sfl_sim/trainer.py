@@ -3,6 +3,7 @@ SimTrainer: Lightweight synchronous SFL trainer.
 
 No async, no queues, no communication protocol.
 Method-specific behavior injected via Hook pattern.
+Metric extraction via callback system (subscribe/fire).
 
 Two server training modes:
 - per_client: server forward/backward per client (SFL, SCAFFOLD, GAS)
@@ -12,7 +13,8 @@ from __future__ import annotations
 
 import copy
 import time
-from typing import List
+from collections import defaultdict
+from typing import Any, Callable, Dict, List
 
 import numpy as np
 import torch
@@ -29,15 +31,34 @@ from .client_ops import (
 )
 
 
+# ------------------------------------------------------------------
+# Events fired during training (subscribe to any of these)
+# ------------------------------------------------------------------
+#
+# "round_start"          (round_number, ctx)
+# "round_end"            (round_number, ctx, round_result)
+# "iteration_start"      (iteration, ctx)
+# "iteration_end"        (iteration, ctx)
+# "after_client_forward"  (client_id, activation, labels, images, iteration, ctx)
+# "after_server_backward" (client_id, logits, loss, activation_grad, iteration, ctx)
+# "after_client_backward" (client_id, iteration, ctx)
+#
+# Concatenated-only:
+# "after_concat_forward"  (concat_act, concat_labels, logits, loss, iteration, ctx)
+# "after_concat_backward" (activation_grads, iteration, ctx)
+# ------------------------------------------------------------------
+
+
 class SimTrainer:
     """
-    Core training orchestrator. All methods share this trainer.
+    Core training orchestrator.
 
-    Training loop:
-        for round in rounds:
-            ctx = hook.pre_round(trainer, round)
-            results = trainer.run_sfl_round(ctx)
-            round_result = hook.post_round(trainer, round, ctx, results)
+    Hook pattern: method-specific behavior (SFL, USFL, etc.)
+    Callback pattern: metric extraction without modifying trainer code.
+
+    Usage:
+        trainer.subscribe("after_server_backward", my_callback)
+        trainer.train()
     """
 
     def __init__(self, config: Config, hook):
@@ -45,6 +66,7 @@ class SimTrainer:
         self.hook = hook
         self.device = torch.device(config.device)
         self.rng = np.random.RandomState(config.seed)
+        self._callbacks: Dict[str, List[Callable]] = defaultdict(list)
 
         # Load data
         self.trainset, testset, self.num_classes = load_dataset(
@@ -70,6 +92,27 @@ class SimTrainer:
         )
         self.all_client_ids = list(range(config.num_clients))
 
+    # ------------------------------------------------------------------
+    # Callback system
+    # ------------------------------------------------------------------
+
+    def subscribe(self, event: str, callback: Callable):
+        """Register a callback for an event."""
+        self._callbacks[event].append(callback)
+
+    def unsubscribe(self, event: str, callback: Callable):
+        """Remove a callback."""
+        self._callbacks[event].remove(callback)
+
+    def fire(self, event: str, **kwargs):
+        """Fire an event, calling all registered callbacks."""
+        for cb in self._callbacks.get(event, ()):
+            cb(**kwargs)
+
+    # ------------------------------------------------------------------
+    # Training loop
+    # ------------------------------------------------------------------
+
     def train(self) -> List[RoundResult]:
         """Main training loop."""
         results = []
@@ -79,10 +122,13 @@ class SimTrainer:
             t0 = time.time()
 
             ctx = self.hook.pre_round(self, round_num)
+            self.fire("round_start", round_number=round_num, ctx=ctx)
+
             client_results = self.run_sfl_round(ctx)
             round_result = self.hook.post_round(self, round_num, ctx, client_results)
 
             round_result.metrics["round_time"] = time.time() - t0
+            self.fire("round_end", round_number=round_num, ctx=ctx, round_result=round_result)
             results.append(round_result)
 
         return results
@@ -109,7 +155,6 @@ class SimTrainer:
         device = ctx.device
         client_order = sorted(client_states.keys())
 
-        # Compute max iterations
         max_iters = 0
         for cid in client_order:
             n_batches = len(client_states[cid].dataloader)
@@ -120,10 +165,16 @@ class SimTrainer:
         loss_count = 0
 
         for it in range(max_iters):
+            self.fire("iteration_start", iteration=it, ctx=ctx)
+
             for cid in client_order:
                 state = client_states[cid]
                 images, labels = get_next_batch(state, device)
                 activation, labels = client_forward(state, (images, labels), device)
+
+                self.fire("after_client_forward",
+                          client_id=cid, activation=activation, labels=labels,
+                          images=images, iteration=it, ctx=ctx)
 
                 if activation.size(0) == 1:
                     server_model.eval()
@@ -140,7 +191,17 @@ class SimTrainer:
                 loss_count += 1
 
                 activation_grad = activation.grad.clone().detach()
+
+                self.fire("after_server_backward",
+                          client_id=cid, logits=logits, loss=loss,
+                          activation_grad=activation_grad, iteration=it, ctx=ctx)
+
                 client_backward(state, images, activation_grad, self.config)
+
+                self.fire("after_client_backward",
+                          client_id=cid, iteration=it, ctx=ctx)
+
+            self.fire("iteration_end", iteration=it, ctx=ctx)
 
         ctx.extra["avg_loss"] = total_loss / max(loss_count, 1)
         return self._collect_results(ctx)
@@ -166,6 +227,8 @@ class SimTrainer:
         loss_count = 0
 
         for it in range(iterations):
+            self.fire("iteration_start", iteration=it, ctx=ctx)
+
             # Phase 1: All clients forward
             activations = []
             labels_list = []
@@ -179,6 +242,10 @@ class SimTrainer:
                 labels_list.append(labels)
                 images_list.append(images)
 
+                self.fire("after_client_forward",
+                          client_id=cid, activation=activation, labels=labels,
+                          images=images, iteration=it, ctx=ctx)
+
             # Concatenate
             concat_act = torch.cat(activations, dim=0)
             concat_labels = torch.cat(labels_list, dim=0)
@@ -191,7 +258,7 @@ class SimTrainer:
             concat_act = concat_act.detach().requires_grad_(True)
             concat_act.retain_grad()
 
-            # Phase 2: Server forward + backward (single step for all clients)
+            # Phase 2: Server forward + backward
             if concat_act.size(0) == 1:
                 server_model.eval()
             else:
@@ -209,12 +276,18 @@ class SimTrainer:
             # Phase 3: Gradient processing (USFL gradient shuffle)
             activation_grads = concat_act.grad.clone().detach()
 
-            # Store context for gradient processing hook
+            self.fire("after_concat_forward",
+                      concat_act=concat_act, concat_labels=concat_labels,
+                      logits=logits, loss=loss, iteration=it, ctx=ctx)
+
             ctx.extra["client_batch_sizes"] = [a.size(0) for a in activations]
             ctx.extra["client_order"] = client_order
             ctx.extra["concat_labels"] = concat_labels
 
             activation_grads = self.hook.process_gradients(activation_grads, ctx)
+
+            self.fire("after_concat_backward",
+                      activation_grads=activation_grads, iteration=it, ctx=ctx)
 
             # Phase 4: Split grads back, client backward
             offset = 0
@@ -223,6 +296,11 @@ class SimTrainer:
                 grad_slice = activation_grads[offset:offset + batch_size]
                 offset += batch_size
                 client_backward(client_states[cid], images_list[i], grad_slice, self.config)
+
+                self.fire("after_client_backward",
+                          client_id=cid, iteration=it, ctx=ctx)
+
+            self.fire("iteration_end", iteration=it, ctx=ctx)
 
         ctx.extra["avg_loss"] = total_loss / max(loss_count, 1)
         return self._collect_results(ctx)
