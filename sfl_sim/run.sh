@@ -108,19 +108,26 @@ cmd_launch() {
     ssh "$ssh_host" "mkdir -p $repo/experiments"
     scp -q "$config_file" "$ssh_host:$remote_config"
 
-    # 4. Build remote command (conda activation + sfl_sim)
-    local run_cmd
-    run_cmd="cd $repo"
-    # Robust conda activation: try common install locations
-    run_cmd+=" && ("
-    run_cmd+="source ~/anaconda3/etc/profile.d/conda.sh 2>/dev/null"
-    run_cmd+=" || source ~/miniconda3/etc/profile.d/conda.sh 2>/dev/null"
-    run_cmd+=" || source ~/miniforge3/etc/profile.d/conda.sh 2>/dev/null"
-    run_cmd+=" || source /opt/conda/etc/profile.d/conda.sh 2>/dev/null"
-    run_cmd+=")"
-    run_cmd+=" && conda activate $conda_env"
-    run_cmd+=" && PYTHONUNBUFFERED=1 CUDA_VISIBLE_DEVICES=$gpu"
-    run_cmd+=" python -m sfl_sim --config $remote_config"
+    # 4. Write run script on remote (avoids shell escaping issues in tmux)
+    local remote_script="$repo/_run_${method}_g${gpu}.sh"
+    ssh "$ssh_host" "cat > $remote_script" <<REMOTE_EOF
+#!/bin/bash
+cd $repo
+
+# Conda activation
+for prefix in \$HOME/anaconda3 \$HOME/miniconda3 \$HOME/miniforge3 /opt/conda; do
+    if [[ -f "\$prefix/etc/profile.d/conda.sh" ]]; then
+        source "\$prefix/etc/profile.d/conda.sh"
+        break
+    fi
+done
+conda activate $conda_env
+
+export PYTHONUNBUFFERED=1
+export CUDA_VISIBLE_DEVICES=$gpu
+python -m sfl_sim --config $remote_config
+REMOTE_EOF
+    ssh "$ssh_host" "chmod +x $remote_script"
 
     # 5. Launch in tmux
     echo "==> Launching on $server GPU $gpu..."
@@ -128,7 +135,7 @@ cmd_launch() {
         "cd $repo && \
          tmux kill-session -t '$session' 2>/dev/null || true; \
          tmux new-session -d -s '$session' \
-             '$run_cmd 2>&1 | tee $log_file'"
+             'bash $remote_script 2>&1 | tee $log_file'"
 
     echo ""
     echo "  Session: $session"
