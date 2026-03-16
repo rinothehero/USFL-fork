@@ -60,6 +60,12 @@ class Config:
     clip_grad: bool = False
     clip_grad_max_norm: float = 1.0
 
+    # --- Server training mode ---
+    # "per_client": SFL default (one server step per client)
+    # "concatenated": USFL default (detach + re-forward, safe for all hooks)
+    # "concatenated_fused": optimized (register_hook, no re-forward, faster)
+    server_training_mode: str = ""  # empty = auto (hook decides)
+
     # --- USFL-specific (Phase 2) ---
     balancing_strategy: str = "trimming"
     balancing_target: str = "mean"
@@ -152,6 +158,9 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--momentum", type=float, default=0.9)
     p.add_argument("--weight-decay", dest="weight_decay", type=float, default=0.0)
     p.add_argument("-c", dest="criterion", default="ce")
+
+    # Server training mode
+    p.add_argument("--server-training-mode", dest="server_training_mode", default="")
 
     # Model splitting
     p.add_argument("-ss", dest="split_strategy", default="layer_name")

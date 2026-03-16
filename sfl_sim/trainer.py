@@ -9,6 +9,7 @@ Two server training modes:
 - per_client: server forward/backward per client (SFL, SCAFFOLD, GAS)
 - concatenated: all activations concatenated, single server step (USFL, Mix2SFL)
 """
+
 from __future__ import annotations
 
 import copy
@@ -20,16 +21,23 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from .config import Config
-from .data import load_dataset, distribute, get_testloader
-from .models import create_model, SplitModel
-from .selection import select_clients
 from .client_ops import (
-    ClientState, ClientResult, RoundContext, RoundResult,
-    client_forward, client_backward, get_next_batch,
-    snapshot_model, create_client_state, create_server_optimizer, create_criterion,
+    ClientResult,
+    ClientState,
+    RoundContext,
+    RoundResult,
+    client_backward,
+    client_forward,
+    create_client_state,
+    create_criterion,
+    create_server_optimizer,
+    get_next_batch,
+    snapshot_model,
 )
-
+from .config import Config
+from .data import distribute, get_testloader, load_dataset
+from .models import SplitModel, create_model
+from .selection import select_clients
 
 # ------------------------------------------------------------------
 # Events fired during training (subscribe to any of these)
@@ -81,6 +89,13 @@ class SimTrainer:
         self.model.to(self.device)
 
         # Distribute data
+        # client_data_masks는 딕셔너리
+        # {
+        #     0: [3401, 7822, 12045, ...],   # 클라이언트 0이 받은 이미지 인덱스들
+        #     1: [501, 2233, 8891, ...],     # 클라이언트 1이 받은 이미지 인덱스들
+        #     ...
+        #     99: [4102, 9923, ...],         # 클라이언트 99
+        # }
         self.client_data_masks = distribute(
             self.trainset,
             config.num_clients,
@@ -90,6 +105,7 @@ class SimTrainer:
             min_require_size=config.min_require_size,
             seed=config.seed,
         )
+        # [0, 1, 2, ..., 99]
         self.all_client_ids = list(range(config.num_clients))
 
     # ------------------------------------------------------------------
@@ -128,15 +144,20 @@ class SimTrainer:
             round_result = self.hook.post_round(self, round_num, ctx, client_results)
 
             round_result.metrics["round_time"] = time.time() - t0
-            self.fire("round_end", round_number=round_num, ctx=ctx, round_result=round_result)
+            self.fire(
+                "round_end", round_number=round_num, ctx=ctx, round_result=round_result
+            )
             results.append(round_result)
 
         return results
 
     def run_sfl_round(self, ctx: RoundContext) -> List[ClientResult]:
-        """Dispatch to per-client or concatenated mode based on hook."""
-        if self.hook.server_training_mode == "concatenated":
+        """Dispatch based on hook's server_training_mode."""
+        mode = self.hook.server_training_mode
+        if mode == "concatenated":
             return self._run_concatenated(ctx)
+        elif mode == "concatenated_fused":
+            return self._run_concatenated_fused(ctx)
         return self._run_per_client(ctx)
 
     # ------------------------------------------------------------------
@@ -182,9 +203,15 @@ class SimTrainer:
                 activation = state.client_model(images)
                 activation.retain_grad()  # Capture grad at split point for callbacks
 
-                self.fire("after_client_forward",
-                          client_id=cid, activation=activation, labels=labels,
-                          images=images, iteration=it, ctx=ctx)
+                self.fire(
+                    "after_client_forward",
+                    client_id=cid,
+                    activation=activation,
+                    labels=labels,
+                    images=images,
+                    iteration=it,
+                    ctx=ctx,
+                )
 
                 if activation.size(0) == 1:
                     server_model.eval()
@@ -193,7 +220,9 @@ class SimTrainer:
 
                 server_optimizer.zero_grad()
                 logits = server_model(activation)
-                loss = self.hook.compute_loss(logits, labels, criterion, ctx, client_id=cid)
+                loss = self.hook.compute_loss(
+                    logits, labels, criterion, ctx, client_id=cid
+                )
 
                 # Single backward: computes gradients for BOTH server and client
                 loss.backward()
@@ -201,9 +230,15 @@ class SimTrainer:
                 total_loss += loss.item()
                 loss_count += 1
 
-                self.fire("after_server_backward",
-                          client_id=cid, logits=logits, loss=loss,
-                          activation_grad=activation.grad, iteration=it, ctx=ctx)
+                self.fire(
+                    "after_server_backward",
+                    client_id=cid,
+                    logits=logits,
+                    loss=loss,
+                    activation_grad=activation.grad,
+                    iteration=it,
+                    ctx=ctx,
+                )
 
                 # Server step
                 server_optimizer.step()
@@ -215,8 +250,7 @@ class SimTrainer:
                     )
                 state.optimizer.step()
 
-                self.fire("after_client_backward",
-                          client_id=cid, iteration=it, ctx=ctx)
+                self.fire("after_client_backward", client_id=cid, iteration=it, ctx=ctx)
 
             self.fire("iteration_end", iteration=it, ctx=ctx)
 
@@ -259,9 +293,15 @@ class SimTrainer:
                 labels_list.append(labels)
                 images_list.append(images)
 
-                self.fire("after_client_forward",
-                          client_id=cid, activation=activation, labels=labels,
-                          images=images, iteration=it, ctx=ctx)
+                self.fire(
+                    "after_client_forward",
+                    client_id=cid,
+                    activation=activation,
+                    labels=labels,
+                    images=images,
+                    iteration=it,
+                    ctx=ctx,
+                )
 
             # Concatenate
             concat_act = torch.cat(activations, dim=0)
@@ -293,9 +333,15 @@ class SimTrainer:
             # Phase 3: Gradient processing (USFL gradient shuffle)
             activation_grads = concat_act.grad.clone().detach()
 
-            self.fire("after_concat_forward",
-                      concat_act=concat_act, concat_labels=concat_labels,
-                      logits=logits, loss=loss, iteration=it, ctx=ctx)
+            self.fire(
+                "after_concat_forward",
+                concat_act=concat_act,
+                concat_labels=concat_labels,
+                logits=logits,
+                loss=loss,
+                iteration=it,
+                ctx=ctx,
+            )
 
             ctx.extra["client_batch_sizes"] = [a.size(0) for a in activations]
             ctx.extra["client_order"] = client_order
@@ -303,19 +349,126 @@ class SimTrainer:
 
             activation_grads = self.hook.process_gradients(activation_grads, ctx)
 
-            self.fire("after_concat_backward",
-                      activation_grads=activation_grads, iteration=it, ctx=ctx)
+            self.fire(
+                "after_concat_backward",
+                activation_grads=activation_grads,
+                iteration=it,
+                ctx=ctx,
+            )
 
             # Phase 4: Split grads back, client backward
             offset = 0
             for i, cid in enumerate(client_order):
                 batch_size = activations[i].size(0)
-                grad_slice = activation_grads[offset:offset + batch_size]
+                grad_slice = activation_grads[offset : offset + batch_size]
                 offset += batch_size
-                client_backward(client_states[cid], images_list[i], grad_slice, self.config)
+                client_backward(
+                    client_states[cid], images_list[i], grad_slice, self.config
+                )
 
-                self.fire("after_client_backward",
-                          client_id=cid, iteration=it, ctx=ctx)
+                self.fire("after_client_backward", client_id=cid, iteration=it, ctx=ctx)
+
+            self.fire("iteration_end", iteration=it, ctx=ctx)
+
+        ctx.extra["avg_loss"] = total_loss / max(loss_count, 1)
+        return self._collect_results(ctx)
+
+    # ------------------------------------------------------------------
+    # Pattern B-fused: Concatenated with register_hook (USFL optimized)
+    # ------------------------------------------------------------------
+
+    def _run_concatenated_fused(self, ctx: RoundContext) -> List[ClientResult]:
+        """
+        Optimized concatenated mode using register_hook.
+
+        Single forward + single backward per client (no re-forward).
+        Graph stays connected: client → cat → hook(shuffle) → server → loss.
+        Only works when process_activations is pass-through.
+        """
+        client_states = ctx.client_states
+        server_model = ctx.server_model
+        server_optimizer = ctx.server_optimizer
+        criterion = ctx.criterion
+        device = ctx.device
+        client_order = sorted(client_states.keys())
+
+        iterations = ctx.iterations
+        total_loss = 0.0
+        loss_count = 0
+
+        for it in range(iterations):
+            self.fire("iteration_start", iteration=it, ctx=ctx)
+
+            # Phase 1: All clients forward (graph stays connected, no detach)
+            activations = []
+            labels_list = []
+            images_list = []
+
+            for cid in client_order:
+                state = client_states[cid]
+                images, labels = get_next_batch(state, device)
+                images_list.append(images)
+                labels_list.append(labels)
+
+                state.client_model.train()
+                state.optimizer.zero_grad()
+                activation = state.client_model(images)
+                activation.retain_grad()
+                activations.append(activation)
+
+                self.fire("after_client_forward",
+                          client_id=cid, activation=activation, labels=labels,
+                          images=images, iteration=it, ctx=ctx)
+
+            # Concatenate (graph preserved through torch.cat)
+            concat_act = torch.cat(activations, dim=0)
+            concat_labels = torch.cat(labels_list, dim=0)
+            concat_act.retain_grad()
+
+            # Register hook: gradient shuffle happens during backward
+            ctx.extra["client_batch_sizes"] = [a.size(0) for a in activations]
+            ctx.extra["client_order"] = client_order
+            ctx.extra["concat_labels"] = concat_labels
+
+            def make_hook(hook_ref, ctx_ref):
+                def shuffle_hook(grad):
+                    return hook_ref.process_gradients(grad.clone(), ctx_ref)
+                return shuffle_hook
+
+            concat_act.register_hook(make_hook(self.hook, ctx))
+
+            # Phase 2: Server forward + backward (single pass for everything)
+            if concat_act.size(0) == 1:
+                server_model.eval()
+            else:
+                server_model.train()
+
+            server_optimizer.zero_grad()
+            logits = server_model(concat_act)
+            loss = criterion(logits, concat_labels)
+            loss.backward()
+
+            total_loss += loss.item()
+            loss_count += 1
+
+            self.fire("after_concat_forward",
+                      concat_act=concat_act, concat_labels=concat_labels,
+                      logits=logits, loss=loss, iteration=it, ctx=ctx)
+
+            self.fire("after_concat_backward",
+                      activation_grads=concat_act.grad, iteration=it, ctx=ctx)
+
+            # Step all optimizers (gradients already computed by loss.backward)
+            server_optimizer.step()
+            for cid in client_order:
+                state = client_states[cid]
+                if self.config.clip_grad:
+                    nn.utils.clip_grad_norm_(
+                        state.client_model.parameters(), self.config.clip_grad_max_norm
+                    )
+                state.optimizer.step()
+
+                self.fire("after_client_backward", client_id=cid, iteration=it, ctx=ctx)
 
             self.fire("iteration_end", iteration=it, ctx=ctx)
 
@@ -332,10 +485,12 @@ class SimTrainer:
         results = []
         for cid in client_order:
             state = ctx.client_states[cid]
-            results.append(ClientResult(
-                client_id=cid,
-                model_state_dict=snapshot_model(state.client_model),
-                dataset_size=state.dataset_size,
-                label_distribution=state.label_distribution,
-            ))
+            results.append(
+                ClientResult(
+                    client_id=cid,
+                    model_state_dict=snapshot_model(state.client_model),
+                    dataset_size=state.dataset_size,
+                    label_distribution=state.label_distribution,
+                )
+            )
         return results

@@ -40,7 +40,9 @@ class USFLHook(BaseMethodHook):
 
     @property
     def server_training_mode(self) -> str:
-        return "concatenated"
+        # Config override (e.g., "concatenated_fused") or default "concatenated"
+        override = self.config.server_training_mode
+        return override if override else "concatenated"
 
     def __init__(self, config, trainer: "SimTrainer"):
         super().__init__(config, trainer)
