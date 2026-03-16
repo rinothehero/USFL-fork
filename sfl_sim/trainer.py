@@ -147,6 +147,10 @@ class SimTrainer:
         """
         Interleaved per-client processing.
         One batch per client per iteration, server step per client.
+
+        Uses unified forward-backward: client→server in one graph,
+        loss.backward() computes gradients for both models in a single pass.
+        No detach, no re-forward.
         """
         client_states = ctx.client_states
         server_model = ctx.server_model
@@ -170,7 +174,13 @@ class SimTrainer:
             for cid in client_order:
                 state = client_states[cid]
                 images, labels = get_next_batch(state, device)
-                activation, labels = client_forward(state, (images, labels), device)
+
+                # Unified forward: client → activation → server → logits
+                # Single computation graph, no detach needed
+                state.client_model.train()
+                state.optimizer.zero_grad()
+                activation = state.client_model(images)
+                activation.retain_grad()  # Capture grad at split point for callbacks
 
                 self.fire("after_client_forward",
                           client_id=cid, activation=activation, labels=labels,
@@ -184,19 +194,26 @@ class SimTrainer:
                 server_optimizer.zero_grad()
                 logits = server_model(activation)
                 loss = self.hook.compute_loss(logits, labels, criterion, ctx, client_id=cid)
+
+                # Single backward: computes gradients for BOTH server and client
                 loss.backward()
-                server_optimizer.step()
 
                 total_loss += loss.item()
                 loss_count += 1
 
-                activation_grad = activation.grad.clone().detach()
-
                 self.fire("after_server_backward",
                           client_id=cid, logits=logits, loss=loss,
-                          activation_grad=activation_grad, iteration=it, ctx=ctx)
+                          activation_grad=activation.grad, iteration=it, ctx=ctx)
 
-                client_backward(state, images, activation_grad, self.config)
+                # Server step
+                server_optimizer.step()
+
+                # Client step (gradients already computed by loss.backward)
+                if self.config.clip_grad:
+                    nn.utils.clip_grad_norm_(
+                        state.client_model.parameters(), self.config.clip_grad_max_norm
+                    )
+                state.optimizer.step()
 
                 self.fire("after_client_backward",
                           client_id=cid, iteration=it, ctx=ctx)
