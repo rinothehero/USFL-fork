@@ -147,98 +147,6 @@ class USFLStageOrganizer(BaseStageOrganizer):
             self.drift_tracker = DriftMeasurementTracker()
             vprint("[Drift] DriftMeasurementTracker initialized (USFL)", 2)
 
-    def _ensure_label_coverage(self, selected, client_informations, round_number):
-        """
-        Guarantee all labels are covered by swapping clients if needed.
-        No retry loop — deterministic O(n) fix.
-        """
-        # Build coverage map
-        covered = set()
-        for cid in selected:
-            dist = client_informations[cid]["dataset"]["label_distribution"]
-            covered.update(str(l) for l in dist.keys())
-
-        all_labels = {str(l) for l in range(self.num_classes)}
-        missing = all_labels - covered
-        if not missing:
-            return selected
-
-        # Build label→client index for non-selected clients
-        selected_set = set(selected)
-        label_to_candidates = {}
-        for cid, info in client_informations.items():
-            if cid in selected_set:
-                continue
-            dist = info["dataset"]["label_distribution"]
-            for l in dist.keys():
-                label_to_candidates.setdefault(str(l), []).append(cid)
-
-        # Greedily swap: replace the client that contributes least unique coverage
-        result = list(selected)
-        for label in sorted(missing):
-            candidates = label_to_candidates.get(label, [])
-            if not candidates:
-                continue
-
-            # Pick candidate that covers the most missing labels
-            best_cid = None
-            best_new_coverage = 0
-            for cid in candidates:
-                dist = client_informations[cid]["dataset"]["label_distribution"]
-                new_labels = {str(l) for l in dist.keys()} & missing
-                if len(new_labels) > best_new_coverage:
-                    best_new_coverage = len(new_labels)
-                    best_cid = cid
-
-            if best_cid is None:
-                continue
-
-            # Find which existing client to replace (one with most redundant labels)
-            worst_idx = 0
-            worst_unique = float("inf")
-            result_set = set(result)
-            for i, cid in enumerate(result):
-                dist = client_informations[cid]["dataset"]["label_distribution"]
-                cid_labels = {str(l) for l in dist.keys()}
-                # Count how many of this client's labels are covered by others
-                other_coverage = set()
-                for j, other_cid in enumerate(result):
-                    if j == i:
-                        continue
-                    other_dist = client_informations[other_cid]["dataset"]["label_distribution"]
-                    other_coverage.update(str(l) for l in other_dist.keys())
-                unique = cid_labels - other_coverage
-                if len(unique) < worst_unique:
-                    worst_unique = len(unique)
-                    worst_idx = i
-
-            old_cid = result[worst_idx]
-            result[worst_idx] = best_cid
-
-            # Update coverage and missing
-            covered = set()
-            for cid in result:
-                dist = client_informations[cid]["dataset"]["label_distribution"]
-                covered.update(str(l) for l in dist.keys())
-            missing = all_labels - covered
-
-            # Remove used candidate from pool
-            selected_set.add(best_cid)
-            selected_set.discard(old_cid)
-
-            if not missing:
-                break
-
-        if missing:
-            vprint(
-                f"[Round {round_number}] WARNING: Could not achieve full label coverage. "
-                f"Missing: {sorted(missing)}", 1
-            )
-        else:
-            vprint(f"[Round {round_number}] Label coverage ensured (swapped clients).", 2)
-
-        return result
-
     def _load_client_schedule(self):
         if self._client_schedule_cache is not None:
             return
@@ -670,10 +578,24 @@ class USFLStageOrganizer(BaseStageOrganizer):
                 selection_data,
             )
 
-        # Ensure full label coverage by swapping clients if needed
-        self.selected_clients = self._ensure_label_coverage(
-            self.selected_clients, client_informations, round_number
-        )
+        # Sanity check: Verify all class labels are covered by selected clients
+        global_dataset_sizes = {str(label): 0 for label in range(self.num_classes)}
+        for client_id in self.selected_clients:
+            label_distribution = client_informations[client_id]["dataset"][
+                "label_distribution"
+            ]
+            for label, count in label_distribution.items():
+                global_dataset_sizes[str(label)] += count
+
+        # Warn if some labels are uncovered (expected with uniform selector + low lpc)
+        if any(size == 0 for size in global_dataset_sizes.values()):
+            missing_labels = [
+                label for label, size in global_dataset_sizes.items() if size == 0
+            ]
+            vprint(
+                f"[Round {round_number}] WARNING: Selected clients missing labels "
+                f"{missing_labels} — continuing with partial coverage.", 1
+            )
 
         # Terminal: Show selected clients summary
         vprint(f"[Round {round_number}] Selected clients: {self.selected_clients}", 2)
