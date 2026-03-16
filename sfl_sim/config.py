@@ -66,6 +66,14 @@ class Config:
     # "concatenated_fused": optimized (register_hook, no re-forward, faster)
     server_training_mode: str = ""  # empty = auto (hook decides)
 
+    # --- Data exhaustion policy ---
+    # What to do when a client runs out of data mid-round:
+    # "cycling": restart from beginning (may overfit small clients)
+    # "skip": skip exhausted clients in remaining iterations (may cause drift)
+    # "break": stop all clients when any one is exhausted (wastes large client data)
+    # "dbs": Dynamic Batch Scheduler — adjust batch sizes so all exhaust simultaneously
+    exhaustion_policy: str = "dbs"
+
     # --- USFL-specific (Phase 2) ---
     balancing_strategy: str = "trimming"
     balancing_target: str = "mean"
@@ -161,6 +169,9 @@ def parse_args(argv: list[str] | None = None) -> Config:
 
     # Server training mode
     p.add_argument("--server-training-mode", dest="server_training_mode", default="")
+
+    # Data exhaustion policy
+    p.add_argument("--exhaustion-policy", dest="exhaustion_policy", default="dbs")
 
     # Model splitting
     p.add_argument("-ss", dest="split_strategy", default="layer_name")

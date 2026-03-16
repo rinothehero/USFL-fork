@@ -179,6 +179,7 @@ class SimTrainer:
         criterion = ctx.criterion
         device = ctx.device
         client_order = sorted(client_states.keys())
+        policy = self.config.exhaustion_policy
 
         max_iters = 0
         for cid in client_order:
@@ -192,9 +193,16 @@ class SimTrainer:
         for it in range(max_iters):
             self.fire("iteration_start", iteration=it, ctx=ctx)
 
+            # break policy: stop if any client exhausted
+            if policy == "break" and any(s.exhausted for s in client_states.values()):
+                break
+
             for cid in client_order:
                 state = client_states[cid]
-                images, labels = get_next_batch(state, device)
+                result = get_next_batch(state, device, policy)
+                if result is None:
+                    continue  # skip this client (exhausted)
+                images, labels = result
 
                 # Unified forward: client → activation → server → logits
                 # Single computation graph, no detach needed
@@ -272,6 +280,7 @@ class SimTrainer:
         criterion = ctx.criterion
         device = ctx.device
         client_order = sorted(client_states.keys())
+        policy = self.config.exhaustion_policy
 
         iterations = ctx.iterations
         total_loss = 0.0
@@ -280,18 +289,23 @@ class SimTrainer:
         for it in range(iterations):
             self.fire("iteration_start", iteration=it, ctx=ctx)
 
-            # Phase 1: All clients forward
+            # Phase 1: All clients forward (skip exhausted ones)
             activations = []
             labels_list = []
             images_list = []
+            active_clients = []
 
             for cid in client_order:
                 state = client_states[cid]
-                images, labels = get_next_batch(state, device)
+                result = get_next_batch(state, device, policy)
+                if result is None:
+                    continue  # exhausted, skip
+                images, labels = result
                 activation, labels = client_forward(state, (images, labels), device)
                 activations.append(activation)
                 labels_list.append(labels)
                 images_list.append(images)
+                active_clients.append(cid)
 
                 self.fire(
                     "after_client_forward",
@@ -302,6 +316,14 @@ class SimTrainer:
                     iteration=it,
                     ctx=ctx,
                 )
+
+            # break policy: stop if any client exhausted
+            if policy == "break" and any(s.exhausted for s in client_states.values()):
+                break
+
+            # No active clients left (all exhausted with skip policy)
+            if not activations:
+                break
 
             # Concatenate
             concat_act = torch.cat(activations, dim=0)
@@ -344,7 +366,7 @@ class SimTrainer:
             )
 
             ctx.extra["client_batch_sizes"] = [a.size(0) for a in activations]
-            ctx.extra["client_order"] = client_order
+            ctx.extra["client_order"] = active_clients
             ctx.extra["concat_labels"] = concat_labels
 
             activation_grads = self.hook.process_gradients(activation_grads, ctx)
@@ -358,7 +380,7 @@ class SimTrainer:
 
             # Phase 4: Split grads back, client backward
             offset = 0
-            for i, cid in enumerate(client_order):
+            for i, cid in enumerate(active_clients):
                 batch_size = activations[i].size(0)
                 grad_slice = activation_grads[offset : offset + batch_size]
                 offset += batch_size
@@ -391,6 +413,7 @@ class SimTrainer:
         criterion = ctx.criterion
         device = ctx.device
         client_order = sorted(client_states.keys())
+        policy = self.config.exhaustion_policy
 
         iterations = ctx.iterations
         total_loss = 0.0
@@ -402,12 +425,18 @@ class SimTrainer:
             # Phase 1: All clients forward (graph stays connected, no detach)
             activations = []
             labels_list = []
-            images_list = []
+            active_clients = []
+
+            # break policy: stop if any client exhausted
+            if policy == "break" and any(s.exhausted for s in client_states.values()):
+                break
 
             for cid in client_order:
                 state = client_states[cid]
-                images, labels = get_next_batch(state, device)
-                images_list.append(images)
+                result = get_next_batch(state, device, policy)
+                if result is None:
+                    continue
+                images, labels = result
                 labels_list.append(labels)
 
                 state.client_model.train()
@@ -415,10 +444,21 @@ class SimTrainer:
                 activation = state.client_model(images)
                 activation.retain_grad()
                 activations.append(activation)
+                active_clients.append(cid)
 
-                self.fire("after_client_forward",
-                          client_id=cid, activation=activation, labels=labels,
-                          images=images, iteration=it, ctx=ctx)
+                self.fire(
+                    "after_client_forward",
+                    client_id=cid,
+                    activation=activation,
+                    labels=labels,
+                    images=images,
+                    iteration=it,
+                    ctx=ctx,
+                )
+
+            # No active clients left
+            if not activations:
+                break
 
             # Concatenate (graph preserved through torch.cat)
             concat_act = torch.cat(activations, dim=0)
@@ -427,12 +467,13 @@ class SimTrainer:
 
             # Register hook: gradient shuffle happens during backward
             ctx.extra["client_batch_sizes"] = [a.size(0) for a in activations]
-            ctx.extra["client_order"] = client_order
+            ctx.extra["client_order"] = active_clients
             ctx.extra["concat_labels"] = concat_labels
 
             def make_hook(hook_ref, ctx_ref):
                 def shuffle_hook(grad):
                     return hook_ref.process_gradients(grad.clone(), ctx_ref)
+
                 return shuffle_hook
 
             concat_act.register_hook(make_hook(self.hook, ctx))
@@ -451,16 +492,26 @@ class SimTrainer:
             total_loss += loss.item()
             loss_count += 1
 
-            self.fire("after_concat_forward",
-                      concat_act=concat_act, concat_labels=concat_labels,
-                      logits=logits, loss=loss, iteration=it, ctx=ctx)
+            self.fire(
+                "after_concat_forward",
+                concat_act=concat_act,
+                concat_labels=concat_labels,
+                logits=logits,
+                loss=loss,
+                iteration=it,
+                ctx=ctx,
+            )
 
-            self.fire("after_concat_backward",
-                      activation_grads=concat_act.grad, iteration=it, ctx=ctx)
+            self.fire(
+                "after_concat_backward",
+                activation_grads=concat_act.grad,
+                iteration=it,
+                ctx=ctx,
+            )
 
-            # Step all optimizers (gradients already computed by loss.backward)
+            # Step all active optimizers (gradients already computed by loss.backward)
             server_optimizer.step()
-            for cid in client_order:
+            for cid in active_clients:
                 state = client_states[cid]
                 if self.config.clip_grad:
                     nn.utils.clip_grad_norm_(

@@ -29,6 +29,7 @@ class ClientState:
     data_iter: Iterator
     label_distribution: Dict[int, int]
     dataset_size: int
+    exhausted: bool = False  # True when client has no more data
     extra: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -242,13 +243,36 @@ def client_backward(
 
 
 def get_next_batch(
-    state: ClientState, device: torch.device
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Get next batch from client's dataloader, cycling if exhausted."""
+    state: ClientState, device: torch.device, policy: str = "cycling"
+) -> Optional[Tuple[torch.Tensor, torch.Tensor]]:
+    """
+    Get next batch from client's dataloader.
+
+    Returns None if client is exhausted and policy is "skip" or "break".
+
+    Policy:
+        "cycling": restart dataloader from beginning (default, legacy)
+        "skip": return None when exhausted (client skips this iteration)
+        "break": return None when exhausted (caller should stop all clients)
+        "dbs": same as cycling (DBS ensures all exhaust simultaneously)
+    """
+    if state.exhausted:
+        if policy in ("skip", "break"):
+            return None
+        # cycling / dbs: reset
+        state.data_iter = iter(state.dataloader)
+        state.exhausted = False
+
     try:
         batch = next(state.data_iter)
     except StopIteration:
+        state.exhausted = True
+        if policy in ("skip", "break"):
+            return None
+        # cycling / dbs: restart
         state.data_iter = iter(state.dataloader)
+        state.exhausted = False
         batch = next(state.data_iter)
+
     images, labels = batch
     return images.to(device), labels.to(device)
