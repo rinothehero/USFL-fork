@@ -68,10 +68,15 @@ class Config:
 
     # --- Data exhaustion policy ---
     # What to do when a client runs out of data mid-round:
-    # "cycling": restart from beginning (may overfit small clients)
-    # "skip": skip exhausted clients in remaining iterations (may cause drift)
+    # "cycling": restart from beginning (may overfit small clients in Non-IID)
+    # "skip": skip exhausted clients in remaining iterations
+    #          Note: may cause client drift in later iterations,
+    #          aggregation weights still use total dataset_size (not actual trained batches)
     # "break": stop all clients when any one is exhausted (wastes large client data)
     # "dbs": Dynamic Batch Scheduler — adjust batch sizes so all exhaust simultaneously
+    #        (recommended for USFL; requires use_dynamic_batch_scheduler=true)
+    #        Note: in SFL (per_client mode), "dbs" falls back to cycling
+    #        because DBS scheduling only runs in USFL hook's pre_round
     exhaustion_policy: str = "dbs"
 
     # --- USFL-specific (Phase 2) ---
