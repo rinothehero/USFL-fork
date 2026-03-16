@@ -585,7 +585,7 @@ class USFLStageOrganizer(BaseStageOrganizer):
                 "label_distribution"
             ]
             for label, count in label_distribution.items():
-                global_dataset_sizes[label] += count
+                global_dataset_sizes[str(label)] += count
 
         # If any label is missing, the selector failed (should not happen with proper retry logic)
         if any(size == 0 for size in global_dataset_sizes.values()):
