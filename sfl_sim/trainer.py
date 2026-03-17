@@ -466,6 +466,7 @@ class SimTrainer:
             concat_act.retain_grad()
 
             # Register hook: gradient shuffle happens during backward
+            # Shuffle에는 array에서 각 클라이언트 경게, 순서, label등이 필요하다.
             ctx.extra["client_batch_sizes"] = [a.size(0) for a in activations]
             ctx.extra["client_order"] = active_clients
             ctx.extra["concat_labels"] = concat_labels
@@ -476,6 +477,7 @@ class SimTrainer:
 
                 return shuffle_hook
 
+            # concat_act의 gradient가 계산되면 shuffle_hook을 실행하라는 등록
             concat_act.register_hook(make_hook(self.hook, ctx))
 
             # Phase 2: Server forward + backward (single pass for everything)
@@ -487,6 +489,39 @@ class SimTrainer:
             server_optimizer.zero_grad()
             logits = server_model(concat_act)
             loss = criterion(logits, concat_labels)
+
+            # loss.backward() 동작 과정:
+            #
+            # 전체 그래프 (forward에서 만들어진 것):
+            #   images_0 → [client_0 params] → act_0 ─┐
+            #   images_1 → [client_1 params] → act_1 ─┤→ cat → concat_act → [server params] → logits → loss
+            #   ...                                    │
+            #   images_9 → [client_9 params] → act_9 ─┘
+            #
+            # backward는 이 그래프를 끝(loss)에서 처음(images)으로 역순 추적:
+            #
+            # 1) loss → logits
+            #    ∂loss/∂logits 계산
+            #
+            # 2) logits → server params
+            #    ∂loss/∂server_params 계산 → server_params.grad에 저장 ✓
+            #
+            # 3) logits → concat_act
+            #    ∂loss/∂concat_act 계산 → concat_act.grad에 저장 ✓
+            #    ★ 이 시점에서 register_hook 발동 → gradient shuffle 실행 ★
+            #    → 셔플된 gradient가 원래 gradient를 대체
+            #
+            # 4) concat_act → torch.cat backward → act_0, act_1, ..., act_9
+            #    셔플된 gradient를 10조각으로 분배 (각 activation 크기대로)
+            #
+            # 5) act_i → client_i params  (10명 동시)
+            #    ∂loss/∂client_i_params 계산 → client_i_params.grad에 저장 ✓
+            #
+            # 결과: server + 10개 client 모든 파라미터의 .grad가 채워짐
+            # 이후 optimizer.step()으로 실제 파라미터 업데이트
+            # 이 한 줄이 모든 일을 한다!!!
+            # loss에서 출발해서 거꾸로 따라가면서 모든 파라미터의 gradient를 계산
+            #
             loss.backward()
 
             total_loss += loss.item()
