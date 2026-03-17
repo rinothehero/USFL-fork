@@ -15,7 +15,7 @@ from .base import BaseMethodHook
 from ..client_ops import (
     RoundContext, RoundResult, ClientResult, ClientState,
     create_client_state, create_server_optimizer, create_criterion,
-    snapshot_model,
+    snapshot_model, create_optimizer,
 )
 from ..aggregation import aggregate
 from ..selection import select_clients
@@ -26,6 +26,16 @@ if TYPE_CHECKING:
 
 class SFLHook(BaseMethodHook):
     """Basic Split Federated Learning."""
+
+    def __init__(self, config, trainer: "SimTrainer"):
+        super().__init__(config, trainer)
+        # Pre-allocate client model pool (avoid deepcopy every round)
+        self._client_pool: list = []
+
+    def _ensure_pool(self, n: int, model, device):
+        """Ensure pool has at least n client model copies."""
+        while len(self._client_pool) < n:
+            self._client_pool.append(copy.deepcopy(model.client_model).to(device))
 
     def pre_round(self, trainer: "SimTrainer", round_number: int) -> RoundContext:
         config = self.config
@@ -43,17 +53,18 @@ class SFLHook(BaseMethodHook):
         # 2. Snapshot current client model state (all clients start from same point)
         client_base_state = snapshot_model(model.client_model)
 
-        # 3. Create per-client deep copies
+        # 3. Reuse pre-allocated models (load_state_dict only, no deepcopy)
+        self._ensure_pool(len(selected), model, device)
+
         client_states = {}
-        for cid in selected:
-            client_copy = copy.deepcopy(model.client_model)
-            client_copy.load_state_dict(client_base_state)
-            client_copy.to(device)
+        for i, cid in enumerate(selected):
+            client_model = self._client_pool[i]
+            client_model.load_state_dict(client_base_state)
 
             indices = trainer.client_data_masks[cid]
             state = create_client_state(
                 client_id=cid,
-                client_model=client_copy,
+                client_model=client_model,
                 trainset=trainer.trainset,
                 data_indices=indices,
                 config=config,

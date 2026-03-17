@@ -49,6 +49,8 @@ class USFLHook(BaseMethodHook):
         # Persistent state across rounds
         self.cumulative_usage: Dict[int, Dict[int, Dict[int, int]]] = {}
         # {client_id: {label: {bin_key: count}}}
+        # Pre-allocated client model pool
+        self._client_pool: list = []
 
     # ------------------------------------------------------------------
     # Pre-round
@@ -91,10 +93,13 @@ class USFLHook(BaseMethodHook):
         client_states = {}
         client_data_sizes = {}
 
-        for cid in selected:
-            client_copy = copy.deepcopy(model.client_model)
-            client_copy.load_state_dict(client_base_state)
-            client_copy.to(device)
+        # Ensure pool has enough models
+        while len(self._client_pool) < len(selected):
+            self._client_pool.append(copy.deepcopy(model.client_model).to(device))
+
+        for i, cid in enumerate(selected):
+            client_model = self._client_pool[i]
+            client_model.load_state_dict(client_base_state)
 
             indices = trainer.client_data_masks[cid]
 
@@ -110,12 +115,12 @@ class USFLHook(BaseMethodHook):
                 dataset, batch_size=config.batch_size, shuffle=True, drop_last=False
             )
             from ..client_ops import create_optimizer
-            optimizer = create_optimizer(client_copy, config)
+            optimizer = create_optimizer(client_model, config)
 
             from ..client_ops import ClientState
             client_states[cid] = ClientState(
                 client_id=cid,
-                client_model=client_copy,
+                client_model=client_model,
                 optimizer=optimizer,
                 dataloader=dataloader,
                 data_iter=iter(dataloader),
