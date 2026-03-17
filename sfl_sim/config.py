@@ -93,6 +93,10 @@ class Config:
     usage_decay_factor: float = 0.9
     freshness_decay_rate: float = 0.1
 
+    # --- Mix2SFL-specific ---
+    mix2sfl_beta_alpha: float = 1.0       # Beta distribution alpha for SmashMix lambda
+    mix2sfl_smashmix_ratio: float = 1.0   # Fraction of clients to mix with (0.0-1.0)
+
     # --- Result output ---
     result_dir: str = "results"
 
@@ -213,6 +217,12 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("-ufs", dest="use_fresh_scoring", action="store_true")
     p.add_argument("-udf", dest="usage_decay_factor", type=float, default=0.9)
     p.add_argument("-fdr", dest="freshness_decay_rate", type=float, default=0.1)
+
+    # Mix2SFL-specific
+    p.add_argument("--mix2sfl-beta-alpha", dest="mix2sfl_beta_alpha",
+                    type=float, default=1.0)
+    p.add_argument("--mix2sfl-smashmix-ratio", dest="mix2sfl_smashmix_ratio",
+                    type=float, default=1.0)
 
     # Result output
     p.add_argument("--result-dir", dest="result_dir", default="results")

@@ -421,6 +421,73 @@ def _create_deit_tiny(num_classes: int, split_layer: str, in_channels: int = 3) 
 
 
 # ---------------------------------------------------------------------------
+# MLP Classifier
+# ---------------------------------------------------------------------------
+
+
+# Input dimensions by dataset (flattened image size)
+_MLP_INPUT_DIMS = {
+    "cifar10": 3 * 32 * 32,
+    "cifar100": 3 * 32 * 32,
+    "svhn": 3 * 32 * 32,
+    "mnist": 1 * 28 * 28,
+    "fmnist": 1 * 28 * 28,
+}
+
+
+class _MLPClient(nn.Module):
+    """Client portion of MLP (up to and including split_layer)."""
+
+    def __init__(self, layers: OrderedDict, needs_flatten: bool):
+        super().__init__()
+        self._needs_flatten = needs_flatten
+        self.layers = nn.Sequential(layers)
+
+    def forward(self, x):
+        if self._needs_flatten and x.dim() > 2:
+            x = x.view(x.size(0), -1)
+        return self.layers(x)
+
+
+class _MLPServer(nn.Module):
+    """Server portion of MLP (after split_layer to output)."""
+
+    def __init__(self, layers: OrderedDict):
+        super().__init__()
+        self.layers = nn.Sequential(layers)
+
+    def forward(self, x):
+        return self.layers(x)
+
+
+def _create_mlp(num_classes: int, split_layer: str, in_channels: int = 3, dataset: str = "cifar10") -> SplitModel:
+    """Create split MLP classifier.
+
+    Architecture: input -> layer1(512) -> layer2(256) -> layer3(num_classes)
+    Split points: "layer1" or "layer2"
+    """
+    input_dim = _MLP_INPUT_DIMS.get(dataset, 3 * 32 * 32)
+
+    all_layers = OrderedDict([
+        ("layer1", nn.Sequential(nn.Linear(input_dim, 512), nn.ReLU())),
+        ("layer2", nn.Sequential(nn.Linear(512, 256), nn.ReLU())),
+        ("layer3", nn.Linear(256, num_classes)),
+    ])
+
+    layer_names = list(all_layers.keys())
+    if split_layer not in layer_names:
+        raise ValueError(f"Invalid split_layer '{split_layer}' for MLP. Choose from {layer_names}")
+
+    idx = layer_names.index(split_layer) + 1
+    client_layers = OrderedDict((k, v) for k, v in list(all_layers.items())[:idx])
+    server_layers = OrderedDict((k, v) for k, v in list(all_layers.items())[idx:])
+
+    client = _MLPClient(client_layers, needs_flatten=True)
+    server = _MLPServer(server_layers)
+    return SplitModel(client, server, num_classes, name="mlp")
+
+
+# ---------------------------------------------------------------------------
 # Model factory
 # ---------------------------------------------------------------------------
 
@@ -433,6 +500,7 @@ _DEFAULT_SPLITS = {
     "mobilenet": "features.7",
     "lenet": "conv2",
     "deit_tiny": "blocks.5",
+    "mlp": "layer1",
 }
 
 # Input channels by dataset
@@ -478,9 +546,13 @@ def create_model(
         "mobilenet": _create_mobilenet,
         "lenet": _create_lenet,
         "deit_tiny": _create_deit_tiny,
+        "mlp": None,  # Special case: needs dataset arg
     }
 
     if canonical not in creators:
         raise ValueError(f"Unknown model: {model_name}. Choose from {list(creators)}")
+
+    if canonical == "mlp":
+        return _create_mlp(num_classes, split_layer, in_channels, dataset)
 
     return creators[canonical](num_classes, split_layer, in_channels)
