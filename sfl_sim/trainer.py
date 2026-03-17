@@ -152,7 +152,15 @@ class SimTrainer:
         return results
 
     def run_sfl_round(self, ctx: RoundContext) -> List[ClientResult]:
-        """Dispatch based on hook's server_training_mode."""
+        """Dispatch based on hook's server_training_mode.
+
+        If the hook provides run_round(), use it (MultiSFL full-round override).
+        Otherwise dispatch to per_client / concatenated / concatenated_fused.
+        """
+        custom = self.hook.run_round(self, ctx)
+        if custom is not None:
+            return custom
+
         mode = self.hook.server_training_mode
         if mode == "concatenated":
             return self._run_concatenated(ctx)

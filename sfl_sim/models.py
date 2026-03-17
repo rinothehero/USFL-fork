@@ -421,6 +421,78 @@ def _create_deit_tiny(num_classes: int, split_layer: str, in_channels: int = 3) 
 
 
 # ---------------------------------------------------------------------------
+# MLP Classifier (simple baseline)
+# ---------------------------------------------------------------------------
+
+
+class _MLPBlock(nn.Module):
+    """Single MLP layer with ReLU."""
+
+    def __init__(self, in_features: int, out_features: int):
+        super().__init__()
+        self.linear = nn.Linear(in_features, out_features)
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        return self.relu(self.linear(x))
+
+
+class _MLPClassifier(nn.Module):
+    """3-layer MLP classifier for image datasets."""
+
+    def __init__(self, in_features: int, hidden1: int = 512, hidden2: int = 256,
+                 num_classes: int = 10):
+        super().__init__()
+        self.flatten = nn.Flatten()
+        self.layer1 = _MLPBlock(in_features, hidden1)
+        self.layer2 = _MLPBlock(hidden1, hidden2)
+        self.head = nn.Linear(hidden2, num_classes)
+
+    def forward(self, x):
+        x = self.flatten(x)
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.head(x)
+        return x
+
+
+# Input dimensions by dataset (channels * height * width)
+_INPUT_DIMS = {
+    "cifar10": 3 * 32 * 32,
+    "cifar100": 3 * 32 * 32,
+    "svhn": 3 * 32 * 32,
+    "mnist": 1 * 28 * 28,
+    "fmnist": 1 * 28 * 28,
+}
+
+
+def _create_mlp(num_classes: int, split_layer: str, in_channels: int = 3,
+                dataset: str = "cifar10") -> SplitModel:
+    """Create split MLP classifier."""
+    in_features = _INPUT_DIMS.get(dataset, 3 * 32 * 32)
+    base = _MLPClassifier(in_features, num_classes=num_classes)
+
+    mlp_layers = ["flatten", "layer1", "layer2", "head"]
+    if split_layer not in mlp_layers:
+        raise ValueError(
+            f"Invalid split_layer '{split_layer}' for MLP. Choose from {mlp_layers}"
+        )
+
+    idx = mlp_layers.index(split_layer) + 1
+    client_layers = OrderedDict()
+    server_layers = OrderedDict()
+    for i, name in enumerate(mlp_layers):
+        if i < idx:
+            client_layers[name] = getattr(base, name)
+        else:
+            server_layers[name] = getattr(base, name)
+
+    client = nn.Sequential(client_layers)
+    server = nn.Sequential(server_layers)
+    return SplitModel(client, server, num_classes, name="mlp")
+
+
+# ---------------------------------------------------------------------------
 # Model factory
 # ---------------------------------------------------------------------------
 
@@ -433,6 +505,7 @@ _DEFAULT_SPLITS = {
     "mobilenet": "features.7",
     "lenet": "conv2",
     "deit_tiny": "blocks.5",
+    "mlp": "layer1",
 }
 
 # Input channels by dataset
@@ -478,9 +551,13 @@ def create_model(
         "mobilenet": _create_mobilenet,
         "lenet": _create_lenet,
         "deit_tiny": _create_deit_tiny,
+        "mlp": _create_mlp,
     }
 
     if canonical not in creators:
         raise ValueError(f"Unknown model: {model_name}. Choose from {list(creators)}")
+
+    if canonical == "mlp":
+        return _create_mlp(num_classes, split_layer, in_channels, dataset)
 
     return creators[canonical](num_classes, split_layer, in_channels)

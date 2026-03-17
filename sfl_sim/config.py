@@ -92,6 +92,20 @@ class Config:
     usage_decay_factor: float = 0.9
     freshness_decay_rate: float = 0.1
 
+    # --- MultiSFL-specific ---
+    num_branches: int = 3
+    alpha_master_pull: float = 0.5  # Weight for pulling branch servers toward main
+    p_update: str = "abs_ratio"  # Sampling proportion update: paper, abs_ratio, one_plus_delta
+    p0: float = 0.01  # Initial replay proportion
+    p_min: float = 0.01
+    p_max: float = 0.5
+    p_eps: float = 1e-12  # Epsilon for p update denominator
+    p_delta_clip: float = 0.2  # Delta clip for one_plus_delta mode
+    gamma: float = 0.5  # Score vector exponential decay
+    replay_min_total: int = 0  # Minimum replay samples per branch
+    max_assistant_trials: int = 20  # Max trials to find assistant clients
+    replay_budget_mode: str = "local_dataset"  # batch or local_dataset
+
     # --- Result output ---
     result_dir: str = "results"
 
@@ -101,6 +115,7 @@ _JSON_TO_CONFIG = {
     "rounds": "global_round",
     "alpha": "dirichlet_alpha",
     "clients_per_round": "num_clients_per_round",
+    "branches": "num_branches",
 }
 
 
@@ -210,6 +225,23 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("-ufs", dest="use_fresh_scoring", action="store_true")
     p.add_argument("-udf", dest="usage_decay_factor", type=float, default=0.9)
     p.add_argument("-fdr", dest="freshness_decay_rate", type=float, default=0.1)
+
+    # MultiSFL-specific
+    p.add_argument("--num-branches", dest="num_branches", type=int, default=3)
+    p.add_argument("--alpha-master-pull", dest="alpha_master_pull",
+                    type=float, default=0.5)
+    p.add_argument("--p-update", dest="p_update", default="abs_ratio")
+    p.add_argument("--p0", dest="p0", type=float, default=0.01)
+    p.add_argument("--p-min", dest="p_min", type=float, default=0.01)
+    p.add_argument("--p-max", dest="p_max", type=float, default=0.5)
+    p.add_argument("--p-eps", dest="p_eps", type=float, default=1e-12)
+    p.add_argument("--p-delta-clip", dest="p_delta_clip", type=float, default=0.2)
+    p.add_argument("--gamma", dest="gamma", type=float, default=0.5)
+    p.add_argument("--replay-min-total", dest="replay_min_total", type=int, default=0)
+    p.add_argument("--max-assistant-trials", dest="max_assistant_trials",
+                    type=int, default=20)
+    p.add_argument("--replay-budget-mode", dest="replay_budget_mode",
+                    default="local_dataset")
 
     # Result output
     p.add_argument("--result-dir", dest="result_dir", default="results")
