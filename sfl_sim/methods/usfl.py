@@ -129,7 +129,8 @@ class USFLHook(BaseMethodHook):
             # Target = global batch size (all clients combined per iteration)
             target_bs = config.batch_size * config.num_clients_per_round
             k, schedule = create_schedule(target_bs, client_data_sizes)
-            iterations = k
+            # k = iterations for 1 pass through data, multiply by local_epochs
+            iterations = k * config.local_epochs
         else:
             max_batches = max(len(s.dataloader) for s in client_states.values())
             iterations = config.local_epochs * max_batches
