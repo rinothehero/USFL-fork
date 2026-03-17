@@ -197,7 +197,10 @@ class SimTrainer:
             if policy == "break" and any(s.exhausted for s in client_states.values()):
                 break
 
-            for cid in client_order:
+            # SFLV2: random client order per iteration (paper spec)
+            shuffled_order = list(client_order)
+            self.rng.shuffle(shuffled_order)
+            for cid in shuffled_order:
                 state = client_states[cid]
                 result = get_next_batch(state, device, policy)
                 if result is None:
@@ -355,6 +358,11 @@ class SimTrainer:
             # Phase 3: Gradient processing (USFL gradient shuffle)
             activation_grads = concat_act.grad.clone().detach()
 
+            # Scale gradients: CE(mean) divides by total concat batch,
+            # but each client should see gradient as if trained on own batch.
+            if self.config.scale_client_grad:
+                activation_grads *= len(active_clients)
+
             self.fire(
                 "after_concat_forward",
                 concat_act=concat_act,
@@ -471,14 +479,19 @@ class SimTrainer:
             ctx.extra["client_order"] = active_clients
             ctx.extra["concat_labels"] = concat_labels
 
-            def make_hook(hook_ref, ctx_ref):
+            scale_factor = len(active_clients) if self.config.scale_client_grad else 1
+
+            def make_hook(hook_ref, ctx_ref, scale):
                 def shuffle_hook(grad):
-                    return hook_ref.process_gradients(grad.clone(), ctx_ref)
+                    g = grad.clone()
+                    if scale > 1:
+                        g *= scale
+                    return hook_ref.process_gradients(g, ctx_ref)
 
                 return shuffle_hook
 
             # concat_act의 gradient가 계산되면 shuffle_hook을 실행하라는 등록
-            concat_act.register_hook(make_hook(self.hook, ctx))
+            concat_act.register_hook(make_hook(self.hook, ctx, scale_factor))
 
             # Phase 2: Server forward + backward (single pass for everything)
             if concat_act.size(0) == 1:

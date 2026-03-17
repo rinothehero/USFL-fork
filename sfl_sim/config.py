@@ -59,6 +59,7 @@ class Config:
     # --- Gradient ---
     clip_grad: bool = False
     clip_grad_max_norm: float = 1.0
+    scale_client_grad: bool = False  # Multiply activation grad by num active clients
 
     # --- Server training mode ---
     # "per_client": SFL default (one server step per client)
@@ -197,6 +198,8 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--clip-grad", dest="clip_grad", type=_str_to_bool, default=False)
     p.add_argument("--clip-grad-max-norm", dest="clip_grad_max_norm",
                     type=float, default=1.0)
+    p.add_argument("--scale-client-grad", dest="scale_client_grad",
+                    type=_str_to_bool, default=False)
 
     # USFL-specific
     p.add_argument("-bstrat", dest="balancing_strategy", default="trimming")
