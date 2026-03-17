@@ -9,6 +9,8 @@
   "local_epochs": 5,
   "batch_size": 50,
   "learning_rate": 0.001,
+  "momentum": 0.9,
+  "weight_decay": 0.0,
   "optimizer": "sgd",
   "distribution": "shard_dirichlet",
   "alpha": 0.3,
@@ -16,12 +18,13 @@
   "selector": "usfl",
   "aggregator": "usfl",
   "gradient_shuffle": true,
-  "gradient_shuffle_strategy": "average",
+  "gradient_shuffle_strategy": "random",
   "balancing_strategy": "target",
   "balancing_target": "mean",
   "use_dynamic_batch_scheduler": true,
   "use_cumulative_usage": false,
   "use_fresh_scoring": false,
+  "server_training_mode": "concatenated_fused",
   "device": "cuda",
   "seed": 42
 }

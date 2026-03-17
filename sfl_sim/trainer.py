@@ -504,7 +504,7 @@ class SimTrainer:
             #    ∂loss/∂logits 계산
             #
             # 2) logits → server params
-            #    ∂loss/∂server_params 계산 → server_params.grad에 저장 ✓
+            #    ∂loss/∂server_params 계산 → server_params.grad에 저장 (server_params를 어떻게 바꿔야 loss가 줄어드는지)
             #
             # 3) logits → concat_act
             #    ∂loss/∂concat_act 계산 → concat_act.grad에 저장 ✓
