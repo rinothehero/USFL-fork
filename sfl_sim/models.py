@@ -421,6 +421,74 @@ def _create_deit_tiny(num_classes: int, split_layer: str, in_channels: int = 3) 
 
 
 # ---------------------------------------------------------------------------
+# MLP Classifier
+# ---------------------------------------------------------------------------
+
+
+class _MLPClient(nn.Module):
+    """Client portion of MLP (up to and including split_layer)."""
+
+    def __init__(self, in_features: int, split_layer: str):
+        super().__init__()
+        self.flatten = nn.Flatten()
+        self.layer1 = nn.Sequential(nn.Linear(in_features, 512), nn.ReLU())
+        self.layer2 = nn.Sequential(nn.Linear(512, 256), nn.ReLU())
+
+        if split_layer == "layer1":
+            self._layers = ["layer1"]
+        elif split_layer == "layer2":
+            self._layers = ["layer1", "layer2"]
+        else:
+            raise ValueError(f"Invalid split_layer '{split_layer}' for MLP. Choose from ['layer1', 'layer2']")
+
+    def forward(self, x):
+        x = self.flatten(x)
+        for name in self._layers:
+            x = getattr(self, name)(x)
+        return x
+
+
+class _MLPServer(nn.Module):
+    """Server portion of MLP (after split_layer to output)."""
+
+    def __init__(self, split_layer: str, num_classes: int):
+        super().__init__()
+        if split_layer == "layer1":
+            self.layer2 = nn.Sequential(nn.Linear(512, 256), nn.ReLU())
+            self.layer3 = nn.Linear(256, num_classes)
+            self._layers = ["layer2", "layer3"]
+        elif split_layer == "layer2":
+            self.layer3 = nn.Linear(256, num_classes)
+            self._layers = ["layer3"]
+        else:
+            raise ValueError(f"Invalid split_layer '{split_layer}' for MLP. Choose from ['layer1', 'layer2']")
+
+    def forward(self, x):
+        for name in self._layers:
+            x = getattr(self, name)(x)
+        return x
+
+
+# Input feature sizes by dataset for MLP
+_MLP_IN_FEATURES = {
+    "cifar10": 3 * 32 * 32,    # 3072
+    "cifar100": 3 * 32 * 32,   # 3072
+    "svhn": 3 * 32 * 32,       # 3072
+    "mnist": 1 * 28 * 28,      # 784
+    "fmnist": 1 * 28 * 28,     # 784
+}
+
+
+def _create_mlp(num_classes: int, split_layer: str, in_channels: int = 3, dataset: str = "cifar10") -> SplitModel:
+    """Create split MLP classifier."""
+    in_features = _MLP_IN_FEATURES.get(dataset, 3 * 32 * 32)
+
+    client = _MLPClient(in_features, split_layer)
+    server = _MLPServer(split_layer, num_classes)
+    return SplitModel(client, server, num_classes, name="mlp")
+
+
+# ---------------------------------------------------------------------------
 # Model factory
 # ---------------------------------------------------------------------------
 
@@ -433,6 +501,7 @@ _DEFAULT_SPLITS = {
     "mobilenet": "features.7",
     "lenet": "conv2",
     "deit_tiny": "blocks.5",
+    "mlp": "layer1",
 }
 
 # Input channels by dataset
@@ -478,6 +547,7 @@ def create_model(
         "mobilenet": _create_mobilenet,
         "lenet": _create_lenet,
         "deit_tiny": _create_deit_tiny,
+        "mlp": lambda nc, sl, ic: _create_mlp(nc, sl, ic, dataset),
     }
 
     if canonical not in creators:

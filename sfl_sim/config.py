@@ -93,6 +93,12 @@ class Config:
     usage_decay_factor: float = 0.9
     freshness_decay_rate: float = 0.1
 
+    # --- GAS-specific ---
+    g_measure_frequency: int = 10  # Measure G-scores every N rounds
+    v_test_batches: int = 10       # Number of test batches for V-value estimation
+    warmup_rounds: int = 5         # Use uniform selection for first N rounds
+    oracle_max_batches: Optional[int] = None  # Limit oracle computation (None = use all)
+
     # --- Result output ---
     result_dir: str = "results"
 
@@ -213,6 +219,16 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("-ufs", dest="use_fresh_scoring", action="store_true")
     p.add_argument("-udf", dest="usage_decay_factor", type=float, default=0.9)
     p.add_argument("-fdr", dest="freshness_decay_rate", type=float, default=0.1)
+
+    # GAS-specific
+    p.add_argument("--g-measure-frequency", dest="g_measure_frequency",
+                    type=int, default=10)
+    p.add_argument("--v-test-batches", dest="v_test_batches",
+                    type=int, default=10)
+    p.add_argument("--warmup-rounds", dest="warmup_rounds",
+                    type=int, default=5)
+    p.add_argument("--oracle-max-batches", dest="oracle_max_batches",
+                    type=int, default=None)
 
     # Result output
     p.add_argument("--result-dir", dest="result_dir", default="results")
