@@ -126,7 +126,9 @@ class USFLHook(BaseMethodHook):
 
         # 6. Compute iterations
         if config.use_dynamic_batch_scheduler:
-            k, schedule = create_schedule(config.batch_size, client_data_sizes)
+            # Target = global batch size (all clients combined per iteration)
+            target_bs = config.batch_size * config.num_clients_per_round
+            k, schedule = create_schedule(target_bs, client_data_sizes)
             iterations = k
         else:
             max_batches = max(len(s.dataloader) for s in client_states.values())
