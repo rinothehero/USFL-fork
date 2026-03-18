@@ -71,12 +71,6 @@ class SFLHook(BaseMethodHook):
         server_optimizer = create_server_optimizer(server_model, config)
         criterion = create_criterion(config)
 
-        # 5. Compute iterations
-        max_iters = 0
-        for cid in selected:
-            n_batches = len(client_states[cid].dataloader)
-            max_iters = max(max_iters, config.local_epochs * n_batches)
-
         return RoundContext(
             round_number=round_number,
             selected_client_ids=selected,
@@ -84,7 +78,7 @@ class SFLHook(BaseMethodHook):
             server_model=server_model,
             server_optimizer=server_optimizer,
             criterion=criterion,
-            iterations=max_iters,
+            iterations=0,  # per_client mode: trainer computes its own loop count
             device=device,
             extra={"client_base_state": client_base_state},
         )
