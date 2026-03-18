@@ -118,16 +118,13 @@ class USFLHook(BaseMethodHook):
             )
             client_data_sizes[cid] = len(dataset)
 
-        # 6. Compute iterations
+        # 6. Compute batches per epoch (trainer handles epoch loop)
         if config.use_dynamic_batch_scheduler:
-            # Target = global batch size (all clients combined per iteration)
             target_bs = config.batch_size * config.num_clients_per_round
             k, schedule = create_schedule(target_bs, client_data_sizes)
-            # k = iterations for 1 pass through data, multiply by local_epochs
-            iterations = k * config.local_epochs
+            batches_per_epoch = k  # DBS: k iterations = 1 pass through data
         else:
-            max_batches = max(len(s.dataloader) for s in client_states.values())
-            iterations = config.local_epochs * max_batches
+            batches_per_epoch = max(len(s.dataloader) for s in client_states.values())
 
         # 7. Server setup
         server_model = model.server_model
@@ -142,11 +139,11 @@ class USFLHook(BaseMethodHook):
             server_model=server_model,
             server_optimizer=server_optimizer,
             criterion=criterion,
-            iterations=iterations,
             device=device,
             extra={
                 "client_base_state": client_base_state,
                 "client_label_dists": {cid: client_label_dists[cid] for cid in selected},
+                "batches_per_epoch": batches_per_epoch,
             },
         )
 

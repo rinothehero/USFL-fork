@@ -67,18 +67,12 @@ class Config:
     # "concatenated_fused": optimized (register_hook, no re-forward, faster)
     server_training_mode: str = ""  # empty = auto (hook decides)
 
-    # --- Data exhaustion policy ---
-    # What to do when a client runs out of data mid-round:
-    # "cycling": restart from beginning (may overfit small clients in Non-IID)
-    # "skip": skip exhausted clients in remaining iterations
-    #          Note: may cause client drift in later iterations,
-    #          aggregation weights still use total dataset_size (not actual trained batches)
-    # "break": stop all clients when any one is exhausted (wastes large client data)
-    # "dbs": Dynamic Batch Scheduler — adjust batch sizes so all exhaust simultaneously
-    #        (recommended for USFL; requires use_dynamic_batch_scheduler=true)
-    #        Note: in SFL (per_client mode), "dbs" falls back to cycling
-    #        because DBS scheduling only runs in USFL hook's pre_round
-    exhaustion_policy: str = "dbs"
+    # --- Data exhaustion policy (per epoch) ---
+    # Each local epoch resets all clients. Policy controls within-epoch behavior:
+    # "cycling": restart exhausted client immediately (keeps all clients active every iteration)
+    # "skip": skip exhausted client for rest of this epoch (fewer clients in later iterations)
+    # "break": stop all clients when any one is exhausted (shortest epoch)
+    exhaustion_policy: str = "skip"
 
     # --- USFL-specific (Phase 2) ---
     balancing_strategy: str = "trimming"
@@ -197,7 +191,7 @@ def parse_args(argv: list[str] | None = None) -> Config:
     p.add_argument("--server-training-mode", dest="server_training_mode", default="")
 
     # Data exhaustion policy
-    p.add_argument("--exhaustion-policy", dest="exhaustion_policy", default="dbs")
+    p.add_argument("--exhaustion-policy", dest="exhaustion_policy", default="skip")
 
     # Model splitting
     p.add_argument("-ss", dest="split_strategy", default="layer_name")

@@ -381,13 +381,7 @@ class MultiSFLHook(BaseMethodHook):
             )
             client_states[cid] = state
 
-        # 5. Compute iterations (local_epochs * max_batches)
-        max_iters = 0
-        for cid in selected:
-            n_batches = len(client_states[cid].dataloader)
-            max_iters = max(max_iters, config.local_epochs * n_batches)
-
-        # 6. Use dummy server model/optimizer for the context (not used by run_round)
+        # 5. Use dummy server model/optimizer for the context (not used by run_round)
         server_model = model.server_model
         server_optimizer = create_server_optimizer(server_model, config)
         criterion = create_criterion(config)
@@ -402,7 +396,6 @@ class MultiSFLHook(BaseMethodHook):
             server_model=server_model,
             server_optimizer=server_optimizer,
             criterion=criterion,
-            iterations=max_iters,
             device=device,
             extra={
                 "client_base_state": client_base_state,

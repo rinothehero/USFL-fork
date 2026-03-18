@@ -54,9 +54,7 @@ class RoundContext:
     server_model: nn.Module
     server_optimizer: torch.optim.Optimizer
     criterion: nn.Module
-    iterations: int
     device: torch.device
-    batch_schedule: Optional[dict] = None
     extra: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -238,15 +236,14 @@ def get_next_batch(
     Returns None if client is exhausted and policy is "skip" or "break".
 
     Policy:
-        "cycling": restart dataloader from beginning (default, legacy)
-        "skip": return None when exhausted (client skips this iteration)
-        "break": return None when exhausted (caller should stop all clients)
-        "dbs": same as cycling (DBS ensures all exhaust simultaneously)
+        "cycling": restart dataloader from beginning (default)
+        "skip": return None when exhausted (client skips rest of this epoch)
+        "break": return None when exhausted (caller should stop this epoch)
     """
     if state.exhausted:
         if policy in ("skip", "break"):
             return None
-        # cycling / dbs: reset
+        # cycling: reset
         state.data_iter = iter(state.dataloader)
         state.exhausted = False
 
@@ -256,7 +253,7 @@ def get_next_batch(
         state.exhausted = True
         if policy in ("skip", "break"):
             return None
-        # cycling / dbs: restart
+        # cycling: restart
         state.data_iter = iter(state.dataloader)
         state.exhausted = False
         batch = next(state.data_iter)

@@ -14,7 +14,7 @@
   "aggregator": "fedavg",
   "_aggregator_options": "fedavg | usfl",
   "exhaustion_policy": "skip",
-  "_exhaustion_policy_options": "cycling | skip | break | dbs",
+  "_exhaustion_policy_options": "cycling | skip | break",
   "device": "cuda",
   "seed": 42
 }

@@ -101,7 +101,6 @@ class GASHook(BaseMethodHook):
             server_model=server_model,
             server_optimizer=server_optimizer,
             criterion=criterion,
-            iterations=0,  # per_client mode: trainer computes its own loop count
             device=device,
             extra={"client_base_state": client_base_state},
         )

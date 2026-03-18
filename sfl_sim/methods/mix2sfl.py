@@ -207,10 +207,6 @@ class Mix2SFLHook(BaseMethodHook):
         server_optimizer = create_server_optimizer(server_model, config)
         criterion = create_criterion(config)
 
-        # 5. Compute iterations
-        max_batches = max(len(s.dataloader) for s in client_states.values())
-        iterations = config.local_epochs * max_batches
-
         return RoundContext(
             round_number=round_number,
             selected_client_ids=selected,
@@ -218,7 +214,6 @@ class Mix2SFLHook(BaseMethodHook):
             server_model=server_model,
             server_optimizer=server_optimizer,
             criterion=criterion,
-            iterations=iterations,
             device=device,
             extra={
                 "client_base_state": client_base_state,
