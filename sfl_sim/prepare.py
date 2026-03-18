@@ -343,8 +343,51 @@ def prepare(args) -> Path:
     return out_dir
 
 
+def _ask(prompt: str, default: str) -> str:
+    """Prompt user with a default value. Enter accepts default."""
+    val = input(f"  {prompt} [{default}]: ").strip()
+    return val if val else default
+
+
+def _interactive_args():
+    """Ask user for each parameter interactively."""
+    import types
+
+    print("=== sfl_sim prepare (interactive) ===\n")
+
+    args = types.SimpleNamespace()
+    args.dataset = _ask("Dataset (cifar10/cifar100/fmnist/mnist/svhn)", "cifar10")
+    args.num_clients = int(_ask("Total clients", "100"))
+    args.clients_per_round = int(_ask("Clients per round", "10"))
+    args.rounds = int(_ask("Rounds", "100"))
+    args.distribution = _ask("Distribution (uniform/dirichlet/shard_dirichlet)", "shard_dirichlet")
+
+    if args.distribution in ("dirichlet", "shard_dirichlet"):
+        args.alpha = float(_ask("Dirichlet alpha (lower=more Non-IID)", "0.3"))
+    else:
+        args.alpha = 0.3
+
+    if args.distribution == "shard_dirichlet":
+        args.labels_per_client = int(_ask("Labels per client", "2"))
+    else:
+        args.labels_per_client = 2
+
+    args.min_require_size = 10
+    args.selector = _ask("Selector (uniform/usfl)", "usfl")
+    args.seed = int(_ask("Seed", "42"))
+    args.output_dir = None
+
+    print()
+    return args
+
+
 def main():
-    args = _parse_prepare_args()
+    import sys
+    # No CLI args → interactive mode
+    if len(sys.argv) <= 1:
+        args = _interactive_args()
+    else:
+        args = _parse_prepare_args()
     prepare(args)
 
 
