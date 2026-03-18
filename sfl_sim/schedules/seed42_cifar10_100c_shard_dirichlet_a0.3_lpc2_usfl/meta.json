@@ -1,0 +1,16 @@
+{
+  "seed": 42,
+  "dataset": "cifar10",
+  "num_clients": 100,
+  "clients_per_round": 10,
+  "rounds": 100,
+  "distribution": "shard_dirichlet",
+  "alpha": 0.3,
+  "labels_per_client": 2,
+  "selector": "usfl",
+  "num_classes": 10,
+  "coverage_failures": 0,
+  "selection_count_min": 9,
+  "selection_count_max": 12,
+  "selection_count_mean": 10.0
+}
