@@ -59,13 +59,27 @@ all_servers() {
 
 cmd_launch() {
     local config_file="" target="" no_push=false
+    local -a extra_args=()
+    local -a positional=("$@")
+    local i=0
 
-    for arg in "$@"; do
+    while [[ $i -lt ${#positional[@]} ]]; do
+        local arg="${positional[$i]}"
         case "$arg" in
             --no-push) no_push=true ;;
             *:*)       target="$arg" ;;
-            *)         [[ -z "$config_file" ]] && config_file="$arg" ;;
+            --*)
+                # CLI overrides → forward to python (e.g. --schedule-dir <path>)
+                extra_args+=("$arg")
+                # If next arg exists and doesn't start with --, treat as value
+                if [[ $((i+1)) -lt ${#positional[@]} && ! "${positional[$((i+1))]}" == --* && ! "${positional[$((i+1))]}" == *:* ]]; then
+                    i=$((i+1))
+                    extra_args+=("${positional[$i]}")
+                fi
+                ;;
+            *)  [[ -z "$config_file" ]] && config_file="$arg" ;;
         esac
+        i=$((i+1))
     done
 
     [[ -f "$config_file" ]] || die "Config file not found: $config_file"
@@ -109,6 +123,7 @@ cmd_launch() {
     scp -q "$config_file" "$ssh_host:$remote_config"
 
     # 4. Write run script on remote (avoids shell escaping issues in tmux)
+    local extra_args_str="${extra_args[*]:-}"
     local remote_script="$repo/_run_${method}_g${gpu}.sh"
     ssh "$ssh_host" "cat > $remote_script" <<REMOTE_EOF
 #!/bin/bash
@@ -125,7 +140,7 @@ conda activate $conda_env
 
 export PYTHONUNBUFFERED=1
 export CUDA_VISIBLE_DEVICES=$gpu
-python -m sfl_sim --config $remote_config
+python -m sfl_sim --config $remote_config ${extra_args_str}
 REMOTE_EOF
     ssh "$ssh_host" "chmod +x $remote_script"
 

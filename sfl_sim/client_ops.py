@@ -13,6 +13,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Subset
 
+from .data import get_label_distribution
+
 
 # ---------------------------------------------------------------------------
 # Data structures
