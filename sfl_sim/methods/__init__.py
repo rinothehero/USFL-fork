@@ -24,4 +24,7 @@ def get_method_hook(method: str, config, trainer) -> "BaseMethodHook":
     if method == "mix2sfl":
         from .mix2sfl import Mix2SFLHook
         return Mix2SFLHook(config, trainer)
+    if method == "multisfl":
+        from .multisfl import MultiSFLHook
+        return MultiSFLHook(config, trainer)
     raise ValueError(f"Unknown method: {method}")

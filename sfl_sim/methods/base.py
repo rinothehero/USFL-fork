@@ -7,7 +7,7 @@ Override only what differs from the default behavior.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, List, Optional
 
 import torch
 import torch.nn as nn
@@ -60,6 +60,20 @@ class BaseMethodHook(ABC):
         Aggregate client models, update global model, evaluate, return RoundResult.
         """
         ...
+
+    # --- Full round override (for methods like MultiSFL) ---
+
+    def run_round(
+        self, trainer: "SimTrainer", ctx: "RoundContext"
+    ) -> Optional[List["ClientResult"]]:
+        """
+        Override to take full control of the training round.
+
+        Return None to use the trainer's default run_sfl_round().
+        Return a list of ClientResult to skip the default logic entirely.
+        Used by MultiSFL which needs multi-branch server training.
+        """
+        return None
 
     # --- In-round hooks (override to customize) ---
 

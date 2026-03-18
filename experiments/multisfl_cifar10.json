@@ -1,0 +1,44 @@
+{
+  "method": "multisfl",
+  "dataset": "cifar10",
+  "model": "resnet18",
+  "split_layer": "layer2",
+  "rounds": 100,
+  "num_clients": 100,
+  "clients_per_round": 10,
+  "local_epochs": 5,
+  "batch_size": 50,
+  "learning_rate": 0.01,
+  "server_learning_rate": 0.01,
+  "momentum": 0.5,
+  "weight_decay": 0.0,
+  "optimizer": "sgd",
+  "distribution": "shard_dirichlet",
+  "alpha": 0.3,
+  "labels_per_client": 2,
+  "selector": "uniform",
+  "aggregator": "fedavg",
+
+  "_options_branches": "Number of branch servers. Default = num_clients_per_round.",
+  "branches": 3,
+
+  "_options_alpha_master_pull": "Weight for soft-pulling branches toward master (0=no pull, 1=full replace). Original default: 0.1",
+  "alpha_master_pull": 0.1,
+
+  "_options_p_update": "Sampling proportion update: paper, abs_ratio, one_plus_delta",
+  "p_update": "abs_ratio",
+
+  "_options_replay": "Replay budget and scheduling parameters",
+  "p0": 0.01,
+  "p_min": 0.01,
+  "p_max": 0.5,
+  "p_eps": 1e-12,
+  "p_delta_clip": 0.2,
+  "gamma": 0.5,
+  "replay_min_total": 0,
+  "max_assistant_trials": 20,
+  "replay_budget_mode": "local_dataset",
+
+  "device": "cuda",
+  "seed": 42
+}
