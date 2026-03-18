@@ -2,7 +2,12 @@
 CLI entry point and result saving.
 
 Usage:
-    python -m sfl_sim -d cifar10 -m resnet18 -M sfl -le 5 -gr 100 ...
+    # 1. Pre-compute schedule (once)
+    python -m sfl_sim.prepare --config experiments/sfl_cifar10.json
+
+    # 2. Train (reuse same schedule for all methods)
+    python -m sfl_sim --config experiments/sfl_cifar10.json --schedule-dir schedules/seed42_cifar10_100c_shard_dirichlet_a0.3_lpc2/
+    python -m sfl_sim --config experiments/usfl_cifar10.json --schedule-dir schedules/seed42_cifar10_100c_shard_dirichlet_a0.3_lpc2/
 """
 from __future__ import annotations
 
@@ -32,6 +37,67 @@ def set_seed(seed: int):
         torch.backends.cudnn.benchmark = False
 
 
+def _load_schedule_dir(schedule_dir: str, config: Config):
+    """
+    Load pre-computed data_map, schedule, and meta from directory.
+    Auto-fills config fields from meta.json.
+
+    Returns:
+        (client_data_masks, selection_schedule)
+    """
+    sdir = Path(schedule_dir)
+    if not sdir.exists():
+        raise FileNotFoundError(f"Schedule directory not found: {sdir}")
+
+    # Load meta.json and fill config
+    meta_path = sdir / "meta.json"
+    if not meta_path.exists():
+        raise FileNotFoundError(f"meta.json not found in {sdir}")
+    with open(meta_path) as f:
+        meta = json.load(f)
+
+    # Auto-fill config from meta (schedule defines these, not experiment config)
+    config.dataset = meta["dataset"]
+    config.num_clients = meta["num_clients"]
+    config.num_clients_per_round = meta["clients_per_round"]
+    config.global_round = meta["rounds"]
+    config.distribution = meta["distribution"]
+    config.dirichlet_alpha = meta["alpha"]
+    config.labels_per_client = meta["labels_per_client"]
+    config.selector = meta["selector"]
+
+    # Load data_map.json
+    data_map_path = sdir / "data_map.json"
+    if not data_map_path.exists():
+        raise FileNotFoundError(f"data_map.json not found in {sdir}")
+    with open(data_map_path) as f:
+        raw_map = json.load(f)
+    client_data_masks = {int(k): v for k, v in raw_map.items()}
+
+    # Load schedule.json
+    schedule_path = sdir / "schedule.json"
+    if not schedule_path.exists():
+        raise FileNotFoundError(f"schedule.json not found in {sdir}")
+    with open(schedule_path) as f:
+        raw_schedule = json.load(f)
+
+    selection_schedule = []
+    for r in range(1, config.global_round + 1):
+        key = str(r)
+        if key not in raw_schedule:
+            raise ValueError(
+                f"Schedule has {len(raw_schedule)} rounds but need {config.global_round}. "
+                f"Re-run: python -m sfl_sim.prepare -gr {config.global_round}"
+            )
+        selection_schedule.append(raw_schedule[key])
+
+    print(f"[sfl_sim] Loaded schedule from {sdir}/", flush=True)
+    print(f"  {meta['dataset']}, {meta['num_clients']} clients, "
+          f"{meta['rounds']} rounds, selector={meta['selector']}", flush=True)
+
+    return client_data_masks, selection_schedule
+
+
 def save_results(
     results: List[RoundResult],
     config: Config,
@@ -53,6 +119,7 @@ def save_results(
             "finished_at": datetime.now(timezone.utc).isoformat(),
             "total_rounds": config.global_round,
             "seed": config.seed,
+            "schedule_dir": config.schedule_dir,
         },
         "config": {
             "dataset": config.dataset,
@@ -63,12 +130,15 @@ def save_results(
             "local_epochs": config.local_epochs,
             "batch_size": config.batch_size,
             "learning_rate": config.learning_rate,
+            "momentum": config.momentum,
+            "weight_decay": config.weight_decay,
             "optimizer": config.optimizer,
             "distribution": config.distribution,
             "dirichlet_alpha": config.dirichlet_alpha,
             "labels_per_client": config.labels_per_client,
             "selector": config.selector,
             "aggregator": config.aggregator,
+            "exhaustion_policy": config.exhaustion_policy,
         },
         "rounds": [
             {
@@ -131,8 +201,8 @@ def run(config: Config) -> List[RoundResult]:
     trainer.rng = np.random.RandomState(config.seed)
     trainer._callbacks = defaultdict(list)
 
-    # Load data
-    from .data import load_dataset, distribute, get_testloader
+    # Load data (always needed for transforms/testloader)
+    from .data import load_dataset, get_testloader
     trainer.trainset, testset, trainer.num_classes = load_dataset(
         config.dataset, data_dir="./data"
     )
@@ -145,16 +215,20 @@ def run(config: Config) -> List[RoundResult]:
     )
     trainer.model.to(trainer.device)
 
-    # Distribute data
-    trainer.client_data_masks = distribute(
-        trainer.trainset,
-        config.num_clients,
-        config.distribution,
-        alpha=config.dirichlet_alpha,
-        labels_per_client=config.labels_per_client,
-        min_require_size=config.min_require_size,
-        seed=config.seed,
+    # Load pre-computed data distribution + selection schedule
+    if not config.schedule_dir:
+        raise ValueError(
+            "Missing --schedule-dir. Generate a schedule first:\n"
+            "  python -m sfl_sim.prepare -d cifar10 -nc 100 -ncpr 10 -gr 100 "
+            "--selector usfl --seed 42\n"
+            "Then pass the output directory via --schedule-dir"
+        )
+    client_data_masks, selection_schedule = _load_schedule_dir(
+        config.schedule_dir, config
     )
+    trainer.client_data_masks = client_data_masks
+    trainer.selection_schedule = selection_schedule
+
     trainer.all_client_ids = list(range(config.num_clients))
 
     # Create hook

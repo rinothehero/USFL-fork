@@ -1,12 +1,13 @@
 """
-Dataset loading and client data distribution.
+Dataset loading, client data distribution, and maskable dataset for USFL balancing.
 
 Supports: CIFAR-10, CIFAR-100, FMNIST, MNIST, SVHN
 Distribution: uniform (IID), dirichlet, shard_dirichlet
 """
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
+from collections import defaultdict
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -91,6 +92,14 @@ def get_targets(dataset: Dataset) -> np.ndarray:
     if hasattr(dataset, "labels"):
         return np.array(dataset.labels)
     raise ValueError("Dataset has no targets or labels attribute")
+
+
+def get_label_distribution(dataset: Dataset, indices) -> Dict[int, int]:
+    """Compute per-label counts for a subset of a dataset."""
+    from collections import Counter
+    targets = get_targets(dataset)
+    labels = [int(targets[i]) for i in indices]
+    return dict(Counter(labels))
 
 
 def get_testloader(testset: Dataset, batch_size: int = 128) -> DataLoader:
@@ -301,3 +310,94 @@ def _distribute_shard_dirichlet(
             offset += count
 
     return client_indices
+
+
+# ---------------------------------------------------------------------------
+# MaskableDataset for USFL data balancing (trimming/replication)
+# ---------------------------------------------------------------------------
+
+
+class MaskableDataset(Dataset):
+    """
+    Dataset wrapper supporting per-label trimming and replication.
+
+    - Trimming: randomly select target samples from available (not always first N)
+    - Replication: cycle from random start position (not always position 0)
+    - Uses numpy rng for full reproducibility
+    """
+
+    def __init__(
+        self,
+        base_dataset: Dataset,
+        indices: List[int],
+        rng: Optional[np.random.RandomState] = None,
+    ):
+        self.base = base_dataset
+        self.original_indices = list(indices)
+        self.rng = rng if rng is not None else np.random.RandomState()
+
+        # Extract targets
+        if hasattr(base_dataset, "targets"):
+            targets = base_dataset.targets
+        elif hasattr(base_dataset, "labels"):
+            targets = base_dataset.labels
+        else:
+            raise ValueError("Dataset has no targets or labels")
+
+        # Build label -> original index mapping
+        self._label_to_indices: Dict[int, List[int]] = defaultdict(list)
+        for idx in indices:
+            label = int(targets[idx])
+            self._label_to_indices[label].append(idx)
+
+        # Active indices (modified by update_amount_per_label)
+        self.active_indices = list(indices)
+
+    def update_amount_per_label(self, amounts: Dict[int, int]):
+        """
+        Set target sample count per label.
+
+        Trim: random subset of available samples (varies each call)
+        Replicate: cycle from random start position
+        """
+        new_indices = []
+
+        for label, target in amounts.items():
+            available = self._label_to_indices.get(label, [])
+            if not available or target <= 0:
+                continue
+
+            n = len(available)
+            if target <= n:
+                # Trim: random subset (not always first N)
+                perm = self.rng.permutation(n)
+                new_indices.extend(available[i] for i in perm[:target])
+            else:
+                # Replicate: all samples + cycle from random start for remainder
+                new_indices.extend(available)
+                remainder = target - n
+                start = self.rng.randint(0, n)
+                for i in range(remainder):
+                    new_indices.append(available[(start + i) % n])
+
+        self.rng.shuffle(new_indices)
+        self.active_indices = new_indices
+
+    def __len__(self):
+        return len(self.active_indices)
+
+    def __getitem__(self, idx):
+        return self.base[self.active_indices[idx]]
+
+    @property
+    def label_distribution(self) -> Dict[int, int]:
+        """Current label distribution of active indices."""
+        if hasattr(self.base, "targets"):
+            targets = self.base.targets
+        else:
+            targets = self.base.labels
+
+        dist: Dict[int, int] = defaultdict(int)
+        for idx in self.active_indices:
+            dist[int(targets[idx])] += 1
+        return dict(dist)

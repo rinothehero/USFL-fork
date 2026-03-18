@@ -37,7 +37,7 @@ from ..client_ops import (
     snapshot_model,
 )
 from ..aggregation import fedavg
-from ..selection import select_clients
+
 
 if TYPE_CHECKING:
     from ..trainer import SimTrainer
@@ -353,13 +353,8 @@ class MultiSFLHook(BaseMethodHook):
         device = trainer.device
         model = trainer.model
 
-        # 1. Select clients
-        selected = select_clients(
-            config.selector,
-            config.num_clients_per_round,
-            trainer.all_client_ids,
-            rng=trainer.rng,
-        )
+        # 1. Select clients (from pre-computed schedule)
+        selected = trainer.selection_schedule[round_number - 1]
 
         # 2. Assign clients to branches (round-robin)
         branch_mapping: Dict[int, int] = {}

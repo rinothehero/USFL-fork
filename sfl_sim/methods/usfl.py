@@ -24,12 +24,12 @@ from .base import BaseMethodHook
 from ..client_ops import (
     RoundContext, RoundResult, ClientResult,
     create_server_optimizer, create_criterion,
-    snapshot_model, get_label_distribution,
+    snapshot_model,
 )
+from ..data import get_label_distribution
 from ..aggregation import aggregate
-from ..selection import select_clients
-from ..maskable_dataset import MaskableDataset
-from ..batch_scheduler import create_schedule
+from ..data import MaskableDataset
+from ..client_ops import create_schedule
 
 if TYPE_CHECKING:
     from ..trainer import SimTrainer
@@ -46,9 +46,6 @@ class USFLHook(BaseMethodHook):
 
     def __init__(self, config, trainer: "SimTrainer"):
         super().__init__(config, trainer)
-        # Persistent state across rounds
-        self.cumulative_usage: Dict[int, Dict[int, Dict[int, int]]] = {}
-        # {client_id: {label: {bin_key: count}}}
         # Pre-allocated client model pool
         self._client_pool: list = []
 
@@ -67,16 +64,8 @@ class USFLHook(BaseMethodHook):
             indices = trainer.client_data_masks[cid]
             client_label_dists[cid] = get_label_distribution(trainer.trainset, indices)
 
-        # 2. Select clients (USFL selector)
-        selected = select_clients(
-            config.selector,
-            config.num_clients_per_round,
-            trainer.all_client_ids,
-            rng=trainer.rng,
-            client_label_dists=client_label_dists,
-            cumulative_usage=self.cumulative_usage,
-            use_fresh_scoring=config.use_fresh_scoring,
-        )
+        # 2. Select clients (from pre-computed schedule)
+        selected = trainer.selection_schedule[round_number - 1]
 
         # 3. Snapshot client model state
         client_base_state = snapshot_model(model.client_model)
@@ -105,7 +94,7 @@ class USFLHook(BaseMethodHook):
 
             # Apply data balancing if configured
             if cid in augmented_sizes:
-                dataset = MaskableDataset(trainer.trainset, indices)
+                dataset = MaskableDataset(trainer.trainset, indices, rng=trainer.rng)
                 dataset.update_amount_per_label(augmented_sizes[cid])
             else:
                 from torch.utils.data import Subset
@@ -286,11 +275,7 @@ class USFLHook(BaseMethodHook):
         # 2. Update global client model
         model.client_model.load_state_dict(agg_state)
 
-        # 3. Update cumulative usage
-        if config.use_cumulative_usage:
-            self._update_cumulative_usage(round_ctx, client_results)
-
-        # 4. Evaluate
+        # 3. Evaluate
         accuracy = model.evaluate(trainer.testloader, device)
         avg_loss = round_ctx.extra.get("avg_loss", 0.0)
 
@@ -322,69 +307,64 @@ class USFLHook(BaseMethodHook):
         """
         Calculate per-client per-label target sizes based on balancing strategy.
 
+        Balancing is computed at the GLOBAL level (union of all selected clients),
+        then each client's per-label amount is scaled proportionally.
+
+        Example (target=mean):
+          Global: {class 0: 2000, class 3: 500, class 7: 3000}
+          target_per_class = mean(2000, 500, 3000) = 1833
+          class 0 scale = 1833/2000 = 0.917 → Client A's class 0: 800 → 733
+          class 3 scale = 1833/500  = 3.667 → Client B's class 3: 200 → 733
+
         Returns: {client_id: {label: target_count}}
         """
-        result = {}
         strategy = config.balancing_strategy
         target_str = config.balancing_target
 
+        # 1. Compute global label distribution across all selected clients
+        global_dist: Dict[int, int] = {}
+        for cid in selected:
+            for label, count in client_label_dists.get(cid, {}).items():
+                global_dist[label] = global_dist.get(label, 0) + count
+
+        if not global_dist:
+            return {}
+
+        global_counts = list(global_dist.values())
+
+        # 2. Compute target per class (global level)
+        if strategy == "trimming":
+            target_per_class = min(global_counts)
+        elif strategy == "replication":
+            target_per_class = max(global_counts)
+        elif strategy == "target":
+            if target_str == "mean":
+                target_per_class = int(sum(global_counts) / len(global_counts))
+            elif target_str == "median":
+                sorted_counts = sorted(global_counts)
+                mid = len(sorted_counts) // 2
+                target_per_class = sorted_counts[mid]
+            else:
+                target_per_class = int(target_str)
+        else:
+            return {}
+
+        target_per_class = max(1, target_per_class)
+
+        # 3. Compute per-class scale factor
+        scale = {}
+        for label, global_count in global_dist.items():
+            scale[label] = target_per_class / max(global_count, 1)
+
+        # 4. Apply scale to each client proportionally
+        result = {}
         for cid in selected:
             dist = client_label_dists.get(cid, {})
             if not dist:
                 continue
-
-            counts = list(dist.values())
-            if not counts:
-                continue
-
-            # Determine target per label
-            if strategy == "trimming":
-                target = min(counts)
-            elif strategy == "replication":
-                target = max(counts)
-            elif strategy == "target":
-                if target_str == "mean":
-                    target = int(sum(counts) / len(counts))
-                elif target_str == "median":
-                    sorted_counts = sorted(counts)
-                    mid = len(sorted_counts) // 2
-                    target = sorted_counts[mid]
-                else:
-                    target = int(target_str)
-            else:
-                continue
-
-            target = max(1, target)
-            result[cid] = {label: target for label in dist}
+            augmented = {}
+            for label, count in dist.items():
+                augmented[label] = max(1, int(count * scale.get(label, 1.0)))
+            result[cid] = augmented
 
         return result
-
-    # ------------------------------------------------------------------
-    # Cumulative usage tracking
-    # ------------------------------------------------------------------
-
-    def _update_cumulative_usage(
-        self, ctx: RoundContext, client_results: List[ClientResult]
-    ):
-        """Update exponential bin tracking for selected clients."""
-        for result in client_results:
-            cid = result.client_id
-            if cid not in self.cumulative_usage:
-                self.cumulative_usage[cid] = {}
-
-            for label, count in result.label_distribution.items():
-                if label not in self.cumulative_usage[cid]:
-                    self.cumulative_usage[cid][label] = {}
-
-                bins = self.cumulative_usage[cid][label]
-                # Find current total usage for this label
-                total = sum(bins.values())
-                bin_key = self._get_exponential_bin(total)
-                bins[bin_key] = bins.get(bin_key, 0) + count
-
-    @staticmethod
-    def _get_exponential_bin(usage_count: int) -> int:
-        """Map usage count to exponential bin key. Bins: 0, 1, 2, 4, 8, 16, ..."""
-        if usage_count <= 1:
-            return usage_count
-        return 2 ** (int(math.log2(usage_count)))

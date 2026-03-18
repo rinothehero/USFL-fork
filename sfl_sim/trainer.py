@@ -12,7 +12,6 @@ Two server training modes:
 
 from __future__ import annotations
 
-import copy
 import time
 from collections import defaultdict
 from typing import Any, Callable, Dict, List
@@ -28,16 +27,9 @@ from .client_ops import (
     RoundResult,
     client_backward,
     client_forward,
-    create_client_state,
-    create_criterion,
-    create_server_optimizer,
     get_next_batch,
     snapshot_model,
 )
-from .config import Config
-from .data import distribute, get_testloader, load_dataset
-from .models import SplitModel, create_model
-from .selection import select_clients
 
 # ------------------------------------------------------------------
 # Events fired during training (subscribe to any of these)
@@ -69,44 +61,10 @@ class SimTrainer:
         trainer.train()
     """
 
-    def __init__(self, config: Config, hook):
-        self.config = config
-        self.hook = hook
-        self.device = torch.device(config.device)
-        self.rng = np.random.RandomState(config.seed)
-        self._callbacks: Dict[str, List[Callable]] = defaultdict(list)
-
-        # Load data
-        self.trainset, testset, self.num_classes = load_dataset(
-            config.dataset, data_dir="./data"
-        )
-        self.testloader = get_testloader(testset, batch_size=config.batch_size)
-
-        # Create model
-        self.model = create_model(
-            config.model, self.num_classes, config.split_layer, config.dataset
-        )
-        self.model.to(self.device)
-
-        # Distribute data
-        # client_data_masks는 딕셔너리
-        # {
-        #     0: [3401, 7822, 12045, ...],   # 클라이언트 0이 받은 이미지 인덱스들
-        #     1: [501, 2233, 8891, ...],     # 클라이언트 1이 받은 이미지 인덱스들
-        #     ...
-        #     99: [4102, 9923, ...],         # 클라이언트 99
-        # }
-        self.client_data_masks = distribute(
-            self.trainset,
-            config.num_clients,
-            config.distribution,
-            alpha=config.dirichlet_alpha,
-            labels_per_client=config.labels_per_client,
-            min_require_size=config.min_require_size,
-            seed=config.seed,
-        )
-        # [0, 1, 2, ..., 99]
-        self.all_client_ids = list(range(config.num_clients))
+    # Attributes set by entry.py before train():
+    #   config, hook, device, rng, _callbacks,
+    #   trainset, testloader, num_classes, model,
+    #   client_data_masks, selection_schedule, all_client_ids
 
     # ------------------------------------------------------------------
     # Callback system
