@@ -18,7 +18,7 @@
   "device": "cuda",
   "seed": 42,
   "_opt1": "=== Optimization 1: Data Balancing ===",
-  "balancing_strategy": "none",
+  "balancing_strategy": "mean",
   "_balancing_strategy_options": "none | trimming | replication | target",
   "balancing_target": "mean",
   "_balancing_target_options": "mean | median | <integer>",

@@ -98,6 +98,30 @@ def _load_schedule_dir(schedule_dir: str, config: Config):
     return client_data_masks, selection_schedule
 
 
+_METHOD_FIELDS = {
+    "usfl": [
+        "balancing_strategy", "balancing_target",
+        "gradient_shuffle", "gradient_shuffle_strategy",
+        "gradient_average_weight", "adaptive_alpha_beta",
+        "use_dynamic_batch_scheduler",
+    ],
+    "mix2sfl": [
+        "mix2sfl_beta_alpha", "mix2sfl_smashmix_ratio",
+    ],
+    "multisfl": [
+        "num_branches", "alpha_master_pull",
+        "p_update", "p0", "p_min", "p_max", "p_eps", "p_delta_clip",
+        "gamma", "replay_min_total", "max_assistant_trials", "replay_budget_mode",
+    ],
+}
+
+
+def _get_method_config(config: Config) -> dict:
+    """Extract method-specific config fields."""
+    field_names = _METHOD_FIELDS.get(config.method, [])
+    return {name: getattr(config, name) for name in field_names}
+
+
 def save_results(
     results: List[RoundResult],
     config: Config,
@@ -139,7 +163,10 @@ def save_results(
             "selector": config.selector,
             "aggregator": config.aggregator,
             "exhaustion_policy": config.exhaustion_policy,
+            "server_training_mode": config.server_training_mode,
+            "scale_client_grad": config.scale_client_grad,
         },
+        "method_config": _get_method_config(config),
         "rounds": [
             {
                 "round": r.round_number,
