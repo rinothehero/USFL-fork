@@ -27,7 +27,7 @@
   "gradient_shuffle_strategy": "random",
   "_gradient_shuffle_strategy_options": "random | inplace | average | average_adaptive_alpha",
   "_opt3": "=== Optimization 3: Dynamic Batch Scheduler ===",
-  "use_dynamic_batch_scheduler": false,
+  "use_dynamic_batch_scheduler": true,
   "_opt4": "=== Optimization 4: Client Gradient Scaling ===",
   "scale_client_grad": false,
   "server_training_mode": "concatenated_fused",

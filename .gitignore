@@ -6,6 +6,8 @@
 *.json
 *.pyc
 *.html
+.data/
+data/
 __pycache__/
 .ruff_cache/
 results/

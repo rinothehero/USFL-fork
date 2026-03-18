@@ -12,7 +12,7 @@
   "_gradient_shuffle": "Enable gradient shuffling.",
   "gradient_shuffle": true,
   "_gradient_shuffle_strategy": "random | inplace (class-balanced) | average (mix with global mean) | average_adaptive_alpha (cosine similarity-based).",
-  "gradient_shuffle_strategy": "average",
+  "gradient_shuffle_strategy": "random",
   "_gradient_shuffle_target": "all: shuffle all gradients | activation_only: only activation gradients.",
   "gradient_shuffle_target": "all",
   "_gradient_average_weight": "Mixing weight for 'average' strategy (0-1). 0=client only, 1=global mean only.",
