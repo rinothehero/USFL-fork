@@ -425,66 +425,65 @@ def _create_deit_tiny(num_classes: int, split_layer: str, in_channels: int = 3) 
 # ---------------------------------------------------------------------------
 
 
+# Input dimensions by dataset (flattened image size)
+_MLP_INPUT_DIMS = {
+    "cifar10": 3 * 32 * 32,
+    "cifar100": 3 * 32 * 32,
+    "svhn": 3 * 32 * 32,
+    "mnist": 1 * 28 * 28,
+    "fmnist": 1 * 28 * 28,
+}
+
+
 class _MLPClient(nn.Module):
     """Client portion of MLP (up to and including split_layer)."""
 
-    def __init__(self, in_features: int, split_layer: str):
+    def __init__(self, layers: OrderedDict, needs_flatten: bool):
         super().__init__()
-        self.flatten = nn.Flatten()
-        self.layer1 = nn.Sequential(nn.Linear(in_features, 512), nn.ReLU())
-        self.layer2 = nn.Sequential(nn.Linear(512, 256), nn.ReLU())
-
-        if split_layer == "layer1":
-            self._layers = ["layer1"]
-        elif split_layer == "layer2":
-            self._layers = ["layer1", "layer2"]
-        else:
-            raise ValueError(f"Invalid split_layer '{split_layer}' for MLP. Choose from ['layer1', 'layer2']")
+        self._needs_flatten = needs_flatten
+        self.layers = nn.Sequential(layers)
 
     def forward(self, x):
-        x = self.flatten(x)
-        for name in self._layers:
-            x = getattr(self, name)(x)
-        return x
+        if self._needs_flatten and x.dim() > 2:
+            x = x.view(x.size(0), -1)
+        return self.layers(x)
 
 
 class _MLPServer(nn.Module):
     """Server portion of MLP (after split_layer to output)."""
 
-    def __init__(self, split_layer: str, num_classes: int):
+    def __init__(self, layers: OrderedDict):
         super().__init__()
-        if split_layer == "layer1":
-            self.layer2 = nn.Sequential(nn.Linear(512, 256), nn.ReLU())
-            self.layer3 = nn.Linear(256, num_classes)
-            self._layers = ["layer2", "layer3"]
-        elif split_layer == "layer2":
-            self.layer3 = nn.Linear(256, num_classes)
-            self._layers = ["layer3"]
-        else:
-            raise ValueError(f"Invalid split_layer '{split_layer}' for MLP. Choose from ['layer1', 'layer2']")
+        self.layers = nn.Sequential(layers)
 
     def forward(self, x):
-        for name in self._layers:
-            x = getattr(self, name)(x)
-        return x
-
-
-# Input feature sizes by dataset for MLP
-_MLP_IN_FEATURES = {
-    "cifar10": 3 * 32 * 32,    # 3072
-    "cifar100": 3 * 32 * 32,   # 3072
-    "svhn": 3 * 32 * 32,       # 3072
-    "mnist": 1 * 28 * 28,      # 784
-    "fmnist": 1 * 28 * 28,     # 784
-}
+        return self.layers(x)
 
 
 def _create_mlp(num_classes: int, split_layer: str, in_channels: int = 3, dataset: str = "cifar10") -> SplitModel:
-    """Create split MLP classifier."""
-    in_features = _MLP_IN_FEATURES.get(dataset, 3 * 32 * 32)
+    """Create split MLP classifier.
 
-    client = _MLPClient(in_features, split_layer)
-    server = _MLPServer(split_layer, num_classes)
+    Architecture: input -> layer1(512) -> layer2(256) -> layer3(num_classes)
+    Split points: "layer1" or "layer2"
+    """
+    input_dim = _MLP_INPUT_DIMS.get(dataset, 3 * 32 * 32)
+
+    all_layers = OrderedDict([
+        ("layer1", nn.Sequential(nn.Linear(input_dim, 512), nn.ReLU())),
+        ("layer2", nn.Sequential(nn.Linear(512, 256), nn.ReLU())),
+        ("layer3", nn.Linear(256, num_classes)),
+    ])
+
+    layer_names = list(all_layers.keys())
+    if split_layer not in layer_names:
+        raise ValueError(f"Invalid split_layer '{split_layer}' for MLP. Choose from {layer_names}")
+
+    idx = layer_names.index(split_layer) + 1
+    client_layers = OrderedDict((k, v) for k, v in list(all_layers.items())[:idx])
+    server_layers = OrderedDict((k, v) for k, v in list(all_layers.items())[idx:])
+
+    client = _MLPClient(client_layers, needs_flatten=True)
+    server = _MLPServer(server_layers)
     return SplitModel(client, server, num_classes, name="mlp")
 
 

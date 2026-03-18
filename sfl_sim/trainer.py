@@ -332,6 +332,11 @@ class SimTrainer:
             concat_act = torch.cat(activations, dim=0)
             concat_labels = torch.cat(labels_list, dim=0)
 
+            # Set batch sizes and client order before process_activations
+            # (needed by Mix2SFL SmashMix to identify per-client boundaries)
+            ctx.extra["client_batch_sizes"] = [a.size(0) for a in activations]
+            ctx.extra["client_order"] = active_clients
+
             # Process activations (hook — for Mix2SFL SmashMix, GAS feature gen)
             concat_act, concat_labels = self.hook.process_activations(
                 concat_act, concat_labels, ctx
@@ -348,7 +353,7 @@ class SimTrainer:
 
             server_optimizer.zero_grad()
             logits = server_model(concat_act)
-            loss = criterion(logits, concat_labels)
+            loss = self.hook.compute_loss(logits, concat_labels, criterion, ctx)
             loss.backward()
             server_optimizer.step()
 
@@ -373,8 +378,6 @@ class SimTrainer:
                 ctx=ctx,
             )
 
-            ctx.extra["client_batch_sizes"] = [a.size(0) for a in activations]
-            ctx.extra["client_order"] = active_clients
             ctx.extra["concat_labels"] = concat_labels
 
             activation_grads = self.hook.process_gradients(activation_grads, ctx)

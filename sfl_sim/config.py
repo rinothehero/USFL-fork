@@ -99,6 +99,10 @@ class Config:
     warmup_rounds: int = 5         # Use uniform selection for first N rounds
     oracle_max_batches: Optional[int] = None  # Limit oracle computation (None = use all)
 
+    # --- Mix2SFL-specific ---
+    mix2sfl_beta_alpha: float = 1.0       # Beta distribution alpha for SmashMix lambda
+    mix2sfl_smashmix_ratio: float = 1.0   # Fraction of clients to mix with (0.0-1.0)
+
     # --- Result output ---
     result_dir: str = "results"
 
@@ -229,6 +233,12 @@ def parse_args(argv: list[str] | None = None) -> Config:
                     type=int, default=5)
     p.add_argument("--oracle-max-batches", dest="oracle_max_batches",
                     type=int, default=None)
+
+    # Mix2SFL-specific
+    p.add_argument("--mix2sfl-beta-alpha", dest="mix2sfl_beta_alpha",
+                    type=float, default=1.0)
+    p.add_argument("--mix2sfl-smashmix-ratio", dest="mix2sfl_smashmix_ratio",
+                    type=float, default=1.0)
 
     # Result output
     p.add_argument("--result-dir", dest="result_dir", default="results")
