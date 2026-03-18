@@ -99,6 +99,19 @@ class SimTrainer:
             self.fire("round_start", round_number=round_num, ctx=ctx)
 
             client_results = self.run_sfl_round(ctx)
+
+            # Log training volume (first round only)
+            if round_num == 1:
+                epochs_done = ctx.extra.get("epochs_done", 0)
+                bpe = ctx.extra.get("batches_per_epoch_actual", 0)
+                print(
+                    f"[sfl_sim] epochs={epochs_done}/{self.config.local_epochs}, "
+                    f"batches/epoch={bpe}, "
+                    f"clients={len(ctx.selected_client_ids)}, "
+                    f"policy={self.config.exhaustion_policy}",
+                    flush=True,
+                )
+
             round_result = self.hook.post_round(self, round_num, ctx, client_results)
 
             round_result.metrics["round_time"] = time.time() - t0
@@ -234,6 +247,9 @@ class SimTrainer:
                 it += 1
 
         ctx.extra["avg_loss"] = total_loss / max(loss_count, 1)
+
+        ctx.extra["epochs_done"] = local_epochs
+        ctx.extra["batches_per_epoch_actual"] = max_batches
         return self._collect_results(ctx)
 
     # ------------------------------------------------------------------
@@ -376,6 +392,9 @@ class SimTrainer:
                 it += 1
 
         ctx.extra["avg_loss"] = total_loss / max(loss_count, 1)
+
+        ctx.extra["epochs_done"] = local_epochs
+        ctx.extra["batches_per_epoch_actual"] = batches_per_epoch
         return self._collect_results(ctx)
 
     # ------------------------------------------------------------------
@@ -521,6 +540,9 @@ class SimTrainer:
                 it += 1
 
         ctx.extra["avg_loss"] = total_loss / max(loss_count, 1)
+
+        ctx.extra["epochs_done"] = local_epochs
+        ctx.extra["batches_per_epoch_actual"] = batches_per_epoch
         return self._collect_results(ctx)
 
     # ------------------------------------------------------------------
