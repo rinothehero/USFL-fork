@@ -77,10 +77,35 @@ class USFLHook(BaseMethodHook):
                 selected, client_label_dists, config
             )
 
-        # 5. Create client states with MaskableDataset
-        from torch.utils.data import DataLoader
-        client_states = {}
+        # 5. Build datasets and compute data sizes (before DBS)
+        from torch.utils.data import DataLoader, Subset
+        from ..client_ops import create_optimizer, ClientState
+
+        datasets = {}
         client_data_sizes = {}
+        for cid in selected:
+            indices = trainer.client_data_masks[cid]
+            if cid in augmented_sizes:
+                ds = MaskableDataset(trainer.trainset, indices, rng=trainer.rng)
+                ds.update_amount_per_label(augmented_sizes[cid])
+            else:
+                ds = Subset(trainer.trainset, indices)
+            datasets[cid] = ds
+            client_data_sizes[cid] = len(ds)
+
+        # 6. Compute DBS schedule (determines per-client batch sizes)
+        dbs_batch_sizes = {}  # {cid: batch_size}
+        if config.use_dynamic_batch_scheduler:
+            target_bs = config.batch_size * config.num_clients_per_round
+            k, _ = create_schedule(target_bs, client_data_sizes)
+            batches_per_epoch = k
+            for cid in selected:
+                dbs_batch_sizes[cid] = math.ceil(client_data_sizes[cid] / k)
+        else:
+            batches_per_epoch = None  # computed after DataLoader creation
+
+        # 7. Create client states with per-client batch sizes
+        client_states = {}
 
         # Ensure pool has enough models
         while len(self._client_pool) < len(selected):
@@ -90,23 +115,12 @@ class USFLHook(BaseMethodHook):
             client_model = self._client_pool[i]
             client_model.load_state_dict(client_base_state)
 
-            indices = trainer.client_data_masks[cid]
-
-            # Apply data balancing if configured
-            if cid in augmented_sizes:
-                dataset = MaskableDataset(trainer.trainset, indices, rng=trainer.rng)
-                dataset.update_amount_per_label(augmented_sizes[cid])
-            else:
-                from torch.utils.data import Subset
-                dataset = Subset(trainer.trainset, indices)
-
+            bs = dbs_batch_sizes.get(cid, config.batch_size)
             dataloader = DataLoader(
-                dataset, batch_size=config.batch_size, shuffle=True, drop_last=False
+                datasets[cid], batch_size=bs, shuffle=True, drop_last=False
             )
-            from ..client_ops import create_optimizer
             optimizer = create_optimizer(client_model, config)
 
-            from ..client_ops import ClientState
             client_states[cid] = ClientState(
                 client_id=cid,
                 client_model=client_model,
@@ -114,16 +128,10 @@ class USFLHook(BaseMethodHook):
                 dataloader=dataloader,
                 data_iter=iter(dataloader),
                 label_distribution=client_label_dists[cid],
-                dataset_size=len(dataset),
+                dataset_size=len(datasets[cid]),
             )
-            client_data_sizes[cid] = len(dataset)
 
-        # 6. Compute batches per epoch (trainer handles epoch loop)
-        if config.use_dynamic_batch_scheduler:
-            target_bs = config.batch_size * config.num_clients_per_round
-            k, schedule = create_schedule(target_bs, client_data_sizes)
-            batches_per_epoch = k  # DBS: k iterations = 1 pass through data
-        else:
+        if batches_per_epoch is None:
             batches_per_epoch = max(len(s.dataloader) for s in client_states.values())
 
         # 7. Server setup
