@@ -29,7 +29,7 @@
   "_opt3": "=== Optimization 3: Dynamic Batch Scheduler ===",
   "use_dynamic_batch_scheduler": true,
   "_opt4": "=== Optimization 4: Client Gradient Scaling ===",
-  "scale_client_grad": false,
+  "scale_client_grad": true,
   "server_training_mode": "concatenated_fused",
   "_server_training_mode_options": "concatenated | concatenated_fused",
   "_note": "All optimizations off + aggregator=fedavg = SFL-equivalent"
