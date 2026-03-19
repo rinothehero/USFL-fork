@@ -101,6 +101,19 @@ class USFLHook(BaseMethodHook):
             batches_per_epoch = k
             for cid in selected:
                 dbs_batch_sizes[cid] = math.ceil(client_data_sizes[cid] / k)
+
+            # Debug: DBS schedule
+            if round_number == 1:
+                sizes = [client_data_sizes[c] for c in selected]
+                bs_list = [dbs_batch_sizes[c] for c in selected]
+                concat_per_iter = sum(bs_list)
+                print(
+                    f"[DBS] k={k}, target={target_bs}, concat/iter={concat_per_iter}\n"
+                    f"  data_sizes: min={min(sizes)} max={max(sizes)} mean={sum(sizes)//len(sizes)}\n"
+                    f"  batch_sizes: min={min(bs_list)} max={max(bs_list)} mean={sum(bs_list)//len(bs_list)}\n"
+                    f"  dataloader_batches: all clients → {k} batches each",
+                    flush=True,
+                )
         else:
             batches_per_epoch = None  # computed after DataLoader creation
 

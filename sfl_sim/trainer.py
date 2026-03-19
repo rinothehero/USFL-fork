@@ -425,11 +425,16 @@ class SimTrainer:
         loss_count = 0
         it = 0
 
+        _debug_r1 = (ctx.round_number == 1)
+
         for epoch in range(local_epochs):
             # Reset all clients at epoch boundary
             for state in client_states.values():
                 state.data_iter = iter(state.dataloader)
                 state.exhausted = False
+
+            _epoch_steps = 0
+            _min_active = len(client_order)
 
             for batch_idx in range(batches_per_epoch):
                 self.fire("iteration_start", iteration=it, ctx=ctx)
@@ -538,6 +543,16 @@ class SimTrainer:
 
                 self.fire("iteration_end", iteration=it, ctx=ctx)
                 it += 1
+                _epoch_steps += 1
+                _min_active = min(_min_active, len(active_clients))
+
+            if _debug_r1:
+                print(
+                    f"  [epoch {epoch+1}/{local_epochs}] "
+                    f"steps={_epoch_steps}, "
+                    f"active_clients: min={_min_active}/{len(client_order)}",
+                    flush=True,
+                )
 
         ctx.extra["avg_loss"] = total_loss / max(loss_count, 1)
 
