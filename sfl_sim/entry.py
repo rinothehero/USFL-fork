@@ -214,21 +214,37 @@ def run(config: Config) -> List[RoundResult]:
 
     set_seed(config.seed)
 
+    # Load pre-computed schedule first (fills config from meta.json)
+    if not config.schedule_dir:
+        raise ValueError(
+            "Missing --schedule-dir. Generate a schedule first:\n"
+            "  python -m sfl_sim.prepare -d cifar10 -nc 100 -ncpr 10 -gr 100 "
+            "--selector usfl --seed 42\n"
+            "Then pass the output directory via --schedule-dir"
+        )
+    client_data_masks, selection_schedule = _load_schedule_dir(
+        config.schedule_dir, config
+    )
+
+    # Print config after schedule loads (meta.json may override rounds, dataset, etc.)
     print(f"[sfl_sim] Method: {config.method}", flush=True)
     print(f"[sfl_sim] Dataset: {config.dataset}, Model: {config.model}", flush=True)
     print(f"[sfl_sim] Rounds: {config.global_round}, Clients: {config.num_clients}", flush=True)
     print(f"[sfl_sim] Device: {config.device}", flush=True)
     print(flush=True)
 
-    # Build trainer first, then hook (hook needs trainer reference)
+    # Build trainer
     from collections import defaultdict
     trainer = SimTrainer.__new__(SimTrainer)
     trainer.config = config
     trainer.device = torch.device(config.device)
     trainer.rng = np.random.RandomState(config.seed)
     trainer._callbacks = defaultdict(list)
+    trainer.client_data_masks = client_data_masks
+    trainer.selection_schedule = selection_schedule
+    trainer.all_client_ids = list(range(config.num_clients))
 
-    # Load data (always needed for transforms/testloader)
+    # Load data
     from .data import load_dataset, get_testloader
     trainer.trainset, testset, trainer.num_classes = load_dataset(
         config.dataset, data_dir="./data"
@@ -241,22 +257,6 @@ def run(config: Config) -> List[RoundResult]:
         config.model, trainer.num_classes, config.split_layer, config.dataset
     )
     trainer.model.to(trainer.device)
-
-    # Load pre-computed data distribution + selection schedule
-    if not config.schedule_dir:
-        raise ValueError(
-            "Missing --schedule-dir. Generate a schedule first:\n"
-            "  python -m sfl_sim.prepare -d cifar10 -nc 100 -ncpr 10 -gr 100 "
-            "--selector usfl --seed 42\n"
-            "Then pass the output directory via --schedule-dir"
-        )
-    client_data_masks, selection_schedule = _load_schedule_dir(
-        config.schedule_dir, config
-    )
-    trainer.client_data_masks = client_data_masks
-    trainer.selection_schedule = selection_schedule
-
-    trainer.all_client_ids = list(range(config.num_clients))
 
     # Create hook
     hook = get_method_hook(config.method, config, trainer)
