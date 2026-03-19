@@ -448,6 +448,214 @@ def _create_deit_tiny_cifar(num_classes: int, split_layer: str, in_channels: int
 
 
 # ---------------------------------------------------------------------------
+# CCT (Compact Convolutional Transformer)
+# ---------------------------------------------------------------------------
+
+
+class _CCTTokenizer(nn.Module):
+    """
+    Convolutional tokenizer for CCT.
+
+    Replaces ViT's linear patch embedding with Conv → ReLU → MaxPool layers.
+    Provides local spatial inductive bias and makes positional embeddings optional.
+    """
+
+    def __init__(
+        self,
+        in_channels: int = 3,
+        embed_dim: int = 256,
+        n_conv_layers: int = 1,
+        kernel_size: int = 3,
+        stride: int = 1,
+        padding: int = 1,
+        pool_kernel: int = 3,
+        pool_stride: int = 2,
+        pool_padding: int = 1,
+    ):
+        super().__init__()
+        # Build conv stack: in_channels → embed_dim with intermediate layers
+        dims = [in_channels] + [embed_dim] * n_conv_layers
+        layers = []
+        for i in range(n_conv_layers):
+            layers.extend([
+                nn.Conv2d(dims[i], dims[i + 1], kernel_size, stride, padding, bias=False),
+                nn.ReLU(inplace=True),
+                nn.MaxPool2d(pool_kernel, pool_stride, pool_padding),
+            ])
+        self.conv_layers = nn.Sequential(*layers)
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (B, C, H, W) → (B, embed_dim, H', W') → (B, seq_len, embed_dim)
+        x = self.conv_layers(x)
+        return x.flatten(2).transpose(1, 2)  # (B, seq_len, embed_dim)
+
+    def sequence_length(self, in_channels: int, height: int, width: int) -> int:
+        """Compute output sequence length for given input dimensions."""
+        return self.forward(torch.zeros(1, in_channels, height, width)).shape[1]
+
+
+class _CCTTransformerBlock(nn.Module):
+    """Single transformer encoder block with pre-norm and GELU."""
+
+    def __init__(self, dim: int, n_heads: int, mlp_ratio: float = 4.0, dropout: float = 0.0):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(dim)
+        self.attn = nn.MultiheadAttention(dim, n_heads, dropout=dropout, batch_first=True)
+        self.norm2 = nn.LayerNorm(dim)
+        mlp_dim = int(dim * mlp_ratio)
+        self.mlp = nn.Sequential(
+            nn.Linear(dim, mlp_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(mlp_dim, dim),
+            nn.Dropout(dropout),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        h = self.norm1(x)
+        h, _ = self.attn(h, h, h)
+        x = x + h
+        x = x + self.mlp(self.norm2(x))
+        return x
+
+
+class _CCTSequencePool(nn.Module):
+    """Attention-based sequence pooling (replaces CLS token)."""
+
+    def __init__(self, dim: int):
+        super().__init__()
+        self.attention = nn.Linear(dim, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (B, seq_len, dim) → weighted average → (B, dim)
+        w = torch.softmax(self.attention(x), dim=1)  # (B, seq_len, 1)
+        return (x * w).sum(dim=1)  # (B, dim)
+
+
+def _create_cct(
+    num_classes: int,
+    split_layer: str,
+    in_channels: int = 3,
+    # CCT-7/3x1 defaults (CIFAR-10 standard)
+    img_size: int = 32,
+    embed_dim: int = 256,
+    n_transformer_layers: int = 7,
+    n_heads: int = 4,
+    mlp_ratio: float = 2.0,
+    n_conv_layers: int = 1,
+    conv_kernel: int = 3,
+    conv_stride: int = 1,
+    conv_padding: int = 1,
+    pool_kernel: int = 3,
+    pool_stride: int = 2,
+    pool_padding: int = 1,
+    dropout: float = 0.0,
+) -> SplitModel:
+    """
+    Create split CCT (Compact Convolutional Transformer).
+
+    Default config: CCT-7/3x1 for 32x32 inputs (~3.7M params).
+    Split at "tokenizer" or "blocks.N".
+
+    Architecture:
+      Client: Conv Tokenizer [+ optional transformer blocks]
+      Server: Transformer blocks + Sequence Pooling + Head
+
+    Split points:
+      "tokenizer"  — client = conv tokenizer only
+      "blocks.0"   — client = tokenizer + 1 block
+      "blocks.N"   — client = tokenizer + N+1 blocks
+    """
+    # Build tokenizer
+    tokenizer = _CCTTokenizer(
+        in_channels=in_channels,
+        embed_dim=embed_dim,
+        n_conv_layers=n_conv_layers,
+        kernel_size=conv_kernel,
+        stride=conv_stride,
+        padding=conv_padding,
+        pool_kernel=pool_kernel,
+        pool_stride=pool_stride,
+        pool_padding=pool_padding,
+    )
+
+    # Compute sequence length
+    seq_len = tokenizer.sequence_length(in_channels, img_size, img_size)
+
+    # Positional embedding (learnable)
+    pos_embed = nn.Parameter(torch.zeros(1, seq_len, embed_dim))
+    nn.init.trunc_normal_(pos_embed, std=0.02)
+
+    # Transformer blocks
+    blocks = nn.ModuleList([
+        _CCTTransformerBlock(embed_dim, n_heads, mlp_ratio, dropout)
+        for _ in range(n_transformer_layers)
+    ])
+
+    # Sequence pooling + classification head
+    final_norm = nn.LayerNorm(embed_dim)
+    seq_pool = _CCTSequencePool(embed_dim)
+    head = nn.Linear(embed_dim, num_classes)
+
+    # Determine split
+    if split_layer == "tokenizer":
+        client_blocks = 0
+    elif split_layer.startswith("blocks."):
+        client_blocks = int(split_layer.split(".")[1]) + 1
+        if client_blocks > n_transformer_layers:
+            raise ValueError(
+                f"blocks.{client_blocks - 1} exceeds {n_transformer_layers} blocks. "
+                f"Choose from: tokenizer, blocks.0 ~ blocks.{n_transformer_layers - 1}"
+            )
+    else:
+        valid = ["tokenizer"] + [f"blocks.{i}" for i in range(n_transformer_layers)]
+        raise ValueError(f"Invalid split_layer '{split_layer}' for CCT. Choose from {valid}")
+
+    class CCTClient(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.tokenizer = tokenizer
+            self.pos_embed = pos_embed
+            if client_blocks > 0:
+                self.blocks = nn.Sequential(*[blocks[i] for i in range(client_blocks)])
+            else:
+                self.blocks = None
+
+        def forward(self, x):
+            x = self.tokenizer(x)
+            x = x + self.pos_embed
+            if self.blocks is not None:
+                x = self.blocks(x)
+            return x
+
+    class CCTServer(nn.Module):
+        def __init__(self):
+            super().__init__()
+            remaining = [blocks[i] for i in range(client_blocks, n_transformer_layers)]
+            self.blocks = nn.Sequential(*remaining) if remaining else nn.Identity()
+            self.norm = final_norm
+            self.seq_pool = seq_pool
+            self.head = head
+
+        def forward(self, x):
+            x = self.blocks(x)
+            x = self.norm(x)
+            x = self.seq_pool(x)
+            x = self.head(x)
+            return x
+
+    client = CCTClient()
+    server = CCTServer()
+    return SplitModel(client, server, num_classes, name="cct")
+
+
+# ---------------------------------------------------------------------------
 # MLP Classifier
 # ---------------------------------------------------------------------------
 
@@ -528,6 +736,7 @@ _DEFAULT_SPLITS = {
     "lenet": "conv2",
     "deit_tiny": "blocks.5",
     "deit_tiny_cifar": "blocks.5",
+    "cct": "tokenizer",
     "mlp": "layer1",
 }
 
@@ -575,6 +784,7 @@ def create_model(
         "lenet": _create_lenet,
         "deit_tiny": _create_deit_tiny,
         "deit_tiny_cifar": _create_deit_tiny_cifar,
+        "cct": _create_cct,
         "mlp": lambda nc, sl, ic: _create_mlp(nc, sl, ic, dataset),
     }
 
