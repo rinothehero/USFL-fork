@@ -158,7 +158,8 @@ def create_client_state(
     """Create a ClientState for one client in one round."""
     dataset = Subset(trainset, data_indices)
     bs = batch_size or config.batch_size
-    dataloader = DataLoader(dataset, batch_size=bs, shuffle=True, drop_last=False)
+    dataloader = DataLoader(dataset, batch_size=bs, shuffle=True, drop_last=False,
+                            num_workers=2, pin_memory=True)
     optimizer = create_optimizer(client_model, config)
     label_dist = get_label_distribution(trainset, data_indices)
 

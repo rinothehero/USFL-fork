@@ -129,7 +129,8 @@ class USFLHook(BaseMethodHook):
 
             bs = 1 if dbs_schedule else config.batch_size
             dataloader = DataLoader(
-                datasets[cid], batch_size=bs, shuffle=True, drop_last=False
+                datasets[cid], batch_size=bs, shuffle=True, drop_last=False,
+                num_workers=2, pin_memory=True,
             )
             optimizer = create_optimizer(client_model, config)
 
