@@ -116,8 +116,6 @@ class USFLHook(BaseMethodHook):
             batches_per_epoch = None
 
         # 7. Create client states
-        # DBS: batch_size=1 (manual batch construction via get_dbs_batch)
-        # Non-DBS: batch_size=config.batch_size (standard DataLoader batches)
         client_states = {}
 
         while len(self._client_pool) < len(selected):
@@ -127,12 +125,23 @@ class USFLHook(BaseMethodHook):
             client_model = self._client_pool[i]
             client_model.load_state_dict(client_base_state)
 
-            bs = 1 if dbs_schedule else config.batch_size
-            dataloader = DataLoader(
-                datasets[cid], batch_size=bs, shuffle=True, drop_last=False,
-                num_workers=2, pin_memory=True,
-            )
+            ds = datasets[cid]
             optimizer = create_optimizer(client_model, config)
+
+            if dbs_schedule:
+                # DBS: pre-compute shuffled tensors (no DataLoader overhead)
+                perm = trainer.rng.permutation(len(ds))
+                images = torch.stack([ds[idx][0] for idx in perm]).to(device)
+                labels = torch.tensor([ds[idx][1] for idx in perm]).to(device)
+                # Dummy dataloader (unused in DBS, but ClientState requires it)
+                dataloader = DataLoader(ds, batch_size=1)
+                extra = {"dbs_images": images, "dbs_labels": labels, "dbs_offset": 0}
+            else:
+                dataloader = DataLoader(
+                    ds, batch_size=config.batch_size, shuffle=True, drop_last=False,
+                    num_workers=2, pin_memory=True,
+                )
+                extra = {}
 
             client_states[cid] = ClientState(
                 client_id=cid,
@@ -141,7 +150,8 @@ class USFLHook(BaseMethodHook):
                 dataloader=dataloader,
                 data_iter=iter(dataloader),
                 label_distribution=client_label_dists[cid],
-                dataset_size=len(datasets[cid]),
+                dataset_size=len(ds),
+                extra=extra,
             )
 
         if batches_per_epoch is None:

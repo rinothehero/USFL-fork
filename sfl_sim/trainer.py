@@ -27,7 +27,6 @@ from .client_ops import (
     RoundResult,
     client_backward,
     client_forward,
-    get_dbs_batch,
     get_next_batch,
     snapshot_model,
 )
@@ -282,8 +281,20 @@ class SimTrainer:
         for epoch in range(local_epochs):
             # Reset all clients at epoch boundary
             for state in client_states.values():
-                state.data_iter = iter(state.dataloader)
-                state.exhausted = False
+                if "dbs_images" in state.extra:
+                    ds_len = state.dataset_size
+                    ds = state.dataloader.dataset
+                    perm = self.rng.permutation(ds_len)
+                    state.extra["dbs_images"] = torch.stack(
+                        [ds[idx][0] for idx in perm]
+                    ).to(device)
+                    state.extra["dbs_labels"] = torch.tensor(
+                        [ds[idx][1] for idx in perm]
+                    ).to(device)
+                    state.extra["dbs_offset"] = 0
+                else:
+                    state.data_iter = iter(state.dataloader)
+                    state.exhausted = False
 
             for batch_idx in range(batches_per_epoch):
                 self.fire("iteration_start", iteration=it, ctx=ctx)
@@ -298,12 +309,19 @@ class SimTrainer:
                     state = client_states[cid]
                     if dbs_schedule:
                         n = dbs_schedule[batch_idx].get(cid, 0)
-                        result = get_dbs_batch(state, device, n)
+                        if n <= 0:
+                            continue
+                        off = state.extra["dbs_offset"]
+                        images = state.extra["dbs_images"][off:off + n]
+                        labels = state.extra["dbs_labels"][off:off + n]
+                        state.extra["dbs_offset"] = off + n
+                        if images.size(0) == 0:
+                            continue
                     else:
                         result = get_next_batch(state, device, policy)
-                    if result is None:
-                        continue
-                    images, labels = result
+                        if result is None:
+                            continue
+                        images, labels = result
                     activation, labels = client_forward(state, (images, labels), device)
                     activations.append(activation)
                     labels_list.append(labels)
@@ -437,8 +455,21 @@ class SimTrainer:
         for epoch in range(local_epochs):
             # Reset all clients at epoch boundary
             for state in client_states.values():
-                state.data_iter = iter(state.dataloader)
-                state.exhausted = False
+                if "dbs_images" in state.extra:
+                    # DBS: re-shuffle tensors (fresh augmentation each epoch)
+                    ds_len = state.dataset_size
+                    ds = state.dataloader.dataset
+                    perm = self.rng.permutation(ds_len)
+                    state.extra["dbs_images"] = torch.stack(
+                        [ds[idx][0] for idx in perm]
+                    ).to(device)
+                    state.extra["dbs_labels"] = torch.tensor(
+                        [ds[idx][1] for idx in perm]
+                    ).to(device)
+                    state.extra["dbs_offset"] = 0
+                else:
+                    state.data_iter = iter(state.dataloader)
+                    state.exhausted = False
 
             _epoch_steps = 0
             _min_active = len(client_order)
@@ -458,13 +489,21 @@ class SimTrainer:
                 for cid in client_order:
                     state = client_states[cid]
                     if dbs_schedule:
+                        # DBS: tensor slice (zero overhead)
                         n = dbs_schedule[batch_idx].get(cid, 0)
-                        result = get_dbs_batch(state, device, n)
+                        if n <= 0:
+                            continue
+                        off = state.extra["dbs_offset"]
+                        images = state.extra["dbs_images"][off:off + n]
+                        labels = state.extra["dbs_labels"][off:off + n]
+                        state.extra["dbs_offset"] = off + n
+                        if images.size(0) == 0:
+                            continue
                     else:
                         result = get_next_batch(state, device, policy)
-                    if result is None:
-                        continue
-                    images, labels = result
+                        if result is None:
+                            continue
+                        images, labels = result
                     labels_list.append(labels)
 
                     state.client_model.train()
