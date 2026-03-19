@@ -354,32 +354,11 @@ def _create_lenet(num_classes: int, split_layer: str, in_channels: int = 1) -> S
 # ---------------------------------------------------------------------------
 
 
-def _create_deit_tiny(num_classes: int, split_layer: str, in_channels: int = 3) -> SplitModel:
-    """
-    Create split DeiT-tiny using timm.
-
-    Split points are transformer block indices: "blocks.0", "blocks.1", ..., "blocks.11"
-    """
-    try:
-        import timm
-    except ImportError:
-        raise ImportError("timm is required for DeiT models: pip install timm")
-
-    base = timm.create_model("deit_tiny_patch16_224", pretrained=False, num_classes=num_classes)
-
-    if in_channels == 1:
-        old_proj = base.patch_embed.proj
-        base.patch_embed.proj = nn.Conv2d(
-            1, old_proj.out_channels,
-            kernel_size=old_proj.kernel_size,
-            stride=old_proj.stride,
-            padding=old_proj.padding,
-        )
-
-    # Parse split point
+def _build_split_deit(base, split_layer: str, model_name: str, num_classes: int) -> SplitModel:
+    """Split a timm DeiT/ViT model at a transformer block boundary."""
     if not split_layer.startswith("blocks."):
         valid = [f"blocks.{i}" for i in range(len(base.blocks))]
-        raise ValueError(f"Invalid split_layer '{split_layer}' for DeiT. Choose from {valid}")
+        raise ValueError(f"Invalid split_layer '{split_layer}' for {model_name}. Choose from {valid}")
 
     split_idx = int(split_layer.split(".")[1]) + 1
 
@@ -417,7 +396,55 @@ def _create_deit_tiny(num_classes: int, split_layer: str, in_channels: int = 3) 
 
     client = DeiTClient(base, split_idx)
     server = DeiTServer(base, split_idx)
-    return SplitModel(client, server, num_classes, name="deit_tiny")
+    return SplitModel(client, server, num_classes, name=model_name)
+
+
+def _create_deit_tiny(num_classes: int, split_layer: str, in_channels: int = 3) -> SplitModel:
+    """DeiT-tiny for 224x224 inputs (ImageNet-scale). 12 blocks, 192 dim, patch=16."""
+    try:
+        import timm
+    except ImportError:
+        raise ImportError("timm is required for DeiT models: pip install timm")
+
+    base = timm.create_model("deit_tiny_patch16_224", pretrained=False, num_classes=num_classes)
+
+    if in_channels == 1:
+        old_proj = base.patch_embed.proj
+        base.patch_embed.proj = nn.Conv2d(
+            1, old_proj.out_channels,
+            kernel_size=old_proj.kernel_size,
+            stride=old_proj.stride,
+            padding=old_proj.padding,
+        )
+
+    return _build_split_deit(base, split_layer, "deit_tiny", num_classes)
+
+
+def _create_deit_tiny_cifar(num_classes: int, split_layer: str, in_channels: int = 3) -> SplitModel:
+    """
+    DeiT-tiny adapted for 32x32 inputs (CIFAR/SVHN).
+
+    Uses patch_size=4 instead of 16 → 8×8 = 64 patches (vs 14×14 = 196 for 224px).
+    Same transformer body: 12 blocks, 192 dim, 3 heads.
+    """
+    try:
+        import timm
+    except ImportError:
+        raise ImportError("timm is required for DeiT models: pip install timm")
+
+    base = timm.create_model(
+        "deit_tiny_patch16_224", pretrained=False, num_classes=num_classes,
+        img_size=32, patch_size=4,
+    )
+
+    if in_channels == 1:
+        old_proj = base.patch_embed.proj
+        base.patch_embed.proj = nn.Conv2d(
+            1, old_proj.out_channels,
+            kernel_size=(4, 4), stride=(4, 4),
+        )
+
+    return _build_split_deit(base, split_layer, "deit_tiny_cifar", num_classes)
 
 
 # ---------------------------------------------------------------------------
@@ -500,6 +527,7 @@ _DEFAULT_SPLITS = {
     "mobilenet": "features.7",
     "lenet": "conv2",
     "deit_tiny": "blocks.5",
+    "deit_tiny_cifar": "blocks.5",
     "mlp": "layer1",
 }
 
@@ -546,6 +574,7 @@ def create_model(
         "mobilenet": _create_mobilenet,
         "lenet": _create_lenet,
         "deit_tiny": _create_deit_tiny,
+        "deit_tiny_cifar": _create_deit_tiny_cifar,
         "mlp": lambda nc, sl, ic: _create_mlp(nc, sl, ic, dataset),
     }
 

@@ -1,9 +1,9 @@
 {
   "method": "sfl",
   "schedule_dir": "sfl_sim/schedules/seed42_cifar10_100c_shard_dirichlet_a0.3_lpc2_usfl",
-  "model": "resnet18",
+  "model": "deit_tiny",
   "_model_options": "resnet18 | vgg11 | alexnet | mobilenetv2 | lenet5 | deit_tiny | mlp",
-  "split_layer": "layer2",
+  "split_layer": "blocks.3",
   "local_epochs": 5,
   "batch_size": 50,
   "learning_rate": 0.001,
