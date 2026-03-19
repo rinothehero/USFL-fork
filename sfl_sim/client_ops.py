@@ -262,6 +262,34 @@ def get_next_batch(
     return images.to(device), labels.to(device)
 
 
+def get_dbs_batch(
+    state: ClientState, device: torch.device, n_samples: int,
+) -> Optional[Tuple[torch.Tensor, torch.Tensor]]:
+    """
+    Pull exactly n_samples from client's data iterator (for DBS).
+
+    Unlike get_next_batch which returns one DataLoader batch,
+    this pulls individual samples and concatenates them.
+    Requires DataLoader with batch_size=1.
+    """
+    if n_samples <= 0:
+        return None
+
+    images_list, labels_list = [], []
+    for _ in range(n_samples):
+        try:
+            img, lbl = next(state.data_iter)
+            images_list.append(img)
+            labels_list.append(lbl)
+        except StopIteration:
+            break
+
+    if not images_list:
+        return None
+
+    return torch.cat(images_list).to(device), torch.cat(labels_list).to(device)
+
+
 # ---------------------------------------------------------------------------
 # Dynamic batch scheduler (for USFL)
 # ---------------------------------------------------------------------------
@@ -274,11 +302,14 @@ def create_schedule(
     """
     Compute optimal iteration count and per-client per-iteration batch sizes.
 
+    All clients participate every iteration with varying batch sizes.
+    Total data consumption == client data size (100% utilization in k iterations).
+
     Phase 1: Find k that minimizes |sum(ceil(C_i/k)) - B|
-    Phase 2: Distribute batches proportionally per iteration
+    Phase 2: Proportional distribution with remainder allocation
 
     Args:
-        target_batch_size: B (desired total batch size per iteration)
+        target_batch_size: B (desired total concat batch size per iteration)
         client_data_sizes: {client_id: data_count}
 
     Returns:
@@ -288,6 +319,7 @@ def create_schedule(
     """
     client_ids = sorted(client_data_sizes.keys())
     C = [client_data_sizes[cid] for cid in client_ids]
+    n_clients = len(C)
 
     if not C or all(c == 0 for c in C):
         return 0, []
@@ -297,24 +329,59 @@ def create_schedule(
     # Phase 1: Find best k
     best_k = 1
     best_diff = float("inf")
+    best_sum = -1
 
-    for k in range(1, max_c + 1):
+    for k in range(1, max_c + 3):
         total = sum(math.ceil(c / k) for c in C)
         diff = abs(total - target_batch_size)
-        if diff < best_diff:
+        if diff < best_diff or (diff == best_diff and total < best_sum):
             best_diff = diff
             best_k = k
+            best_sum = total
 
-    # Phase 2: Compute per-client per-iteration batch sizes
+    k = best_k
+
+    # Phase 2: Proportional distribution (matches original framework)
+    # Distributes data so that all clients exhaust exactly at iteration k.
+    remaining = list(C)
+    total_data = sum(C)
+
+    # Per-iteration target: distribute total evenly, larger batches first
+    base = total_data // k
+    extra = total_data % k
+    iter_targets = [base + 1] * extra + [base] * (k - extra)
+
     schedule = []
-    for it in range(best_k):
+    for it in range(k):
+        target = iter_targets[it]
+        total_remaining = sum(remaining)
+
+        if total_remaining == 0:
+            schedule.append({cid: 0 for cid in client_ids})
+            continue
+
+        # Allocate proportionally to remaining data
+        quotas = [(r / total_remaining) * target for r in remaining]
+        consumption = [min(math.floor(q), r) for q, r in zip(quotas, remaining)]
+
+        # Distribute remainder by largest fractional part
+        leftover = target - sum(consumption)
+        frac_parts = sorted(
+            range(n_clients),
+            key=lambda i: quotas[i] - consumption[i],
+            reverse=True,
+        )
+        for j in range(leftover):
+            idx = frac_parts[j]
+            if remaining[idx] > consumption[idx]:
+                consumption[idx] += 1
+
         batch_sizes = {}
         for i, cid in enumerate(client_ids):
-            c = C[i]
-            per_iter = math.ceil(c / best_k)
-            used = it * per_iter
-            remaining = c - used
-            batch_sizes[cid] = max(0, min(per_iter, remaining))
+            consumed = min(consumption[i], remaining[i])
+            batch_sizes[cid] = consumed
+            remaining[i] -= consumed
+
         schedule.append(batch_sizes)
 
-    return best_k, schedule
+    return k, schedule

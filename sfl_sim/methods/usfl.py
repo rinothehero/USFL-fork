@@ -93,34 +93,33 @@ class USFLHook(BaseMethodHook):
             datasets[cid] = ds
             client_data_sizes[cid] = len(ds)
 
-        # 6. Compute DBS schedule (determines per-client batch sizes)
-        dbs_batch_sizes = {}  # {cid: batch_size}
+        # 6. Compute DBS schedule
+        dbs_schedule = None  # List[Dict[cid, batch_size]] per iteration
         if config.use_dynamic_batch_scheduler:
             target_bs = config.batch_size * config.num_clients_per_round
-            k, _ = create_schedule(target_bs, client_data_sizes)
+            k, dbs_schedule = create_schedule(target_bs, client_data_sizes)
             batches_per_epoch = k
-            for cid in selected:
-                dbs_batch_sizes[cid] = max(1, client_data_sizes[cid] // k)
 
-            # Debug: DBS schedule
+            # Debug (round 1 only)
             if round_number == 1:
                 sizes = [client_data_sizes[c] for c in selected]
-                bs_list = [dbs_batch_sizes[c] for c in selected]
-                concat_per_iter = sum(bs_list)
+                iter0_bs = [dbs_schedule[0].get(c, 0) for c in selected]
                 print(
-                    f"[DBS] k={k}, target={target_bs}, concat/iter={concat_per_iter}\n"
-                    f"  data_sizes: min={min(sizes)} max={max(sizes)} mean={sum(sizes)//len(sizes)}\n"
-                    f"  batch_sizes: min={min(bs_list)} max={max(bs_list)} mean={sum(bs_list)//len(bs_list)}\n"
-                    f"  dataloader_batches: all clients → {k} batches each",
+                    f"[DBS] k={k}, target={target_bs}, "
+                    f"iter0_concat={sum(iter0_bs)}\n"
+                    f"  data_sizes: min={min(sizes)} max={max(sizes)} "
+                    f"mean={sum(sizes)//len(sizes)}\n"
+                    f"  iter0_batch: min={min(iter0_bs)} max={max(iter0_bs)}",
                     flush=True,
                 )
         else:
-            batches_per_epoch = None  # computed after DataLoader creation
+            batches_per_epoch = None
 
-        # 7. Create client states with per-client batch sizes
+        # 7. Create client states
+        # DBS: batch_size=1 (manual batch construction via get_dbs_batch)
+        # Non-DBS: batch_size=config.batch_size (standard DataLoader batches)
         client_states = {}
 
-        # Ensure pool has enough models
         while len(self._client_pool) < len(selected):
             self._client_pool.append(copy.deepcopy(model.client_model).to(device))
 
@@ -128,7 +127,7 @@ class USFLHook(BaseMethodHook):
             client_model = self._client_pool[i]
             client_model.load_state_dict(client_base_state)
 
-            bs = dbs_batch_sizes.get(cid, config.batch_size)
+            bs = 1 if dbs_schedule else config.batch_size
             dataloader = DataLoader(
                 datasets[cid], batch_size=bs, shuffle=True, drop_last=False
             )
@@ -165,6 +164,7 @@ class USFLHook(BaseMethodHook):
                 "client_base_state": client_base_state,
                 "client_label_dists": {cid: client_label_dists[cid] for cid in selected},
                 "batches_per_epoch": batches_per_epoch,
+                "dbs_schedule": dbs_schedule,
             },
         )
 

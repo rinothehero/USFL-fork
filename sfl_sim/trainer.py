@@ -27,6 +27,7 @@ from .client_ops import (
     RoundResult,
     client_backward,
     client_forward,
+    get_dbs_batch,
     get_next_batch,
     snapshot_model,
 )
@@ -272,6 +273,7 @@ class SimTrainer:
         batches_per_epoch = ctx.extra.get("batches_per_epoch",
             max(len(s.dataloader) for s in client_states.values()))
         local_epochs = self.config.local_epochs
+        dbs_schedule = ctx.extra.get("dbs_schedule")
 
         total_loss = 0.0
         loss_count = 0
@@ -294,7 +296,11 @@ class SimTrainer:
 
                 for cid in client_order:
                     state = client_states[cid]
-                    result = get_next_batch(state, device, policy)
+                    if dbs_schedule:
+                        n = dbs_schedule[batch_idx].get(cid, 0)
+                        result = get_dbs_batch(state, device, n)
+                    else:
+                        result = get_next_batch(state, device, policy)
                     if result is None:
                         continue
                     images, labels = result
@@ -420,6 +426,7 @@ class SimTrainer:
         batches_per_epoch = ctx.extra.get("batches_per_epoch",
             max(len(s.dataloader) for s in client_states.values()))
         local_epochs = self.config.local_epochs
+        dbs_schedule = ctx.extra.get("dbs_schedule")  # List[Dict[cid, n_samples]]
 
         total_loss = 0.0
         loss_count = 0
@@ -450,7 +457,11 @@ class SimTrainer:
 
                 for cid in client_order:
                     state = client_states[cid]
-                    result = get_next_batch(state, device, policy)
+                    if dbs_schedule:
+                        n = dbs_schedule[batch_idx].get(cid, 0)
+                        result = get_dbs_batch(state, device, n)
+                    else:
+                        result = get_next_batch(state, device, policy)
                     if result is None:
                         continue
                     images, labels = result
