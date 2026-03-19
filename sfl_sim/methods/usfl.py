@@ -100,7 +100,7 @@ class USFLHook(BaseMethodHook):
             k, _ = create_schedule(target_bs, client_data_sizes)
             batches_per_epoch = k
             for cid in selected:
-                dbs_batch_sizes[cid] = math.ceil(client_data_sizes[cid] / k)
+                dbs_batch_sizes[cid] = max(1, client_data_sizes[cid] // k)
 
             # Debug: DBS schedule
             if round_number == 1:
